@@ -9,7 +9,7 @@ from typing import Optional, List, Dict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, status, Header
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -21,6 +21,8 @@ from .loader_generator import loader_generator
 BASE_DIR = os.path.dirname(__file__)
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+
+SERVER_START_TIME = time.time()
 
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
@@ -149,6 +151,39 @@ class LicenseUpdateRequest(BaseModel):
     is_banned: Optional[int] = None
     ban_reason: Optional[str] = None
     expires_at: Optional[str] = None
+
+class LicenseImportItem(BaseModel):
+    license_key: str
+    note: Optional[str] = ""
+    discord_id: Optional[str] = None
+    duration_days: Optional[int] = None
+    max_executions: Optional[int] = -1
+
+class LicenseBulkImportRequest(BaseModel):
+    script_id: int
+    keys: List[LicenseImportItem]
+
+class LicenseBulkActionRequest(BaseModel):
+    action: str # 'copy', 'resethwid', 'ban', 'unban', 'delete', 'extend'
+    license_ids: List[int]
+    extend_days: Optional[int] = 30
+    ban_reason: Optional[str] = "Bulk banned by administrator"
+
+class LicenseExtendRequest(BaseModel):
+    days: int = 30 # 0 for lifetime
+
+class BlacklistAddRequest(BaseModel):
+    target_type: str # 'HWID' or 'IP'
+    target_value: str
+    reason: Optional[str] = "Manual security ban"
+
+class SimulateHandshakeRequest(BaseModel):
+    slug: str
+    key: str
+    hwid: Optional[str] = "SIMULATOR_HWID_ABC123"
+
+class TestWebhookRequest(BaseModel):
+    webhook_url: Optional[str] = None
 
 class WatermarkLookupRequest(BaseModel):
     watermark_or_source: str
@@ -561,6 +596,82 @@ async def delete_script(script_id: int, user: Dict = Depends(get_current_user)):
         await conn.commit()
     return {"success": True}
 
+@app.post("/api/scripts/{script_id}/test-webhook")
+async def test_script_webhook(script_id: int, req: TestWebhookRequest, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT * FROM scripts WHERE id = ? AND user_id = ?", (script_id, user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        webhook_url = req.webhook_url or script["discord_webhook"]
+        if not webhook_url or not str(webhook_url).startswith("https://discord.com/api/webhooks/"):
+            raise HTTPException(status_code=400, detail="No valid Discord webhook URL provided.")
+
+        fields = [
+            {"name": "Script Hub", "value": f"{script['name']} (`{script['slug']}`)", "inline": True},
+            {"name": "Status", "value": "🟢 Webhook Connection Active & Verified", "inline": True},
+            {"name": "Security VM", "value": "O_bfuscate 1.1 Virtualization Ready", "inline": True},
+            {"name": "Timestamp", "value": f"<t:{int(time.time())}:R>", "inline": True}
+        ]
+        await send_discord_security_alert(
+            webhook_url=webhook_url,
+            title="FleedGuard Webhook Diagnostic Test",
+            description="This is an automated verification test dispatched from your FleedGuard Enterprise Console.",
+            fields=fields,
+            color=0xFACC15
+        )
+
+    return {"success": True, "message": "Test security alert sent to Discord webhook!"}
+
+# ----------------- Discord User Resolver API -----------------
+_discord_user_cache: Dict[str, Dict] = {}
+
+async def resolve_discord_user(user_id: str) -> Dict:
+    clean_id = str(user_id).strip("<@!> ")
+    if not clean_id or not clean_id.isdigit():
+        return {"id": user_id, "username": user_id, "display_name": user_id, "avatar_url": None}
+
+    if clean_id in _discord_user_cache:
+        return _discord_user_cache[clean_id]
+
+    token = os.getenv("DISCORD_TOKEN")
+    if not token:
+        res = {"id": clean_id, "username": f"User {clean_id[-4:]}", "display_name": f"User {clean_id[-4:]}", "avatar_url": None}
+        _discord_user_cache[clean_id] = res
+        return res
+
+    try:
+        url = f"https://discord.com/api/v10/users/{clean_id}"
+        headers = {"Authorization": f"Bot {token}", "User-Agent": "FleedGuardBot/1.0"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    username = data.get("username")
+                    global_name = data.get("global_name") or username
+                    avatar_hash = data.get("avatar")
+                    avatar_url = f"https://cdn.discordapp.com/avatars/{clean_id}/{avatar_hash}.png?size=64" if avatar_hash else "https://cdn.discordapp.com/embed/avatars/0.png"
+                    res = {
+                        "id": clean_id,
+                        "username": username,
+                        "display_name": global_name,
+                        "avatar_url": avatar_url
+                    }
+                    _discord_user_cache[clean_id] = res
+                    return res
+    except Exception:
+        pass
+
+    res = {"id": clean_id, "username": f"User {clean_id[-4:]}", "display_name": f"User {clean_id[-4:]}", "avatar_url": None}
+    _discord_user_cache[clean_id] = res
+    return res
+
+@app.get("/api/discord/user/{user_id}")
+async def get_discord_user_info(user_id: str):
+    """Fetches Discord username, avatar, and display name for user ID."""
+    return await resolve_discord_user(user_id)
+
 # ----------------- License / Key Management API -----------------
 @app.get("/api/scripts/{script_id}/licenses")
 async def list_licenses(script_id: int, user: Dict = Depends(get_current_user)):
@@ -572,7 +683,77 @@ async def list_licenses(script_id: int, user: Dict = Depends(get_current_user)):
             ORDER BY l.id DESC
         """, (script_id, user["id"]))
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            raw_disc = d.get("discord_id")
+            if raw_disc:
+                clean_disc = str(raw_disc).strip("<@!> ")
+                if clean_disc in _discord_user_cache:
+                    u = _discord_user_cache[clean_disc]
+                    d["discord_username"] = u.get("username")
+                    d["discord_display_name"] = u.get("display_name")
+                    d["discord_avatar"] = u.get("avatar_url")
+            result.append(d)
+        return result
+
+@app.get("/api/licenses/{license_id}/history")
+async def get_license_history(license_id: int, user: Dict = Depends(get_current_user)):
+    """Deep forensic inspection for a single license key."""
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT l.*, s.name as script_name, s.slug as script_slug
+            FROM licenses l
+            JOIN scripts s ON l.script_id = s.id
+            WHERE l.id = ? AND s.user_id = ?
+        """, (license_id, user["id"]))
+        lic = await cursor.fetchone()
+        if not lic:
+            raise HTTPException(status_code=404, detail="License not found")
+
+        clean_key = lic["license_key"]
+
+        c_logs = await conn.execute("""
+            SELECT * FROM execution_logs
+            WHERE license_id = ? OR UPPER(license_key) = UPPER(?)
+            ORDER BY id DESC LIMIT 50
+        """, (license_id, clean_key))
+        logs = [dict(r) for r in await c_logs.fetchall()]
+
+        c_users = await conn.execute("""
+            SELECT roblox_username, roblox_user_id, MAX(timestamp) as last_seen, COUNT(*) as exec_count
+            FROM execution_logs
+            WHERE (license_id = ? OR UPPER(license_key) = UPPER(?)) AND roblox_user_id > 0
+            GROUP BY roblox_username, roblox_user_id
+            ORDER BY exec_count DESC LIMIT 20
+        """, (license_id, clean_key))
+        users = [dict(r) for r in await c_users.fetchall()]
+
+        c_ips = await conn.execute("""
+            SELECT ip_address, MAX(timestamp) as last_seen, COUNT(*) as exec_count
+            FROM execution_logs
+            WHERE (license_id = ? OR UPPER(license_key) = UPPER(?)) AND ip_address IS NOT NULL AND ip_address != ''
+            GROUP BY ip_address
+            ORDER BY exec_count DESC LIMIT 20
+        """, (license_id, clean_key))
+        ips = [dict(r) for r in await c_ips.fetchall()]
+
+        c_games = await conn.execute("""
+            SELECT game_name, place_id, COUNT(*) as exec_count
+            FROM execution_logs
+            WHERE (license_id = ? OR UPPER(license_key) = UPPER(?)) AND place_id > 0
+            GROUP BY game_name, place_id
+            ORDER BY exec_count DESC LIMIT 10
+        """, (license_id, clean_key))
+        games = [dict(r) for r in await c_games.fetchall()]
+
+        return {
+            "license": dict(lic),
+            "logs": logs,
+            "roblox_users": users,
+            "ip_addresses": ips,
+            "games": games
+        }
 
 class LicenseCreateDirectRequest(BaseModel):
     slug: str
@@ -589,7 +770,6 @@ async def create_single_license(req: LicenseCreateDirectRequest, user: Dict = De
         cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (clean_slug, user["id"]))
         script = await cursor.fetchone()
         if not script:
-            # Check if admin or create placeholder script
             cursor2 = await conn.execute("SELECT id FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor2.fetchone()
             if not script:
@@ -610,7 +790,6 @@ async def create_single_license(req: LicenseCreateDirectRequest, user: Dict = De
 @app.post("/api/licenses/bulk")
 async def create_bulk_licenses(req: LicenseBulkCreateRequest, user: Dict = Depends(get_current_user)):
     async with db.get_db() as conn:
-        # Verify script ownership
         cursor = await conn.execute("SELECT slug FROM scripts WHERE id = ? AND user_id = ?", (req.script_id, user["id"]))
         script = await cursor.fetchone()
         if not script:
@@ -623,7 +802,7 @@ async def create_bulk_licenses(req: LicenseBulkCreateRequest, user: Dict = Depen
             expires_at = (now_utc + timedelta(days=req.duration_days)).isoformat()
 
         generated_keys = []
-        for _ in range(max(1, min(req.count, 100))):
+        for _ in range(max(1, min(req.count, 200))):
             key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
             await conn.execute("""
                 INSERT INTO licenses (script_id, license_key, note, max_executions, expires_at, created_at)
@@ -634,6 +813,134 @@ async def create_bulk_licenses(req: LicenseBulkCreateRequest, user: Dict = Depen
         await conn.commit()
 
     return {"success": True, "count": len(generated_keys), "keys": generated_keys}
+
+@app.post("/api/licenses/import")
+async def import_licenses(req: LicenseBulkImportRequest, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE id = ? AND user_id = ?", (req.script_id, user["id"]))
+        if not await cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        now_utc = datetime.now(timezone.utc)
+        now_iso = now_utc.isoformat()
+        imported = 0
+        skipped = 0
+
+        for item in req.keys:
+            clean_key = str(item.license_key).strip().upper()
+            if not clean_key:
+                skipped += 1
+                continue
+
+            expires_at = None
+            if item.duration_days and item.duration_days > 0:
+                expires_at = (now_utc + timedelta(days=item.duration_days)).isoformat()
+
+            clean_disc = str(item.discord_id).strip("<@!>") if item.discord_id else None
+
+            try:
+                await conn.execute("""
+                    INSERT INTO licenses (script_id, license_key, note, discord_id, max_executions, expires_at, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(license_key) DO UPDATE SET note = excluded.note, discord_id = excluded.discord_id
+                """, (req.script_id, clean_key, item.note, clean_disc, item.max_executions or -1, expires_at, now_iso))
+                imported += 1
+            except Exception:
+                skipped += 1
+
+        await conn.commit()
+
+    return {"success": True, "imported": imported, "skipped": skipped}
+
+@app.post("/api/licenses/bulk-action")
+async def bulk_license_action(req: LicenseBulkActionRequest, user: Dict = Depends(get_current_user)):
+    if not req.license_ids:
+        return {"success": True, "affected": 0}
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    async with db.get_db() as conn:
+        placeholders = ",".join("?" * len(req.license_ids))
+        cursor = await conn.execute(f"""
+            SELECT l.id, l.license_key, l.expires_at FROM licenses l
+            JOIN scripts s ON l.script_id = s.id
+            WHERE l.id IN ({placeholders}) AND s.user_id = ?
+        """, (*req.license_ids, user["id"]))
+        valid_rows = await cursor.fetchall()
+        valid_ids = [r["id"] for r in valid_rows]
+
+        if not valid_ids:
+            return {"success": True, "affected": 0}
+
+        valid_placeholders = ",".join("?" * len(valid_ids))
+
+        if req.action == "resethwid":
+            await conn.execute(f"""
+                UPDATE licenses SET hwid = NULL, ip_address = NULL, last_reset_at = ?
+                WHERE id IN ({valid_placeholders})
+            """, (now_iso, *valid_ids))
+        elif req.action == "ban":
+            await conn.execute(f"""
+                UPDATE licenses SET is_banned = 1, ban_reason = ?
+                WHERE id IN ({valid_placeholders})
+            """, (req.ban_reason or "Bulk Banned by Admin", *valid_ids))
+        elif req.action == "unban":
+            await conn.execute(f"""
+                UPDATE licenses SET is_banned = 0, ban_reason = NULL
+                WHERE id IN ({valid_placeholders})
+            """, (*valid_ids,))
+        elif req.action == "delete":
+            await conn.execute(f"""
+                DELETE FROM licenses WHERE id IN ({valid_placeholders})
+            """, (*valid_ids,))
+        elif req.action == "extend":
+            days = req.extend_days or 30
+            for r in valid_rows:
+                base_dt = datetime.now(timezone.utc)
+                if r["expires_at"]:
+                    try:
+                        cur_exp = datetime.fromisoformat(r["expires_at"])
+                        if cur_exp > base_dt:
+                            base_dt = cur_exp
+                    except Exception:
+                        pass
+                new_exp = (base_dt + timedelta(days=days)).isoformat()
+                await conn.execute("UPDATE licenses SET expires_at = ? WHERE id = ?", (new_exp, r["id"]))
+
+        await conn.commit()
+
+    return {"success": True, "affected": len(valid_ids)}
+
+@app.post("/api/licenses/{license_id}/extend")
+async def extend_single_license(license_id: int, req: LicenseExtendRequest, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT l.id, l.expires_at FROM licenses l
+            JOIN scripts s ON l.script_id = s.id
+            WHERE l.id = ? AND s.user_id = ?
+        """, (license_id, user["id"]))
+        lic = await cursor.fetchone()
+        if not lic:
+            raise HTTPException(status_code=404, detail="License not found")
+
+        if req.days <= 0:
+            # Lifetime
+            new_exp = None
+        else:
+            base_dt = datetime.now(timezone.utc)
+            if lic["expires_at"]:
+                try:
+                    cur_exp = datetime.fromisoformat(lic["expires_at"])
+                    if cur_exp > base_dt:
+                        base_dt = cur_exp
+                except Exception:
+                    pass
+            new_exp = (base_dt + timedelta(days=req.days)).isoformat()
+
+        await conn.execute("UPDATE licenses SET expires_at = ? WHERE id = ?", (new_exp, license_id))
+        await conn.commit()
+
+    return {"success": True, "expires_at": new_exp}
 
 @app.post("/api/licenses/{license_id}/resethwid")
 async def reset_license_hwid(license_id: int, user: Dict = Depends(get_current_user)):
@@ -696,33 +1003,103 @@ async def get_dashboard_stats(user: Dict = Depends(get_current_user)):
         c1 = await conn.execute("SELECT COUNT(*) as cnt FROM scripts WHERE user_id = ?", (user["id"],))
         scripts_cnt = (await c1.fetchone())["cnt"]
 
-        # Total licenses & active
+        # Total licenses & breakdown
         c2 = await conn.execute("""
             SELECT COUNT(*) as total,
-                   SUM(CASE WHEN is_banned = 0 THEN 1 ELSE 0 END) as active
+                   SUM(CASE WHEN is_banned = 0 AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) THEN 1 ELSE 0 END) as active,
+                   SUM(CASE WHEN is_banned = 1 THEN 1 ELSE 0 END) as banned,
+                   SUM(CASE WHEN is_banned = 0 AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now') THEN 1 ELSE 0 END) as expired,
+                   SUM(CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END) as lifetime,
+                   SUM(CASE WHEN hwid IS NOT NULL AND hwid != '' THEN 1 ELSE 0 END) as bound_hwids
             FROM licenses WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
         """, (user["id"],))
         lic_row = await c2.fetchone()
         total_licenses = lic_row["total"] if lic_row else 0
         active_licenses = lic_row["active"] if lic_row and lic_row["active"] else 0
+        banned_licenses = lic_row["banned"] if lic_row and lic_row["banned"] else 0
+        expired_licenses = lic_row["expired"] if lic_row and lic_row["expired"] else 0
+        lifetime_licenses = lic_row["lifetime"] if lic_row and lic_row["lifetime"] else 0
+        bound_hwids = lic_row["bound_hwids"] if lic_row and lic_row["bound_hwids"] else 0
 
         # Total executions & blocked
         c3 = await conn.execute("""
             SELECT COUNT(*) as total_execs,
                    SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_execs,
-                   SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked_execs
+                   SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked_execs,
+                   COUNT(DISTINCT CASE WHEN roblox_user_id > 0 THEN roblox_user_id ELSE NULL END) as unique_players
             FROM execution_logs WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
         """, (user["id"],))
         exec_row = await c3.fetchone()
         total_execs = exec_row["total_execs"] if exec_row else 0
+        success_execs = exec_row["success_execs"] if exec_row and exec_row["success_execs"] else 0
         blocked_execs = exec_row["blocked_execs"] if exec_row and exec_row["blocked_execs"] else 0
+        unique_players = exec_row["unique_players"] if exec_row and exec_row["unique_players"] else 0
+
+        # Active sessions in last 15 min
+        c4 = await conn.execute("""
+            SELECT COUNT(*) as cnt FROM execution_logs
+            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+              AND timestamp >= datetime('now', '-15 minutes')
+        """, (user["id"],))
+        active_15m = (await c4.fetchone())["cnt"]
+
+        # Hourly activity (last 24 hours)
+        c5 = await conn.execute("""
+            SELECT strftime('%H:00', timestamp) as hr,
+                   SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_cnt,
+                   SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked_cnt,
+                   COUNT(*) as total_cnt
+            FROM execution_logs
+            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+              AND timestamp >= datetime('now', '-24 hours')
+            GROUP BY strftime('%Y-%m-%d %H', timestamp)
+            ORDER BY timestamp ASC
+        """, (user["id"],))
+        hourly_rows = await c5.fetchall()
+        hourly_activity = [{"hour": r["hr"], "success": r["success_cnt"] or 0, "blocked": r["blocked_cnt"] or 0, "total": r["total_cnt"]} for r in hourly_rows]
+
+        # Top Executors
+        c6 = await conn.execute("""
+            SELECT COALESCE(NULLIF(executor_name, ''), 'Universal') as exec_name, COUNT(*) as cnt
+            FROM execution_logs
+            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+            GROUP BY exec_name
+            ORDER BY cnt DESC
+            LIMIT 5
+        """, (user["id"],))
+        top_executors_rows = await c6.fetchall()
+        top_executors = [{"name": r["exec_name"], "count": r["cnt"]} for r in top_executors_rows]
+
+        # Top Games / Experiences
+        c7 = await conn.execute("""
+            SELECT COALESCE(NULLIF(game_name, ''), 'Roblox Experience') as gname,
+                   place_id,
+                   COUNT(*) as cnt
+            FROM execution_logs
+            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+            GROUP BY gname, place_id
+            ORDER BY cnt DESC
+            LIMIT 5
+        """, (user["id"],))
+        top_games_rows = await c7.fetchall()
+        top_games = [{"name": r["gname"], "place_id": r["place_id"], "count": r["cnt"]} for r in top_games_rows]
 
         return {
             "total_scripts": scripts_cnt,
             "total_licenses": total_licenses,
             "active_licenses": active_licenses,
+            "banned_licenses": banned_licenses,
+            "expired_licenses": expired_licenses,
+            "lifetime_licenses": lifetime_licenses,
+            "bound_hwids": bound_hwids,
             "total_executions": total_execs,
-            "blocked_attacks": blocked_execs
+            "success_executions": success_execs,
+            "blocked_attacks": blocked_execs,
+            "unique_players": unique_players,
+            "active_sessions_15m": active_15m,
+            "hourly_activity": hourly_activity,
+            "top_executors": top_executors,
+            "top_games": top_games
         }
 
 @app.get("/api/logs")
@@ -919,6 +1296,18 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Security Violation: Extraction attempt detected and logged."})
+
+        # Check Global Blacklist (HWID or IP)
+        cursor_bl = await conn.execute("SELECT reason FROM blacklists WHERE target_value IN (?, ?)", (norm_hwid, client_ip))
+        bl_row = await cursor_bl.fetchone()
+        if bl_row:
+            bl_reason = bl_row["reason"] or "Globally blacklisted device/IP."
+            await conn.execute("""
+                INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BLACKLISTED', ?, ?)
+            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", bl_reason, now_iso))
+            await conn.commit()
+            return JSONResponse(status_code=403, content={"success": False, "message": f"Access Denied: {bl_reason}"})
 
         # Check Killswitch
         if script["killswitch_active"]:
@@ -1396,6 +1785,154 @@ async def ban_leaker(req: BanLeakerRequest, user: Dict = Depends(get_current_use
             await send_discord_security_alert(license_row["discord_webhook"], "License Banned (Forensic Trace)", f"License `{license_row['license_key']}` was revoked.", fields, 0xEF4444)
 
     return {"success": True, "message": f"License {license_row['license_key']} banned successfully."}
+
+
+# ----------------- Global Blacklist (HWID & IP) Management -----------------
+
+@app.get("/api/blacklist")
+async def get_blacklists(user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT * FROM blacklists WHERE user_id = ? ORDER BY id DESC", (user["id"],))
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+@app.post("/api/blacklist/add")
+async def add_blacklist(req: BlacklistAddRequest, user: Dict = Depends(get_current_user)):
+    val = req.target_value.strip()
+    if not val:
+        raise HTTPException(status_code=400, detail="Target value required")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        await conn.execute("""
+            INSERT INTO blacklists (user_id, target_type, target_value, reason, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user["id"], req.target_type.upper(), val, req.reason or "Manual security ban", now_iso))
+        await conn.commit()
+    return {"success": True, "message": f"{req.target_type.upper()} {val} blacklisted"}
+
+@app.delete("/api/blacklist/{item_id}")
+async def remove_blacklist(item_id: int, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        await conn.execute("DELETE FROM blacklists WHERE id = ? AND user_id = ?", (item_id, user["id"]))
+        await conn.commit()
+    return {"success": True}
+
+
+# ----------------- System Health & Diagnostics API -----------------
+
+@app.get("/api/system/health")
+async def get_system_health(user: Dict = Depends(get_current_user)):
+    uptime_sec = int(time.time() - SERVER_START_TIME)
+    days = uptime_sec // 86400
+    hours = (uptime_sec % 86400) // 3600
+    minutes = (uptime_sec % 3600) // 60
+    seconds = uptime_sec % 60
+    uptime_str = f"{days}d {hours}h {minutes}m {seconds}s" if days > 0 else f"{hours}h {minutes}m {seconds}s"
+
+    db_path = db.db_path
+    db_size_bytes = os.path.getsize(db_path) if os.path.exists(db_path) else 0
+    if db_size_bytes > 1024 * 1024:
+        db_size_str = f"{(db_size_bytes / (1024 * 1024)):.2f} MB"
+    elif db_size_bytes > 1024:
+        db_size_str = f"{(db_size_bytes / 1024):.1f} KB"
+    else:
+        db_size_str = f"{db_size_bytes} B"
+
+    public_url = None
+    url_file = os.path.join(os.path.dirname(__file__), "public_url.txt")
+    if os.path.exists(url_file):
+        try:
+            with open(url_file, "r", encoding="utf-8") as f:
+                public_url = f.read().strip()
+        except Exception:
+            pass
+
+    async with db.get_db() as conn:
+        c1 = await conn.execute("SELECT COUNT(*) as cnt FROM active_nonces")
+        active_nonces = (await c1.fetchone())["cnt"]
+        c2 = await conn.execute("SELECT COUNT(*) as cnt FROM execution_logs")
+        total_logs = (await c2.fetchone())["cnt"]
+        c3 = await conn.execute("SELECT COUNT(*) as cnt FROM blacklists WHERE user_id = ?", (user["id"],))
+        blacklist_cnt = (await c3.fetchone())["cnt"]
+
+    return {
+        "uptime": uptime_str,
+        "uptime_seconds": uptime_sec,
+        "database_size": db_size_str,
+        "database_size_bytes": db_size_bytes,
+        "active_nonces": active_nonces,
+        "total_logs": total_logs,
+        "blacklisted_items": blacklist_cnt,
+        "public_tunnel_url": public_url,
+        "server_time_utc": datetime.now(timezone.utc).isoformat(),
+        "wal_mode": "WAL Enabled",
+        "crypto_version": "AES-256-GCM + HMAC-SHA256"
+    }
+
+@app.get("/api/system/backup")
+async def download_db_backup(user: Dict = Depends(get_current_user)):
+    db_path = db.db_path
+    if not os.path.exists(db_path):
+        raise HTTPException(status_code=404, detail="Database file not found")
+    filename = f"fleedguard_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    return FileResponse(path=db_path, filename=filename, media_type="application/x-sqlite3")
+
+
+# ----------------- Developer Diagnostic & Handshake Simulator Tool -----------------
+
+@app.post("/api/tools/simulate-handshake")
+async def simulate_handshake(req: SimulateHandshakeRequest, user: Dict = Depends(get_current_user)):
+    clean_slug = req.slug.strip().lower()
+    clean_key = req.key.strip().upper()
+    norm_hwid = crypto_engine.normalize_hwid(req.hwid or "SIMULATOR_HWID")
+
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ? AND user_id = ?", (clean_slug, user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            return {"valid": False, "reason": f"Script hub '{clean_slug}' not found under your account"}
+
+        if script["killswitch_active"]:
+            return {"valid": False, "reason": f"Script killswitch is active: {script['killswitch_reason']}"}
+
+        cursor = await conn.execute("SELECT * FROM licenses WHERE UPPER(license_key) = ? AND script_id = ?", (clean_key, script["id"]))
+        lic = await cursor.fetchone()
+        if not lic:
+            return {"valid": False, "reason": f"License key '{clean_key}' does not exist for script '{script['name']}'"}
+
+        if lic["is_banned"]:
+            return {"valid": False, "reason": f"License key is banned: {lic['ban_reason'] or 'No reason provided'}"}
+
+        if lic["expires_at"]:
+            try:
+                exp_dt = datetime.fromisoformat(lic["expires_at"])
+                if datetime.now(timezone.utc) > exp_dt:
+                    return {"valid": False, "reason": f"License expired on {lic['expires_at']}"}
+            except Exception:
+                pass
+
+        if lic["max_executions"] != -1 and lic["execution_count"] >= lic["max_executions"]:
+            return {"valid": False, "reason": f"Execution limit reached ({lic['execution_count']}/{lic['max_executions']})"}
+
+        hwid_status = "Unbound (Will bind on next execution)"
+        if lic["hwid"]:
+            if lic["hwid"] == norm_hwid:
+                hwid_status = "Matches bound device HWID"
+            else:
+                hwid_status = f"HWID Mismatch (Bound: {lic['hwid'][:12]}... Presented: {norm_hwid[:12]}...)"
+
+        return {
+            "valid": True,
+            "script_name": script["name"],
+            "script_slug": script["slug"],
+            "protection_mode": script["is_obfuscated_mode"],
+            "license_key": lic["license_key"],
+            "note": lic["note"],
+            "discord_id": lic["discord_id"],
+            "hwid_status": hwid_status,
+            "execution_count": lic["execution_count"],
+            "expires_at": lic["expires_at"] or "Lifetime"
+        }
 
 
 

@@ -187,6 +187,19 @@ class WhitelistDB:
                 except Exception:
                     pass
 
+            # 6. Global Blacklists (HWIDs and IPs)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS blacklists (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    target_type TEXT NOT NULL, -- 'HWID' or 'IP'
+                    target_value TEXT NOT NULL,
+                    reason TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+
             # Indices for ultra-fast lookup
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_script ON licenses(script_id);")
@@ -194,6 +207,8 @@ class WhitelistDB:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON execution_logs(timestamp);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_watermark ON execution_logs(watermark);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_time ON execution_logs(license_key, timestamp);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_status_time ON execution_logs(status, timestamp);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_blacklists_val ON blacklists(target_value);")
             await conn.commit()
 
 db = WhitelistDB()

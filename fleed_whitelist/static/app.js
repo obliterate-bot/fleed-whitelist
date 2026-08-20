@@ -1,21 +1,24 @@
 /**
- * FleedGuard Enterprise Client Dashboard Engine
- * Advanced Whitelist Management, Anti-Dump DRM, Real-Time Telemetry & QoL Automation
+ * FleedGuard Enterprise Security Console Engine
+ * Comprehensive Whitelist Management, Anti-Dump DRM, Real-Time Telemetry & QoL Automation
  */
 
 const API_BASE = "";
 
-// State
+// Global State
 let currentUser = null;
 let currentScripts = [];
 let currentLicenses = [];
 let currentLogs = [];
 let currentBypasses = [];
+let currentBlacklists = [];
+let currentStats = null;
 let selectedScriptId = null;
 let selectedLicenseIds = new Set();
 let liveLogInterval = null;
 let isAutoRefreshOn = true;
 let modalSelectedScript = null;
+const discordUsersCache = new Map();
 
 // Toast Notification Utility
 function showToast(message, type = "success") {
@@ -44,7 +47,13 @@ function copyText(text, label = "Copied to clipboard!") {
   });
 }
 
-// API Fetch Helper
+// Escape HTML helper
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+
+// Generic API Fetch Wrapper
 async function apiCall(endpoint, method = "GET", body = null) {
   const headers = { "Content-Type": "application/json" };
   const token = localStorage.getItem("fleed_token");
@@ -68,9 +77,14 @@ async function apiCall(endpoint, method = "GET", body = null) {
 
 // ----------------- Auth & Profile -----------------
 async function checkAuth() {
+  const startPing = performance.now();
   try {
     const user = await apiCall("/api/auth/me");
     currentUser = user;
+    const pingMs = Math.round(performance.now() - startPing);
+    const pingBadge = document.getElementById("headerPingBadge");
+    if (pingBadge) pingBadge.innerText = `${pingMs}ms`;
+
     if (window.location.pathname === "/" || window.location.pathname === "/index.html") {
       window.location.href = "/dashboard";
     }
@@ -153,6 +167,7 @@ async function confirmEnable2FA() {
     await apiCall("/api/auth/2fa/verify", "POST", { code });
     showToast("2FA successfully enabled!", "success");
     closeModal("modal2FA");
+    currentUser.two_factor_enabled = true;
     loadProfileStats();
   } catch (err) {}
 }
@@ -176,25 +191,207 @@ function switchTab(tabName) {
   if (tabName === "scripts") loadScripts();
   if (tabName === "licenses") loadLicensesView();
   if (tabName === "logs") loadLiveLogs();
-  if (tabName === "bypasses") { loadBypassLogs(); loadAnomalies(); }
+  if (tabName === "bypasses") { loadBypassLogs(); loadAnomalies(); loadBlacklists(); }
+  if (tabName === "api") loadApiStudioView();
   if (tabName === "settings") loadProfileStats();
+  if (tabName === "system") loadSystemHealth();
 }
 
-// ----------------- Overview & Stats -----------------
+// ----------------- Overview & Telemetry Analytics -----------------
 async function loadOverviewStats() {
   try {
     const stats = await apiCall("/api/stats");
-    document.getElementById("statScripts").innerText = stats.total_scripts;
-    document.getElementById("statActiveLicenses").innerText = stats.active_licenses;
-    document.getElementById("statExecutions").innerText = stats.total_executions;
-    document.getElementById("statBlockedAttacks").innerText = stats.blocked_attacks;
+    currentStats = stats;
+
+    document.getElementById("statScripts").innerText = stats.total_scripts || 0;
+    document.getElementById("statActiveLicenses").innerText = stats.active_licenses || 0;
+    document.getElementById("statExecutions").innerText = stats.total_executions || 0;
+    document.getElementById("statBlockedAttacks").innerText = stats.blocked_attacks || 0;
+    document.getElementById("statUniquePlayers").innerText = stats.unique_players || 0;
+    document.getElementById("statActive15m").innerText = stats.active_sessions_15m || 0;
+
+    // Subtext stats
+    const licBreakdown = document.getElementById("statLicenseBreakdown");
+    if (licBreakdown) {
+      licBreakdown.innerText = `${stats.total_licenses || 0} Total (${stats.banned_licenses || 0} Banned, ${stats.expired_licenses || 0} Expired)`;
+    }
+
+    const succRate = document.getElementById("statSuccessRate");
+    if (succRate) {
+      const rate = stats.total_executions > 0 
+        ? Math.round((stats.success_executions / stats.total_executions) * 100) 
+        : 100;
+      succRate.innerHTML = `<i class="fa-solid fa-circle-check" style="color:var(--success-color);"></i> ${rate}% Success rate`;
+    }
+
+    // Update tab count badges
+    const bScr = document.getElementById("badgeScriptsCount");
+    if (bScr) bScr.innerText = stats.total_scripts || 0;
+    const bLic = document.getElementById("badgeLicensesCount");
+    if (bLic) bLic.innerText = stats.total_licenses || 0;
+
+    const bThreat = document.getElementById("badgeThreatCount");
+    if (bThreat) {
+      if (stats.blocked_attacks > 0) {
+        bThreat.style.display = "inline-block";
+        bThreat.innerText = stats.blocked_attacks;
+      } else {
+        bThreat.style.display = "none";
+      }
+    }
+
+    // Render 24h Hourly Activity Chart (SVG)
+    renderOverviewChart(stats.hourly_activity || []);
+
+    // Render Top Games & Top Executors
+    renderTopGames(stats.top_games || []);
+    renderTopExecutors(stats.top_executors || []);
+
+    // Fetch system health to detect public tunnel
+    loadSystemHealth();
   } catch (e) {}
+}
+
+function renderOverviewChart(hourlyData) {
+  const container = document.getElementById("overviewChartContainer");
+  if (!container) return;
+
+  if (!hourlyData || hourlyData.length === 0) {
+    // Generate dummy hourly labels for zero-state
+    hourlyData = [];
+    const now = new Date();
+    for (let i = 23; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 3600 * 1000);
+      hourlyData.push({
+        hour: `${String(d.getHours()).padStart(2, '0')}:00`,
+        success: 0,
+        blocked: 0,
+        total: 0
+      });
+    }
+  }
+
+  const maxVal = Math.max(...hourlyData.map(d => d.total || 0), 5);
+  const chartHeight = 160;
+  const barWidth = 100 / hourlyData.length;
+
+  let barsSvg = "";
+  hourlyData.forEach((d, idx) => {
+    const total = d.total || 0;
+    const succ = d.success || 0;
+    const block = d.blocked || 0;
+    
+    const succHeight = (succ / maxVal) * chartHeight;
+    const blockHeight = (block / maxVal) * chartHeight;
+    const totalHeight = succHeight + blockHeight;
+    
+    const xPos = idx * barWidth + barWidth * 0.15;
+    const widthPct = barWidth * 0.7;
+
+    // Success bar
+    const ySucc = chartHeight - succHeight;
+    barsSvg += `
+      <rect class="chart-bar-success" x="${xPos}%" y="${ySucc}" width="${widthPct}%" height="${succHeight}" title="${d.hour}: ${succ} Deliveries, ${block} Blocked">
+        <title>${d.hour}: ${succ} Deliveries, ${block} Blocked</title>
+      </rect>
+    `;
+
+    // Blocked bar (stacked on top)
+    if (block > 0) {
+      const yBlock = ySucc - blockHeight;
+      barsSvg += `
+        <rect class="chart-bar-blocked" x="${xPos}%" y="${yBlock}" width="${widthPct}%" height="${blockHeight}">
+          <title>${d.hour}: ${block} Blocked Threats</title>
+        </rect>
+      `;
+    }
+
+    // Hour label on X-axis (every 4th hour)
+    if (idx % 4 === 0 || idx === hourlyData.length - 1) {
+      barsSvg += `
+        <text class="chart-axis-label" x="${xPos + widthPct / 2}%" y="${chartHeight + 20}" text-anchor="middle">${d.hour}</text>
+      `;
+    }
+  });
+
+  container.innerHTML = `
+    <svg class="chart-svg" viewBox="0 0 1000 ${chartHeight + 30}" preserveAspectRatio="none">
+      <!-- Grid lines -->
+      <line x1="0" y1="0" x2="1000" y2="0" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+      <line x1="0" y1="${chartHeight / 2}" x2="1000" y2="${chartHeight / 2}" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
+      <line x1="0" y1="${chartHeight}" x2="1000" y2="${chartHeight}" stroke="rgba(255,255,255,0.1)" stroke-width="1" />
+      ${barsSvg}
+    </svg>
+  `;
+}
+
+function renderTopGames(games) {
+  const container = document.getElementById("topGamesList");
+  if (!container) return;
+
+  if (games.length === 0) {
+    container.innerHTML = `<p style="color:var(--text-zinc-500); font-size:13px; text-align:center; padding:20px;">No game executions logged yet.</p>`;
+    return;
+  }
+
+  const maxCount = Math.max(...games.map(g => g.count), 1);
+  container.innerHTML = games.map(g => {
+    const pct = Math.round((g.count / maxCount) * 100);
+    const placeLink = g.place_id > 0 ? `https://www.roblox.com/games/${g.place_id}` : '#';
+    return `
+      <div class="rank-item">
+        <div class="rank-header">
+          <a href="${placeLink}" target="_blank" style="color:var(--text-white); font-weight:600; text-decoration:none; display:flex; align-items:center; gap:6px;">
+            <i class="fa-solid fa-gamepad" style="color:var(--gold-primary); font-size:11px;"></i>
+            ${escapeHtml(g.name)}
+            ${g.place_id > 0 ? `<i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>` : ''}
+          </a>
+          <span style="font-family:var(--font-mono); font-weight:700; color:var(--gold-light);">${g.count} execs</span>
+        </div>
+        <div class="rank-bar-bg">
+          <div class="rank-bar-fill" style="width:${pct}%;"></div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderTopExecutors(executors) {
+  const container = document.getElementById("topExecutorsList");
+  if (!container) return;
+
+  if (executors.length === 0) {
+    container.innerHTML = `<p style="color:var(--text-zinc-500); font-size:13px; text-align:center; padding:20px;">No executor telemetry logged yet.</p>`;
+    return;
+  }
+
+  const maxCount = Math.max(...executors.map(e => e.count), 1);
+  container.innerHTML = executors.map(e => {
+    const pct = Math.round((e.count / maxCount) * 100);
+    return `
+      <div class="rank-item">
+        <div class="rank-header">
+          <span style="color:var(--text-white); font-weight:600; display:flex; align-items:center; gap:6px;">
+            <i class="fa-solid fa-terminal" style="color:var(--info-color); font-size:11px;"></i>
+            ${escapeHtml(e.name)}
+          </span>
+          <span style="font-family:var(--font-mono); font-weight:700; color:var(--text-zinc-300);">${e.count}</span>
+        </div>
+        <div class="rank-bar-bg">
+          <div class="rank-bar-fill purple" style="width:${pct}%;"></div>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 async function loadProfileStats() {
   if (!currentUser) return;
   const uEl = document.getElementById("profileUsername");
   if (uEl) uEl.innerText = currentUser.username || "Developer";
+
+  const dUserFull = document.getElementById("dropdownUserFull");
+  if (dUserFull) dUserFull.innerText = currentUser.username || "Developer";
 
   const initEl = document.getElementById("userInitial");
   if (initEl && currentUser.username) {
@@ -204,22 +401,33 @@ async function loadProfileStats() {
   const eEl = document.getElementById("profileEmail");
   if (eEl) eEl.innerText = currentUser.email || "—";
 
+  const dEmail = document.getElementById("dropdownEmail");
+  if (dEmail) dEmail.innerText = currentUser.email || "—";
+
   const kEl = document.getElementById("profileApiKey");
   if (kEl) kEl.value = currentUser.api_key || "";
+
+  const roleEl = document.getElementById("profileRole");
+  if (roleEl) roleEl.innerText = currentUser.role || "developer";
   
   const statusBadge = document.getElementById("2FAStatusBadge");
   if (statusBadge) {
     if (currentUser.two_factor_enabled) {
       statusBadge.className = "badge badge-success";
-      statusBadge.innerHTML = '<i class="fa-solid fa-shield-check"></i> 2FA Enabled';
+      statusBadge.innerHTML = '<i class="fa-solid fa-shield-check"></i> 2FA ACTIVE';
       const btn = document.getElementById("btnSetup2FA");
       if (btn) btn.style.display = "none";
     } else {
       statusBadge.className = "badge badge-danger";
-      statusBadge.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> 2FA Disabled';
+      statusBadge.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> 2FA DISABLED';
       const btn = document.getElementById("btnSetup2FA");
       if (btn) btn.style.display = "inline-flex";
     }
+  }
+
+  const discInput = document.getElementById("discordBindInput");
+  if (discInput && currentUser.discord_id) {
+    discInput.value = currentUser.discord_id;
   }
 }
 
@@ -237,7 +445,7 @@ function toggleApiKeyVisibility() {
 }
 
 async function regenerateApiKey() {
-  if (!confirm("Are you sure you want to regenerate your Master API key? Any bots using the old key will need to be re-linked.")) return;
+  if (!confirm("Are you sure you want to regenerate your Master API key? Any bots or stores using the old key will need to be updated.")) return;
   try {
     const res = await apiCall("/api/auth/regenerate_api_key", "POST");
     if (res.api_key) {
@@ -249,7 +457,17 @@ async function regenerateApiKey() {
   } catch (err) {}
 }
 
-// ----------------- Scripts Hub Management -----------------
+async function saveDiscordBind() {
+  const val = document.getElementById("discordBindInput")?.value.trim();
+  if (!val) return showToast("Enter a valid Discord user ID", "error");
+  try {
+    const res = await apiCall("/api/auth/bind_discord", "POST", { discord_id: val });
+    showToast(res.message, "success");
+    currentUser.discord_id = val;
+  } catch (err) {}
+}
+
+// ----------------- Script Hubs Management -----------------
 async function loadScripts() {
   try {
     const scripts = await apiCall("/api/scripts");
@@ -264,8 +482,10 @@ function renderScripts(scripts) {
 
   if (scripts.length === 0) {
     listEl.innerHTML = `<div class="card" style="text-align:center; padding: 40px;">
-      <p style="color:var(--text-zinc-400); margin-bottom: 16px;">No script hubs created yet.</p>
-      <button class="btn btn-primary" onclick="openCreateScriptModal()">+ Create Your First Hub</button>
+      <i class="fa-solid fa-code" style="font-size:36px; color:var(--gold-primary); margin-bottom:12px; display:block;"></i>
+      <h3 style="color:var(--text-white); font-size:18px; margin-bottom:6px;">No Script Hubs Found</h3>
+      <p style="color:var(--text-zinc-400); margin-bottom: 18px; font-size:13px;">Create your first Lua script hub to enable O_bfuscate 1.1 virtualization and generate key-gated loaders.</p>
+      <button class="btn btn-primary" onclick="openCreateScriptModal()"><i class="fa-solid fa-plus"></i> Create Hub Now</button>
     </div>`;
     return;
   }
@@ -274,7 +494,7 @@ function renderScripts(scripts) {
   listEl.innerHTML = scripts.map(s => {
     let modeBadge = '<span class="badge badge-zinc"><i class="fa-solid fa-file-code"></i> Unobfuscated</span>';
     if (s.is_obfuscated_mode === 2) {
-      modeBadge = '<span class="badge badge-gold" style="background:rgba(250,204,21,0.18); border-color:var(--border-gold);"><i class="fa-solid fa-shield-halved"></i> O_bfuscate 1.1 VM</span>';
+      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-shield-halved"></i> O_bfuscate 1.1 VM</span>';
     } else if (s.is_obfuscated_mode === 1) {
       modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-lock"></i> Stream Encrypted</span>';
     }
@@ -283,7 +503,7 @@ function renderScripts(scripts) {
     const cleanLoadstringOneLiner = `loadstring(game:HttpGet("${currentOrigin}/v1/loader/${s.slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;
 
     return `
-      <div class="card" style="margin-bottom: 16px;">
+      <div class="card" style="margin-bottom: 18px;">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 14px; flex-wrap:wrap; gap:10px;">
           <div>
             <h3 style="color:var(--text-white); font-size:18px; margin-bottom:4px; display:flex; align-items:center; gap:8px;">
@@ -292,12 +512,14 @@ function renderScripts(scripts) {
               ${s.killswitch_active ? '<span class="badge badge-danger"><i class="fa-solid fa-bolt"></i> KILLSWITCH ACTIVE</span>' : '<span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> LIVE</span>'}
             </h3>
             <p style="color:var(--text-zinc-400); font-size:13px;">
-              Slug: <code style="color:var(--gold-light);">${s.slug}</code> | Version: v${s.version} | Bound Licenses: ${s.active_licenses || 0}
+              Slug: <code style="color:var(--gold-light);">${s.slug}</code> | Version: v${s.version} | Active Licenses: <strong style="color:var(--text-white);">${s.active_licenses || 0}</strong>
+              ${s.discord_webhook ? ` | <span style="color:#8ea1e1;"><i class="fa-brands fa-discord"></i> Webhook Active</span>` : ''}
             </p>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn btn-secondary btn-sm" onclick="openLoadstringModal('${s.slug}', '${escapeHtml(s.name)}')"><i class="fa-solid fa-terminal"></i> Get Loadstrings</button>
+            <button class="btn btn-secondary btn-sm" onclick="openLoadstringModal('${s.slug}', '${escapeHtml(s.name)}')"><i class="fa-solid fa-terminal"></i> Loadstring Studio</button>
             <button class="btn btn-secondary btn-sm" onclick="openEditScriptModal(${s.id})"><i class="fa-solid fa-pen-to-square"></i> Edit Source</button>
+            ${s.discord_webhook ? `<button class="btn btn-secondary btn-sm" onclick="testScriptWebhook(${s.id})" title="Test Discord Webhook"><i class="fa-brands fa-discord" style="color:#5865F2;"></i> Test Webhook</button>` : ''}
             <button class="btn ${s.killswitch_active ? 'btn-primary' : 'btn-danger'} btn-sm" onclick="toggleKillswitch(${s.id}, ${s.killswitch_active})">
               <i class="fa-solid fa-bolt"></i> ${s.killswitch_active ? 'Disable Killswitch' : 'Trigger Killswitch'}
             </button>
@@ -307,7 +529,7 @@ function renderScripts(scripts) {
 
         <div style="background:var(--bg-input); padding: 12px 16px; border-radius: 10px; border: 1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
           <div style="overflow:hidden; text-overflow:ellipsis;">
-            <span style="font-size:11px; color:var(--text-zinc-500); display:block; margin-bottom:2px; font-weight:600; text-transform:uppercase;">Key-Gated Execution Loadstring:</span>
+            <span style="font-size:11px; color:var(--text-zinc-500); display:block; margin-bottom:2px; font-weight:700; text-transform:uppercase;">Armored Buyer Execution Loadstring:</span>
             <code style="font-family:var(--font-mono); font-size:12px; color:var(--gold-light); word-break:break-all;">
               ${cleanLoadstringOneLiner}
             </code>
@@ -344,6 +566,18 @@ function updateScriptSizeCounter() {
       counter.innerText = bytes + " bytes";
     }
   }
+}
+
+function handleLuaFileUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    document.getElementById("scriptSource").value = event.target.result;
+    updateScriptSizeCounter();
+    showToast(`Loaded ${file.name} (${file.size} bytes)!`);
+  };
+  reader.readAsText(file);
 }
 
 function openCreateScriptModal() {
@@ -388,19 +622,27 @@ async function saveScript(e) {
   try {
     if (id) {
       await apiCall(`/api/scripts/${id}`, "PATCH", { name, version, raw_source, is_obfuscated_mode, discord_webhook });
-      showToast("Script updated successfully!");
+      showToast("Script hub updated successfully!");
     } else {
       await apiCall("/api/scripts", "POST", { name, slug, version, raw_source, is_obfuscated_mode, discord_webhook });
-      showToast("Script hub created successfully!");
+      showToast("Script hub created and deployed!");
     }
     closeModal("modalScript");
     loadScripts();
+    loadOverviewStats();
+  } catch (err) {}
+}
+
+async function testScriptWebhook(scriptId) {
+  try {
+    const res = await apiCall(`/api/scripts/${scriptId}/test-webhook`, "POST", {});
+    showToast(res.message, "success");
   } catch (err) {}
 }
 
 async function toggleKillswitch(id, currentStatus) {
   const newStatus = currentStatus ? 0 : 1;
-  const reason = newStatus ? prompt("Enter Killswitch Reason (optional):", "Emergency maintenance in progress") : "";
+  const reason = newStatus ? prompt("Enter Killswitch Reason:", "Emergency security update in progress") : "";
   try {
     await apiCall(`/api/scripts/${id}`, "PATCH", { killswitch_active: newStatus, killswitch_reason: reason });
     showToast(newStatus ? "Killswitch ACTIVATED! Executions blocked." : "Killswitch deactivated.", newStatus ? "error" : "success");
@@ -409,15 +651,16 @@ async function toggleKillswitch(id, currentStatus) {
 }
 
 async function deleteScript(id) {
-  if (!confirm("Are you sure you want to delete this script and all associated licenses?")) return;
+  if (!confirm("Are you sure you want to delete this script hub and all associated license keys?")) return;
   try {
     await apiCall(`/api/scripts/${id}`, "DELETE");
-    showToast("Script deleted.");
+    showToast("Script hub deleted.");
     loadScripts();
+    loadOverviewStats();
   } catch (err) {}
 }
 
-// ----------------- Loadstring Modal QoL -----------------
+// ----------------- Loadstring Studio -----------------
 function openLoadstringModal(slug, name) {
   modalSelectedScript = { slug, name };
   document.getElementById("loadstringKeyInput").value = "";
@@ -436,8 +679,10 @@ function renderModalLoadstring() {
     code = `getgenv().FleedKey = "${key}"\nloadstring(game:HttpGet("${origin}/v1/loader/${modalSelectedScript.slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;
   } else if (style === "direct") {
     code = `loadstring(game:HttpGet("${origin}/v1/loader/${modalSelectedScript.slug}?key=${key}"))()`;
-  } else {
+  } else if (style === "inline") {
     code = `getgenv().FleedKey="${key}";loadstring(game:HttpGet("${origin}/v1/loader/${modalSelectedScript.slug}?key=${key}"))()`;
+  } else if (style === "luau_headers") {
+    code = `local req = (syn and syn.request) or (http and http.request) or http_request or request\nlocal res = req({Url = "${origin}/v1/loader/${modalSelectedScript.slug}", Method = "GET", Headers = {["X-License-Key"] = "${key}"}})\nloadstring(res.Body)()`;
   }
 
   document.getElementById("modalLoadstringCode").innerText = code;
@@ -478,12 +723,85 @@ async function loadLicensesForScript(scriptId) {
   } catch (err) {}
 }
 
+function formatCustomerCell(l) {
+  let discordId = "";
+  if (l.discord_id) {
+    discordId = String(l.discord_id).replace(/<@!?(\d+)>/, '$1').trim();
+  }
+
+  let cleanNote = (l.note || "").trim();
+  const match = cleanNote.match(/<@!?(\d+)>/);
+  if (match) {
+    if (!discordId) discordId = match[1];
+    cleanNote = cleanNote.replace(/<@!?\d+>\s*/g, "").trim();
+  }
+
+  if (!discordId && !cleanNote) {
+    return `<span style="color:var(--text-zinc-500);">—</span>`;
+  }
+
+  let discordBadgeHtml = "";
+  if (discordId) {
+    const cached = discordUsersCache.get(discordId);
+    const displayName = cached?.display_name || l.discord_display_name || cached?.username || l.discord_username || "";
+    const avatar = cached?.avatar_url || l.discord_avatar || "https://cdn.discordapp.com/embed/avatars/0.png";
+
+    if (displayName) {
+      discordBadgeHtml = `
+        <div class="discord-tag-pill" style="display:inline-flex; align-items:center; gap:6px; background:rgba(88,101,242,0.15); border:1px solid rgba(88,101,242,0.3); border-radius:6px; padding:3px 8px; margin-bottom:${cleanNote ? '4px' : '0'};">
+          <img src="${escapeHtml(avatar)}" style="width:16px; height:16px; border-radius:50%; object-fit:cover;" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+          <span style="color:#8ea1e1; font-size:12px; font-weight:600; font-family:var(--font-mono);">@${escapeHtml(displayName)}</span>
+        </div>
+      `;
+    } else {
+      discordBadgeHtml = `
+        <div class="discord-tag-pill discord-user-loader" data-discord-id="${escapeHtml(discordId)}" style="display:inline-flex; align-items:center; gap:6px; background:rgba(88,101,242,0.12); border:1px solid rgba(88,101,242,0.25); border-radius:6px; padding:3px 8px; margin-bottom:${cleanNote ? '4px' : '0'};">
+          <i class="fa-brands fa-discord" style="color:#5865F2; font-size:12px;"></i>
+          <span class="disc-label" style="color:#8ea1e1; font-size:12px; font-weight:600; font-family:var(--font-mono);">@${escapeHtml(discordId)}</span>
+        </div>
+      `;
+    }
+  }
+
+  const noteHtml = cleanNote ? `<div style="font-size:11px; color:var(--text-zinc-400); line-height:1.3;">${escapeHtml(cleanNote)}</div>` : "";
+  return `<div>${discordBadgeHtml}${noteHtml}</div>`;
+}
+
+async function hydrateDiscordUsers() {
+  const loaders = document.querySelectorAll(".discord-user-loader[data-discord-id]");
+  const idsToFetch = new Set();
+  loaders.forEach(el => {
+    const id = el.getAttribute("data-discord-id");
+    if (id && !discordUsersCache.has(id)) {
+      idsToFetch.add(id);
+    }
+  });
+
+  for (const id of idsToFetch) {
+    try {
+      const data = await apiCall(`/api/discord/user/${id}`);
+      if (data && (data.username || data.display_name)) {
+        discordUsersCache.set(id, data);
+        document.querySelectorAll(`.discord-user-loader[data-discord-id="${id}"]`).forEach(el => {
+          const avatar = data.avatar_url || "https://cdn.discordapp.com/embed/avatars/0.png";
+          const name = data.display_name || data.username || id;
+          el.innerHTML = `
+            <img src="${escapeHtml(avatar)}" style="width:16px; height:16px; border-radius:50%; object-fit:cover;" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+            <span class="disc-label" style="color:#8ea1e1; font-size:12px; font-weight:600; font-family:var(--font-mono);">@${escapeHtml(name)}</span>
+          `;
+          el.classList.remove("discord-user-loader");
+        });
+      }
+    } catch (e) {}
+  }
+}
+
 function renderLicenses(licenses) {
   const tableBody = document.getElementById("licensesTableBody");
   if (!tableBody) return;
 
   if (licenses.length === 0) {
-    tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-key" style="margin-right:6px;"></i>No license keys generated for this hub.</td></tr>`;
+    tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 32px; color:var(--text-zinc-500);"><i class="fa-solid fa-key" style="margin-right:6px;"></i>No license keys found for this filter.</td></tr>`;
     return;
   }
 
@@ -501,11 +819,11 @@ function renderLicenses(licenses) {
           <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleSelectLicense(${l.id}, this.checked)">
         </td>
         <td>
-          <span class="key-badge" onclick="copyText('${l.license_key}', 'Key copied!')" title="Click to copy key">
-            ${l.license_key} <i class="fa-solid fa-copy"></i>
+          <span class="key-badge" onclick="openLicenseDetailModal(${l.id})" title="Click to view full forensic record">
+            ${l.license_key} <i class="fa-solid fa-magnifying-glass" style="font-size:10px; opacity:0.6;"></i>
           </span>
         </td>
-        <td>${escapeHtml(l.note || l.discord_id ? (l.discord_id ? `<@${l.discord_id}> ` : '') + (l.note || '') : "—")}</td>
+        <td>${formatCustomerCell(l)}</td>
         <td>
           <span style="font-family:var(--font-mono); font-size:11px;">
             ${l.hwid ? '<i class="fa-solid fa-fingerprint" style="color:var(--gold-primary); margin-right:4px;"></i>' + l.hwid.substring(0, 14) + '...' : '<span style="color:var(--text-zinc-500)">Unbound</span>'}
@@ -521,6 +839,7 @@ function renderLicenses(licenses) {
         <td>
           <div style="display:flex; gap:6px;">
             <button class="btn btn-secondary btn-sm" onclick="copyText('${personalLoadstring.replace(/'/g, "\\'")}', 'Personalized buyer loadstring copied!')" title="Copy buyer loadstring"><i class="fa-solid fa-terminal"></i></button>
+            <button class="btn btn-secondary btn-sm" onclick="openLicenseDetailModal(${l.id})" title="Inspect key history"><i class="fa-solid fa-chart-line"></i></button>
             <button class="btn btn-secondary btn-sm" onclick="resetHWID(${l.id})" title="Reset bound device"><i class="fa-solid fa-arrows-rotate"></i></button>
             <button class="btn ${l.is_banned ? 'btn-secondary' : 'btn-danger'} btn-sm" onclick="toggleBanLicense(${l.id}, ${l.is_banned})" title="${l.is_banned ? 'Unban key' : 'Ban key'}">
               ${l.is_banned ? '<i class="fa-solid fa-unlock"></i>' : '<i class="fa-solid fa-ban"></i>'}
@@ -531,6 +850,8 @@ function renderLicenses(licenses) {
       </tr>
     `;
   }).join("");
+
+  hydrateDiscordUsers();
 }
 
 function filterLicensesTable() {
@@ -550,6 +871,7 @@ function filterLicensesTable() {
     if (statusFilter === "banned") return l.is_banned === 1;
     if (statusFilter === "bound") return Boolean(l.hwid);
     if (statusFilter === "unbound") return !l.hwid;
+    if (statusFilter === "lifetime") return !l.expires_at;
 
     return true;
   });
@@ -598,28 +920,31 @@ async function bulkAction(action) {
     return;
   }
 
-  if (action === "delete" && !confirm(`Are you sure you want to delete ${ids.length} selected license keys?`)) {
+  if (action === "delete" && !confirm(`Are you sure you want to permanently delete ${ids.length} selected license keys?`)) {
     return;
   }
 
   try {
-    if (action === "resethwid") {
-      await Promise.all(ids.map(id => apiCall(`/api/licenses/${id}/resethwid`, "POST")));
-      showToast(`Reset HWID for ${ids.length} keys!`);
-    } else if (action === "ban") {
-      await Promise.all(ids.map(id => apiCall(`/api/licenses/${id}`, "PATCH", { is_banned: 1 })));
-      showToast(`Banned ${ids.length} keys!`);
-    } else if (action === "unban") {
-      await Promise.all(ids.map(id => apiCall(`/api/licenses/${id}`, "PATCH", { is_banned: 0 })));
-      showToast(`Unbanned ${ids.length} keys!`);
-    } else if (action === "delete") {
-      await Promise.all(ids.map(id => apiCall(`/api/licenses/${id}`, "DELETE")));
-      showToast(`Deleted ${ids.length} keys!`);
+    let extend_days = 30;
+    let ban_reason = "Bulk Banned by Administrator";
+
+    if (action === "ban") {
+      const reason = prompt("Enter ban reason for selected keys:", "License Terms Violation");
+      if (reason !== null) ban_reason = reason;
     }
 
+    await apiCall("/api/licenses/bulk-action", "POST", {
+      action,
+      license_ids: ids,
+      extend_days,
+      ban_reason
+    });
+
+    showToast(`Bulk action '${action}' completed for ${ids.length} keys!`);
     selectedLicenseIds.clear();
     updateBulkActionBar();
     loadLicensesForScript(selectedScriptId);
+    loadOverviewStats();
   } catch (err) {}
 }
 
@@ -639,10 +964,11 @@ function exportKeys(format) {
     filename += ".json";
     mimeType = "application/json";
   } else if (format === "csv") {
-    const headers = ["License Key", "Note", "HWID", "Executions", "Max Executions", "Expires At", "Is Banned"];
+    const headers = ["License Key", "Note", "Discord ID", "HWID", "Executions", "Max Executions", "Expires At", "Status"];
     const rows = currentLicenses.map(l => [
       l.license_key,
       `"${(l.note || '').replace(/"/g, '""')}"`,
+      l.discord_id || "",
       l.hwid || "",
       l.execution_count,
       l.max_executions,
@@ -696,6 +1022,7 @@ async function handleBulkGenerate(e) {
     showToast(`Generated ${data.count} keys!`, "success");
     closeModal("modalBulkGen");
     loadLicensesForScript(script_id);
+    loadOverviewStats();
   } catch (err) {}
 }
 
@@ -706,6 +1033,7 @@ async function handleSingleGenerate(e) {
 
   const license_key = document.getElementById("singleKeyString").value.trim();
   const note = document.getElementById("singleKeyNote").value.trim();
+  const discord_id = document.getElementById("singleKeyDiscord")?.value.trim() || null;
   const duration_days = parseInt(document.getElementById("singleKeyDuration").value) || null;
 
   let expires_at = null;
@@ -720,11 +1048,62 @@ async function handleSingleGenerate(e) {
       slug: script.slug,
       license_key,
       note,
+      discord_id,
       expires_at
     });
     showToast("License key created successfully!");
     closeModal("modalSingleGen");
     loadLicensesForScript(selectedScriptId);
+    loadOverviewStats();
+  } catch (err) {}
+}
+
+function openImportKeysModal() {
+  const select = document.getElementById("importScriptSelect");
+  if (select) {
+    select.innerHTML = currentScripts.map(s => `<option value="${s.id}" ${s.id === selectedScriptId ? 'selected' : ''}>${escapeHtml(s.name)} (${s.slug})</option>`).join("");
+  }
+  document.getElementById("importKeysTextarea").value = "";
+  document.getElementById("modalImportKeys").classList.add("active");
+}
+
+async function handleImportKeys(e) {
+  e.preventDefault();
+  const script_id = parseInt(document.getElementById("importScriptSelect").value);
+  const default_duration = parseInt(document.getElementById("importDuration").value) || null;
+  const text = document.getElementById("importKeysTextarea").value.trim();
+
+  if (!text) return showToast("Enter keys to import", "error");
+
+  const lines = text.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+  const items = [];
+
+  for (const line of lines) {
+    const parts = line.split(",");
+    const key = parts[0].trim();
+    const note = parts[1] ? parts[1].trim() : "";
+    const discord_id = parts[2] ? parts[2].trim() : null;
+
+    if (key) {
+      items.push({
+        license_key: key,
+        note,
+        discord_id,
+        duration_days: default_duration,
+        max_executions: -1
+      });
+    }
+  }
+
+  try {
+    const res = await apiCall("/api/licenses/import", "POST", {
+      script_id,
+      keys: items
+    });
+    showToast(`Successfully imported ${res.imported} keys! (Skipped: ${res.skipped})`, "success");
+    closeModal("modalImportKeys");
+    loadLicensesForScript(script_id);
+    loadOverviewStats();
   } catch (err) {}
 }
 
@@ -738,11 +1117,12 @@ async function resetHWID(licenseId) {
 
 async function toggleBanLicense(licenseId, isBanned) {
   const newBan = isBanned ? 0 : 1;
-  const reason = newBan ? prompt("Enter ban reason:", "License violation") : "";
+  const reason = newBan ? prompt("Enter ban reason:", "License Terms Violation") : "";
   try {
     await apiCall(`/api/licenses/${licenseId}`, "PATCH", { is_banned: newBan, ban_reason: reason });
     showToast(newBan ? "License banned!" : "License unbanned!", newBan ? "error" : "success");
     loadLicensesForScript(selectedScriptId);
+    loadOverviewStats();
   } catch (err) {}
 }
 
@@ -752,14 +1132,114 @@ async function deleteLicense(licenseId) {
     await apiCall(`/api/licenses/${licenseId}`, "DELETE");
     showToast("License deleted.");
     loadLicensesForScript(selectedScriptId);
+    loadOverviewStats();
   } catch (err) {}
+}
+
+// ----------------- Deep License Detail Modal / Drawer -----------------
+async function openLicenseDetailModal(licenseId) {
+  const contentEl = document.getElementById("licDetailContent");
+  if (!contentEl) return;
+
+  contentEl.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-zinc-400);"><i class="fa-solid fa-spinner fa-spin" style="font-size:24px; color:var(--gold-primary);"></i><div style="margin-top:10px;">Loading forensic audit history...</div></div>`;
+  document.getElementById("modalLicenseDetail").classList.add("active");
+
+  try {
+    const data = await apiCall(`/api/licenses/${licenseId}/history`);
+    const lic = data.license;
+    const users = data.roblox_users || [];
+    const ips = data.ip_addresses || [];
+    const games = data.games || [];
+    const logs = data.logs || [];
+
+    const usersHtml = users.length > 0
+      ? users.map(u => `<span class="badge badge-zinc" style="font-size:11px;"><i class="fa-solid fa-user"></i> ${escapeHtml(u.roblox_username)} (ID: ${u.roblox_user_id}) • ${u.exec_count} execs</span>`).join(" ")
+      : `<span style="color:var(--text-zinc-500);">No Roblox player telemetry logged</span>`;
+
+    const ipsHtml = ips.length > 0
+      ? ips.map(i => `<span class="badge badge-zinc" style="font-size:11px;"><i class="fa-solid fa-network-wired"></i> ${escapeHtml(i.ip_address)} • ${i.exec_count} execs</span>`).join(" ")
+      : `<span style="color:var(--text-zinc-500);">None logged</span>`;
+
+    contentEl.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <div>
+          <span class="badge ${lic.is_banned ? 'badge-danger' : 'badge-success'}">${lic.is_banned ? 'BANNED' : 'ACTIVE'}</span>
+          <h3 style="color:var(--gold-light); font-family:var(--font-mono); font-size:18px; margin:6px 0 2px 0;">${lic.license_key}</h3>
+          <span style="font-size:12px; color:var(--text-zinc-400);">Hub: <strong>${escapeHtml(lic.script_name)}</strong> (${lic.script_slug})</span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="resetHWID(${lic.id})"><i class="fa-solid fa-arrows-rotate"></i> Reset HWID</button>
+          <button class="btn ${lic.is_banned ? 'btn-secondary' : 'btn-danger'} btn-sm" onclick="toggleBanLicense(${lic.id}, ${lic.is_banned})">
+            ${lic.is_banned ? '<i class="fa-solid fa-unlock"></i> Unban' : '<i class="fa-solid fa-ban"></i> Ban Key'}
+          </button>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; font-size:12px; background:var(--bg-input); padding:14px; border-radius:10px; border:1px solid var(--border-subtle); margin-bottom:16px;">
+        <div>
+          <span style="color:var(--text-zinc-500); display:block;">Bound Device HWID:</span>
+          <strong style="color:var(--text-white); font-family:var(--font-mono);">${lic.hwid ? lic.hwid.substring(0, 16) + '...' : '<span style="color:var(--text-zinc-500)">Unbound</span>'}</strong>
+        </div>
+        <div>
+          <span style="color:var(--text-zinc-500); display:block;">Total Executions:</span>
+          <strong style="color:var(--text-white); font-family:var(--font-mono); font-size:14px;">${lic.execution_count}</strong>
+        </div>
+        <div>
+          <span style="color:var(--text-zinc-500); display:block;">Expiration Date:</span>
+          <span style="color:var(--text-zinc-300);">${lic.expires_at ? new Date(lic.expires_at).toLocaleString() : '<span class="badge badge-gold">Lifetime</span>'}</span>
+        </div>
+        <div>
+          <span style="color:var(--text-zinc-500); display:block;">Buyer Note / Tag:</span>
+          <span style="color:var(--text-zinc-300);">${escapeHtml(lic.note || '—')}</span>
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <strong style="color:var(--text-zinc-300); font-size:12px; display:block; margin-bottom:6px;">Roblox Accounts Identified on this Key:</strong>
+        <div style="display:flex; flex-wrap:wrap; gap:6px;">${usersHtml}</div>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <strong style="color:var(--text-zinc-300); font-size:12px; display:block; margin-bottom:6px;">IP Address Trail:</strong>
+        <div style="display:flex; flex-wrap:wrap; gap:6px;">${ipsHtml}</div>
+      </div>
+
+      <strong style="color:var(--text-white); font-size:13px; display:block; margin-bottom:8px;">Recent Execution Handshakes:</strong>
+      <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-subtle); border-radius: 8px;">
+        <table style="font-size:12px;">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Player</th>
+              <th>Game</th>
+              <th>Status</th>
+              <th>Executor</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${logs.length > 0 ? logs.map(log => `
+              <tr>
+                <td style="font-family:var(--font-mono); color:var(--text-zinc-400);">${new Date(log.timestamp).toLocaleTimeString()}</td>
+                <td>${escapeHtml(log.roblox_username || '—')}</td>
+                <td>${escapeHtml(log.game_name || '—')}</td>
+                <td><span class="badge ${log.status === 'SUCCESS' ? 'badge-success' : 'badge-danger'}">${log.status}</span></td>
+                <td><span class="badge badge-zinc">${escapeHtml(log.executor_name || 'Universal')}</span></td>
+              </tr>
+            `).join("") : '<tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text-zinc-500);">No execution logs found for this key.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (err) {
+    contentEl.innerHTML = `<div style="color:var(--danger-color); padding:20px;">Failed to load license forensic history: ${escapeHtml(err.message)}</div>`;
+  }
 }
 
 // ----------------- Live Audit Logs & Threat Feed -----------------
 async function loadLiveLogs() {
   const statusFilter = document.getElementById("logStatusFilter")?.value || "";
   try {
-    const url = statusFilter ? `/api/logs?limit=60&status_filter=${statusFilter}` : `/api/logs?limit=60`;
+    const url = statusFilter ? `/api/logs?limit=80&status_filter=${statusFilter}` : `/api/logs?limit=80`;
     const logs = await apiCall(url);
     currentLogs = logs;
     renderLogs(logs);
@@ -771,7 +1251,7 @@ function renderLogs(logs) {
   if (!tableBody) return;
 
   if (logs.length === 0) {
-    tableBody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>No security events matching filter.</td></tr>`;
+    tableBody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 32px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>No security events matching current filter.</td></tr>`;
     return;
   }
 
@@ -796,99 +1276,6 @@ function filterLogsTable(query) {
   renderLogs(filtered);
 }
 
-function toggleAutoRefresh() {
-  isAutoRefreshOn = !isAutoRefreshOn;
-  const stateEl = document.getElementById("autoRefreshState");
-  const btn = document.getElementById("toggleAutoRefreshBtn");
-  if (stateEl && btn) {
-    if (isAutoRefreshOn) {
-      stateEl.innerText = "ON";
-      btn.innerHTML = '<i class="fa-solid fa-pause"></i> Auto-Refresh: <span id="autoRefreshState">ON</span>';
-    } else {
-      stateEl.innerText = "PAUSED";
-      btn.innerHTML = '<i class="fa-solid fa-play"></i> Auto-Refresh: <span id="autoRefreshState">PAUSED</span>';
-    }
-  }
-}
-
-async function loadBypassLogs() {
-  try {
-    const logs = await apiCall("/api/logs?limit=60&status_filter=blocked");
-    currentBypasses = logs;
-    const tableBody = document.getElementById("bypassTableBody");
-    if (!tableBody) return;
-
-    if (logs.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-check" style="color:var(--success-color); margin-right:6px;"></i>No threat activity detected. System is completely secure.</td></tr>`;
-      return;
-    }
-
-    tableBody.innerHTML = logs.map(log => {
-      const avatarUrl = (log.roblox_user_id && log.roblox_user_id > 0)
-        ? `/api/roblox/avatar/${log.roblox_user_id}`
-        : `/api/roblox/avatar/1`;
-
-      let threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> ${log.status}</span>`;
-      if (log.status === 'TAMPER_DETECTED') {
-        threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-shield-virus"></i> HOOK/TAMPER DETECTED</span>`;
-      } else if (log.status === 'HWID_MISMATCH') {
-        threatBadge = `<span class="badge badge-danger" style="background:rgba(234,179,8,0.15); color:var(--gold-primary); border-color:rgba(234,179,8,0.4);"><i class="fa-solid fa-fingerprint"></i> HWID MISMATCH</span>`;
-      } else if (log.status === 'BYPASS_ATTEMPT') {
-        threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-skull-crossbones"></i> SCRAPER / DUMP TRAP</span>`;
-      } else if (log.status === 'INVALID_KEY') {
-        threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-key"></i> INVALID KEY</span>`;
-      }
-
-      return `
-        <tr style="background: rgba(239, 68, 68, 0.03);">
-          <td style="white-space:nowrap; font-size:12px; color:var(--text-zinc-400); font-family:var(--font-mono);">
-            ${new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          </td>
-          <td>${threatBadge}</td>
-          <td>
-            <div style="display:flex; align-items:center; gap:10px;">
-              <img src="${avatarUrl}" alt="Roblox Avatar" style="width:34px; height:34px; border-radius:50%; border:1px solid rgba(239,68,68,0.4); background:var(--bg-elevated); object-fit:cover;" loading="lazy">
-              <div>
-                <a href="${log.roblox_user_id ? `https://www.roblox.com/users/${log.roblox_user_id}/profile` : '#'}" target="_blank" style="color:var(--text-white); font-weight:600; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:13px;">
-                  ${escapeHtml(log.roblox_username || "Unknown")} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>
-                </a>
-                <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${log.roblox_user_id || '—'}</span>
-              </div>
-            </div>
-          </td>
-          <td>
-            ${log.place_id && log.place_id > 0 ? `
-              <div>
-                <a href="https://www.roblox.com/games/${log.place_id}" target="_blank" style="color:var(--text-white); font-weight:500; font-size:13px; text-decoration:none; display:flex; align-items:center; gap:4px;">
-                  ${escapeHtml(log.game_name || "Roblox Experience")} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>
-                </a>
-                <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${log.place_id}</span>
-              </div>
-            ` : `<span style="color:var(--text-zinc-500); font-size:13px;">${escapeHtml(log.game_name || "—")}</span>`}
-          </td>
-          <td>
-            ${log.license_key ? `<span class="key-badge" style="font-size:11px; border-color:rgba(239,68,68,0.3); color:var(--danger-color);" onclick="copyText('${log.license_key}')">${log.license_key.substring(0, 14)}... <i class="fa-solid fa-copy"></i></span>` : '<span style="color:var(--text-zinc-500);">N/A</span>'}
-          </td>
-          <td>
-            <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
-              <span class="badge badge-zinc" style="font-size:10px; text-transform:uppercase;">${escapeHtml(log.executor_name || "Unknown Executor")}</span>
-            </div>
-            <span style="color:var(--text-zinc-400); font-size:12px;">${escapeHtml(log.details || "Bypass blocked by security armor")}</span>
-          </td>
-          <td>
-            <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-300);">
-              <i class="fa-solid fa-fingerprint" style="color:var(--gold-primary); font-size:10px; margin-right:4px;"></i>${log.hwid ? log.hwid.substring(0, 12) + '...' : '—'}
-            </div>
-            <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-500); margin-top:2px;">
-              <i class="fa-solid fa-network-wired" style="font-size:10px; margin-right:4px;"></i>${log.ip_address ? escapeHtml(log.ip_address) : '—'}
-            </div>
-          </td>
-        </tr>
-      `;
-    }).join("");
-  } catch (err) {}
-}
-
 function renderLogRow(log) {
   const avatarUrl = (log.roblox_user_id && log.roblox_user_id > 0)
     ? `/api/roblox/avatar/${log.roblox_user_id}`
@@ -898,13 +1285,13 @@ function renderLogRow(log) {
   if (log.roblox_username && log.roblox_username !== "Unknown") {
     const profileUrl = log.roblox_user_id ? `https://www.roblox.com/users/${log.roblox_user_id}/profile` : `https://www.roblox.com/search/users?keyword=${encodeURIComponent(log.roblox_username)}`;
     rbxPlayerHtml = `
-      <div style="display:flex; align-items:center; gap:10px;">
-        <img src="${avatarUrl}" alt="Avatar" style="width:34px; height:34px; border-radius:50%; border:1px solid var(--border-subtle); background:var(--bg-elevated); object-fit:cover;" loading="lazy">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <img src="${avatarUrl}" alt="Avatar" style="width:30px; height:30px; border-radius:50%; border:1px solid var(--border-subtle); background:var(--bg-elevated); object-fit:cover;" loading="lazy">
         <div>
-          <a href="${profileUrl}" target="_blank" style="color:var(--gold-light); font-weight:600; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:13px;">
-            ${escapeHtml(log.roblox_username)} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>
+          <a href="${profileUrl}" target="_blank" style="color:var(--gold-light); font-weight:600; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:12px;">
+            ${escapeHtml(log.roblox_username)} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
           </a>
-          <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${log.roblox_user_id || '—'}</span>
+          <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${log.roblox_user_id || '—'}</span>
         </div>
       </div>
     `;
@@ -915,14 +1302,14 @@ function renderLogRow(log) {
     const placeUrl = `https://www.roblox.com/games/${log.place_id}`;
     gamePlaceHtml = `
       <div>
-        <a href="${placeUrl}" target="_blank" style="color:var(--text-white); font-weight:500; font-size:13px; text-decoration:none; display:flex; align-items:center; gap:4px;">
-          ${escapeHtml(log.game_name || "Roblox Game")} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>
+        <a href="${placeUrl}" target="_blank" style="color:var(--text-white); font-weight:500; font-size:12px; text-decoration:none; display:flex; align-items:center; gap:4px;">
+          ${escapeHtml(log.game_name || "Roblox Game")} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
         </a>
-        <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${log.place_id}</span>
+        <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${log.place_id}</span>
       </div>
     `;
   } else if (log.game_name) {
-    gamePlaceHtml = `<span style="color:var(--text-zinc-300); font-size:13px;">${escapeHtml(log.game_name)}</span>`;
+    gamePlaceHtml = `<span style="color:var(--text-zinc-300); font-size:12px;">${escapeHtml(log.game_name)}</span>`;
   }
 
   let statusBadge = `<span class="badge badge-danger">${log.status}</span>`;
@@ -936,6 +1323,8 @@ function renderLogRow(log) {
     statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-key"></i> INVALID KEY</span>`;
   } else if (log.status === 'BYPASS_ATTEMPT') {
     statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-skull-crossbones"></i> BYPASS TRAP</span>`;
+  } else if (log.status === 'BLACKLISTED') {
+    statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-ban"></i> BLACKLISTED</span>`;
   } else if (log.status === 'EXPIRED') {
     statusBadge = `<span class="badge badge-zinc"><i class="fa-solid fa-clock"></i> EXPIRED</span>`;
   } else if (log.status === 'BANNED') {
@@ -944,10 +1333,10 @@ function renderLogRow(log) {
 
   return `
     <tr>
-      <td style="white-space:nowrap; font-size:12px; color:var(--text-zinc-400); font-family:var(--font-mono);">
+      <td style="white-space:nowrap; font-size:11px; color:var(--text-zinc-400); font-family:var(--font-mono);">
         ${new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
       </td>
-      <td><strong style="color:var(--text-white);">${escapeHtml(log.script_name || "Unknown")}</strong></td>
+      <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(log.script_name || "Unknown")}</strong></td>
       <td>${rbxPlayerHtml}</td>
       <td>${gamePlaceHtml}</td>
       <td>
@@ -956,9 +1345,9 @@ function renderLogRow(log) {
       <td>${statusBadge}</td>
       <td>
         <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
-          <span class="badge badge-gold" style="font-size:11px;">${escapeHtml(log.executor_name || "Universal")}</span>
+          <span class="badge badge-gold" style="font-size:10px;">${escapeHtml(log.executor_name || "Universal")}</span>
         </div>
-        <span style="color:var(--text-zinc-400); font-size:12px;">${escapeHtml(log.details || "—")}</span>
+        <span style="color:var(--text-zinc-400); font-size:11px;">${escapeHtml(log.details || "—")}</span>
       </td>
       <td>
         <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-300);">
@@ -977,13 +1366,61 @@ function renderLogRow(log) {
   `;
 }
 
-// Helper: Escape HTML
-function escapeHtml(str) {
-  if (!str) return "";
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+function toggleAutoRefresh() {
+  isAutoRefreshOn = !isAutoRefreshOn;
+  const stateEl = document.getElementById("autoRefreshState");
+  const btn = document.getElementById("toggleAutoRefreshBtn");
+  if (stateEl && btn) {
+    if (isAutoRefreshOn) {
+      stateEl.innerText = "ON";
+      btn.innerHTML = '<i class="fa-solid fa-pause"></i> Auto-Refresh: <span id="autoRefreshState">ON</span>';
+    } else {
+      stateEl.innerText = "PAUSED";
+      btn.innerHTML = '<i class="fa-solid fa-play"></i> Auto-Refresh: <span id="autoRefreshState">PAUSED</span>';
+    }
+  }
 }
 
-// ----------------- Forensic Watermark Tracing & Leak Attribution -----------------
+function exportLogsCSV() {
+  if (currentLogs.length === 0) return showToast("No logs to export", "info");
+
+  const headers = ["Timestamp", "Script", "Roblox Username", "Roblox User ID", "Game", "Place ID", "License Key", "Status", "Executor", "Details", "HWID", "IP Address"];
+  const rows = currentLogs.map(l => [
+    l.timestamp,
+    `"${(l.script_name || '').replace(/"/g, '""')}"`,
+    `"${(l.roblox_username || '').replace(/"/g, '""')}"`,
+    l.roblox_user_id || "",
+    `"${(l.game_name || '').replace(/"/g, '""')}"`,
+    l.place_id || "",
+    l.license_key || "",
+    l.status || "",
+    `"${(l.executor_name || '').replace(/"/g, '""')}"`,
+    `"${(l.details || '').replace(/"/g, '""')}"`,
+    l.hwid || "",
+    l.ip_address || ""
+  ]);
+
+  const content = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+  const blob = new Blob([content], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `fleedguard_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${currentLogs.length} audit logs to CSV!`);
+}
+
+async function loadBypassLogs() {
+  try {
+    const logs = await apiCall("/api/logs?limit=50&status_filter=blocked");
+    currentBypasses = logs;
+  } catch (err) {}
+}
+
+// ----------------- Threat Radar & Attribution -----------------
 async function handleWatermarkTrace() {
   const inputEl = document.getElementById("watermarkInput");
   const resultBox = document.getElementById("watermarkResultBox");
@@ -1121,13 +1558,14 @@ async function loadAnomalies() {
 }
 
 async function quickBanLeaker(licenseId, key) {
-  if (!confirm(`Are you sure you want to BAN and permanently revoke license key: ${key}?`)) return;
+  if (!confirm(`Are you sure you want to BAN and revoke license key: ${key}?`)) return;
   try {
     await apiCall("/api/audit/ban-leaker", "POST", { license_id: licenseId, reason: "Banned: Multi-Account Leak Attribution" });
     showToast(`License ${key} has been banned!`, "success");
     loadAnomalies();
     if (typeof loadLicensesView === "function") loadLicensesView();
     loadBypassLogs();
+    loadOverviewStats();
     const resultBox = document.getElementById("watermarkResultBox");
     if (resultBox && resultBox.style.display !== "none") {
       handleWatermarkTrace();
@@ -1136,6 +1574,221 @@ async function quickBanLeaker(licenseId, key) {
     showToast(e.message, "error");
   }
 }
+
+// ----------------- Global Blacklist Manager -----------------
+async function loadBlacklists() {
+  try {
+    const list = await apiCall("/api/blacklist");
+    currentBlacklists = list;
+    const tbody = document.getElementById("blacklistTableBody");
+    if (!tbody) return;
+
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:24px; color:var(--text-zinc-500);">No global blacklists configured. All authorized players with valid keys can connect.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = list.map(item => `
+      <tr>
+        <td><span class="badge ${item.target_type === 'HWID' ? 'badge-gold' : 'badge-info'}">${item.target_type}</span></td>
+        <td><code style="font-family:var(--font-mono); color:var(--gold-light); font-size:12px;">${escapeHtml(item.target_value)}</code></td>
+        <td><span style="color:var(--text-zinc-300); font-size:12px;">${escapeHtml(item.reason || '—')}</span></td>
+        <td style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">${new Date(item.created_at).toLocaleDateString()}</td>
+        <td>
+          <button class="btn btn-danger btn-sm" onclick="removeBlacklist(${item.id})"><i class="fa-solid fa-trash"></i> Remove</button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (err) {}
+}
+
+function openAddBlacklistModal() {
+  document.getElementById("blTargetValue").value = "";
+  document.getElementById("blReason").value = "";
+  document.getElementById("modalBlacklistAdd").classList.add("active");
+}
+
+async function handleBlacklistAdd(e) {
+  e.preventDefault();
+  const target_type = document.getElementById("blTargetType").value;
+  const target_value = document.getElementById("blTargetValue").value.trim();
+  const reason = document.getElementById("blReason").value.trim();
+
+  try {
+    await apiCall("/api/blacklist/add", "POST", { target_type, target_value, reason });
+    showToast(`${target_type} added to global blacklist!`, "success");
+    closeModal("modalBlacklistAdd");
+    loadBlacklists();
+  } catch (err) {}
+}
+
+async function removeBlacklist(id) {
+  if (!confirm("Are you sure you want to remove this entry from the global blacklist?")) return;
+  try {
+    await apiCall(`/api/blacklist/${id}`, "DELETE");
+    showToast("Blacklist entry removed.");
+    loadBlacklists();
+  } catch (err) {}
+}
+
+// ----------------- Developer API Studio & Simulator -----------------
+function loadApiStudioView() {
+  const scriptSelect = document.getElementById("simScriptSlug");
+  if (scriptSelect && currentScripts.length > 0) {
+    scriptSelect.innerHTML = currentScripts.map(s => `<option value="${s.slug}">${escapeHtml(s.name)} (${s.slug})</option>`).join("");
+  }
+}
+
+async function handleSimulateHandshake(e) {
+  e.preventDefault();
+  const slug = document.getElementById("simScriptSlug").value;
+  const key = document.getElementById("simKeyInput").value.trim();
+  const resBox = document.getElementById("simResultBox");
+  if (!resBox) return;
+
+  resBox.style.display = "block";
+  resBox.innerHTML = `<div style="color:var(--text-zinc-400);"><i class="fa-solid fa-spinner fa-spin"></i> Testing handshake diagnostic...</div>`;
+
+  try {
+    const data = await apiCall("/api/tools/simulate-handshake", "POST", { slug, key });
+    if (!data.valid) {
+      resBox.innerHTML = `
+        <div style="color:var(--danger-color); font-weight:700; display:flex; align-items:center; gap:6px; margin-bottom:4px;">
+          <i class="fa-solid fa-circle-xmark"></i> Handshake Rejected
+        </div>
+        <div style="color:var(--text-zinc-300);">${escapeHtml(data.reason)}</div>
+      `;
+    } else {
+      resBox.innerHTML = `
+        <div style="color:var(--success-color); font-weight:700; display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+          <i class="fa-solid fa-circle-check"></i> Handshake Diagnostic PASSED
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; color:var(--text-zinc-300);">
+          <div>Script: <strong>${escapeHtml(data.script_name)}</strong></div>
+          <div>HWID Status: <strong>${escapeHtml(data.hwid_status)}</strong></div>
+          <div>Executions: <strong>${data.execution_count}</strong></div>
+          <div>Expires: <strong>${escapeHtml(String(data.expires_at))}</strong></div>
+        </div>
+      `;
+    }
+  } catch (err) {
+    resBox.innerHTML = `<div style="color:var(--danger-color);">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function switchSnippetTab(tab) {
+  document.getElementById("snippet-curl").style.display = tab === "curl" ? "block" : "none";
+  document.getElementById("snippet-python").style.display = tab === "python" ? "block" : "none";
+  document.getElementById("snippet-node").style.display = tab === "node" ? "block" : "none";
+}
+
+// ----------------- System Health -----------------
+async function loadSystemHealth() {
+  try {
+    const health = await apiCall("/api/system/health");
+    const upEl = document.getElementById("sysUptime");
+    if (upEl) upEl.innerText = health.uptime || "--";
+
+    const dbEl = document.getElementById("sysDbSize");
+    if (dbEl) dbEl.innerText = health.database_size || "--";
+
+    const noncesEl = document.getElementById("sysActiveNonces");
+    if (noncesEl) noncesEl.innerText = health.active_nonces || "0";
+
+    // Public tunnel container in header
+    const tunnelCont = document.getElementById("headerTunnelContainer");
+    const tunnelUrl = document.getElementById("headerTunnelUrl");
+    if (tunnelCont && tunnelUrl) {
+      if (health.public_tunnel_url) {
+        tunnelCont.style.display = "inline-flex";
+        tunnelUrl.innerText = health.public_tunnel_url;
+      } else {
+        tunnelCont.style.display = "none";
+      }
+    }
+  } catch (err) {}
+}
+
+// ----------------- Command Search Palette (Ctrl+K) -----------------
+function openSearchPalette() {
+  const modal = document.getElementById("modalSearchPalette");
+  const input = document.getElementById("paletteSearchInput");
+  if (modal && input) {
+    modal.classList.add("active");
+    input.value = "";
+    input.focus();
+    renderPaletteResults("");
+  }
+}
+
+function handlePaletteSearch(val) {
+  renderPaletteResults(val.toLowerCase().trim());
+}
+
+function renderPaletteResults(query) {
+  const container = document.getElementById("paletteResults");
+  if (!container) return;
+
+  const results = [];
+
+  // Static quick actions
+  const actions = [
+    { title: "Create New Script Hub", icon: "fa-solid fa-plus", tab: "scripts", action: () => { closeModal("modalSearchPalette"); openCreateScriptModal(); } },
+    { title: "Bulk Generate License Keys", icon: "fa-solid fa-layer-group", tab: "licenses", action: () => { closeModal("modalSearchPalette"); openBulkGenModal(); } },
+    { title: "Import Keys from CSV/TXT", icon: "fa-solid fa-file-import", tab: "licenses", action: () => { closeModal("modalSearchPalette"); openImportKeysModal(); } },
+    { title: "Trace Leaker / Watermark", icon: "fa-solid fa-fingerprint", tab: "bypasses", action: () => { closeModal("modalSearchPalette"); switchTab("bypasses"); } },
+    { title: "View Live Security Audit Feed", icon: "fa-solid fa-shield-halved", tab: "logs", action: () => { closeModal("modalSearchPalette"); switchTab("logs"); } },
+    { title: "Download Database Backup", icon: "fa-solid fa-cloud-arrow-down", tab: "system", action: () => { window.location.href = "/api/system/backup"; } }
+  ];
+
+  actions.forEach(a => {
+    if (!query || a.title.toLowerCase().includes(query)) {
+      results.push(`
+        <div class="palette-item" onclick="(${a.action.toString()})()">
+          <span style="display:flex; align-items:center; gap:10px;"><i class="${a.icon}" style="color:var(--gold-primary);"></i> ${escapeHtml(a.title)}</span>
+          <span class="badge badge-zinc">Action</span>
+        </div>
+      `);
+    }
+  });
+
+  // Hub matches
+  currentScripts.forEach(s => {
+    if (query && (s.name.toLowerCase().includes(query) || s.slug.toLowerCase().includes(query))) {
+      results.push(`
+        <div class="palette-item" onclick="closeModal('modalSearchPalette'); switchTab('scripts'); openEditScriptModal(${s.id});">
+          <span style="display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-code" style="color:var(--gold-primary);"></i> Hub: ${escapeHtml(s.name)} (<code>${s.slug}</code>)</span>
+          <span class="badge badge-gold">Hub</span>
+        </div>
+      `);
+    }
+  });
+
+  // License matches
+  currentLicenses.forEach(l => {
+    if (query && (l.license_key.toLowerCase().includes(query) || (l.note && l.note.toLowerCase().includes(query)))) {
+      results.push(`
+        <div class="palette-item" onclick="closeModal('modalSearchPalette'); switchTab('licenses'); openLicenseDetailModal(${l.id});">
+          <span style="display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-key" style="color:var(--gold-primary);"></i> Key: ${escapeHtml(l.license_key)} ${l.note ? '(' + escapeHtml(l.note) + ')' : ''}</span>
+          <span class="badge badge-zinc">License</span>
+        </div>
+      `);
+    }
+  });
+
+  container.innerHTML = results.length > 0 ? results.join("") : `<div style="text-align:center; padding:20px; color:var(--text-zinc-500);">No matching commands or records.</div>`;
+}
+
+// Global Keyboard Shortcut (Ctrl+K or Cmd+K)
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    openSearchPalette();
+  }
+  if (e.key === "Escape") {
+    document.querySelectorAll(".modal-overlay.active").forEach(m => m.classList.remove("active"));
+  }
+});
 
 // Global initialization
 document.addEventListener("DOMContentLoaded", async () => {
@@ -1147,7 +1800,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     loadOverviewStats();
     loadProfileStats();
 
-    // Auto-refresh polling loop
+    // Auto-refresh polling loop (every 5 seconds)
     if (!liveLogInterval) {
       liveLogInterval = setInterval(() => {
         if (!isAutoRefreshOn) return;

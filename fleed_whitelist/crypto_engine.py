@@ -148,12 +148,37 @@ class CryptoEngine:
         server_challenge: str,
         nonce: str,
         license_key: str,
-        hwid: str
+        hwid: str,
+        raw_hwid: Optional[str] = None
     ) -> bool:
         """Verifies that the executor client mathematically signed the challenge with HWID & Key."""
-        expected_raw = f"{client_challenge}:{server_challenge}:{nonce}:{license_key}:{hwid}"
-        expected_sig = hashlib.sha256(expected_raw.encode()).hexdigest()
-        return hmac.compare_digest(expected_sig.lower(), client_signature.lower())
+        client_sig_clean = client_signature.strip().lower()
+
+        # Candidates for HWID field in signature
+        candidates = [hwid]
+        if raw_hwid:
+            candidates.append(raw_hwid)
+            candidates.append(CryptoEngine.normalize_hwid(raw_hwid))
+
+        for cand in candidates:
+            if not cand:
+                continue
+            # SHA256 Candidate
+            expected_raw = f"{client_challenge}:{server_challenge}:{nonce}:{license_key}:{cand}"
+            expected_sig = hashlib.sha256(expected_raw.encode('utf-8')).hexdigest().lower()
+            if hmac.compare_digest(expected_sig, client_sig_clean):
+                return True
+
+            # FNV-1a 32-bit fallback for lightweight executors
+            h = 0x811c9dc5
+            for b in expected_raw.encode('utf-8'):
+                h = (h ^ b) & 0xFFFFFFFF
+                h = (h * 0x01000193) & 0xFFFFFFFF
+            fnv_sig = f"{h:08x}".lower()
+            if hmac.compare_digest(fnv_sig, client_sig_clean):
+                return True
+
+        return False
 
     @staticmethod
     def encrypt_payload(source_code: str, session_key: str, nonce: str) -> Tuple[str, str]:

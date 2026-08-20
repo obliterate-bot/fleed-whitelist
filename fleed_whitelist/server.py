@@ -150,6 +150,7 @@ class HandshakeVerifyRequest(BaseModel):
     nonce: str
     signature: str
     client_challenge: str
+    hwid: Optional[str] = None
 
 # ----------------- Frontend HTML Routes -----------------
 @app.get("/", response_class=HTMLResponse)
@@ -708,7 +709,8 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
             server_challenge=nonce_row["server_challenge"],
             nonce=req.nonce,
             license_key=row["license_key"],
-            hwid=bound_hwid
+            hwid=bound_hwid,
+            raw_hwid=req.hwid
         )
 
         if not is_valid_sig:

@@ -153,12 +153,20 @@ local verify_resp = custom_req({{
     Body = HttpService:JSONEncode({{
         nonce = nonce,
         signature = client_sig,
-        client_challenge = client_challenge
+        client_challenge = client_challenge,
+        hwid = HWID
     }})
 }})
 
 if verify_resp.StatusCode ~= 200 then
-    return warn("[FleedGuard] Payload Delivery Error: " .. tostring(verify_resp.StatusCode))
+    local err_msg = "Error " .. tostring(verify_resp.StatusCode)
+    pcall(function()
+        local decoded = HttpService:JSONDecode(verify_resp.Body)
+        if decoded and decoded.message then
+            err_msg = tostring(decoded.message)
+        end
+    end)
+    return warn("[FleedGuard] Payload Delivery Error: " .. tostring(err_msg))
 end
 
 local verify_data = HttpService:JSONDecode(verify_resp.Body)

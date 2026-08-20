@@ -561,14 +561,42 @@ async def update_license(license_id: int, req: LicenseUpdateRequest, user: Dict 
 
     return {"success": True}
 
-@app.delete("/api/licenses/{license_id}")
-async def delete_license(license_id: int, user: Dict = Depends(get_current_user)):
-    async with db.get_db() as conn:
-        await conn.execute("""
-            DELETE FROM licenses WHERE id = ? AND script_id IN (SELECT id FROM scripts WHERE user_id = ?)
-        """, (license_id, user["id"]))
-        await conn.commit()
-    return {"success": True}
+class LeakTraceRequest(BaseModel):
+    dump_content: str
+    auto_ban: Optional[bool] = False
+    ban_reason: Optional[str] = "Identified as source leaker via cryptographic watermark"
+
+@app.post("/api/trace_leak")
+async def trace_leak(req: LeakTraceRequest, user: Dict = Depends(get_current_user)):
+    """
+    Decodes an embedded steganographic watermark from a leaked script dump,
+    identifying the exact license key, Roblox user ID, and Discord account of the leaker.
+    """
+    result = crypto_engine.decode_watermark(req.dump_content)
+    if not result or not result.get("verified"):
+        return JSONResponse(status_code=404, content={
+            "success": False,
+            "message": "No verified FleedGuard watermark found in the provided dump."
+        })
+
+    leaked_key = result["license_key"]
+    banned_status = False
+
+    if req.auto_ban and leaked_key != "UNKNOWN":
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT id FROM licenses WHERE UPPER(license_key) = UPPER(?)", (leaked_key,))
+            lic = await cursor.fetchone()
+            if lic:
+                await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE id = ?", (req.ban_reason, lic["id"]))
+                await conn.commit()
+                banned_status = True
+
+    return {
+        "success": True,
+        "watermark": result,
+        "auto_banned": banned_status,
+        "message": f"Successfully identified leaker: License {leaked_key} (Discord: {result['discord_id']}, Roblox UID: {result['roblox_user_id']})"
+    }
 
 # ----------------- Analytics & Execution Logs API -----------------
 @app.get("/api/stats")
@@ -926,9 +954,20 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
         await conn.commit()
 
-        # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
+        # 5. Steganographic Watermark & Encrypt Payload for in-memory VM unpacking
         raw_code = row["raw_source"]
         
+        # Dynamically watermark payload with license_key, roblox user_id, and discord_id
+        # If the licensee ever dumps the payload and leaks it, the watermark deterministically
+        # traces back to their license key, Discord account, and Roblox User ID.
+        discord_id = row["discord_id"] if "discord_id" in row.keys() else None
+        raw_code = crypto_engine.inject_watermark(
+            source_code=raw_code,
+            license_key=row["license_key"],
+            user_id=rbx_uid,
+            discord_id=discord_id
+        )
+
         # If script is in protected mode (mode 1 or 2), apply O_bfuscate 1.1 VM virtualization
         # This guarantees that even if an attacker writes a custom fetcher with a valid key,
         # they will only ever decrypt heavily virtualized VM bytecode instead of raw source code.

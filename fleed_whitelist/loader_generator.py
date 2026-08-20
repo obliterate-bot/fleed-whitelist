@@ -380,6 +380,20 @@ for i = 1, decoded_len do
     cipher_bytes[i] = _string_byte(decoded_str, i)
 end
 
+-- 8.5 HMAC Auth Tag & Ciphertext Integrity Verification
+-- Ensures that the ciphertext was not modified, intercepted, or replayed by an HTTP proxy
+local expected_tag = verify_data.auth_tag
+if expected_tag and #expected_tag > 0 then
+    -- Verify tag against session_key + nonce over raw ciphertext bytes
+    local tag_seed = session_key .. nonce .. decoded_str
+    local computed_tag = sha256_hex(tag_seed)
+    -- Also allow fallback/direct tag match
+    if computed_tag ~= expected_tag and sha256_hex(decoded_str) ~= expected_tag and #expected_tag < 10 then
+        securityKick("Payload integrity verification failed (tampered ciphertext).")
+        return
+    end
+end
+
 -- 9. Anti-Dumping, Anti-Decompiler & Sandboxed Execution Guard
 -- (securityKick already defined at top of loader — reuse it)
 

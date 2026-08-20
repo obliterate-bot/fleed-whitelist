@@ -414,4 +414,35 @@ def test_luarmor_parity_commands():
 
     asyncio.run(_run())
 
+def test_watermarking_and_leak_tracer():
+    """Verifies that watermarked Lua code can be decoded and attributed to the leaker."""
+    original_lua = "print('Hello World')\nlocal x = 42\nreturn x"
+    license_key = "FLEED-LEAKER-1234-5678"
+    user_id = 987654321
+    discord_id = "555555555555555555"
+
+    watermarked_lua = crypto_engine.inject_watermark(
+        source_code=original_lua,
+        license_key=license_key,
+        user_id=user_id,
+        discord_id=discord_id
+    )
+
+    assert watermarked_lua != original_lua
+    assert "_FG_WM" in watermarked_lua
+
+    # Decode and verify leak attribution
+    decoded = crypto_engine.decode_watermark(watermarked_lua)
+    assert decoded is not None
+    assert decoded["verified"] is True
+    assert decoded["license_key"] == license_key
+    assert decoded["roblox_user_id"] == str(user_id)
+    assert decoded["discord_id"] == discord_id
+
+    # Verify invalid/tampered watermark fails gracefully
+    # Tamper the base64 signature token so the HMAC hash mismatch occurs
+    tampered_lua = watermarked_lua.replace("RkxFRUQt", "XXXXXXQt")
+    assert crypto_engine.decode_watermark(tampered_lua) is None or crypto_engine.decode_watermark(tampered_lua).get("verified") is False
+
+
 

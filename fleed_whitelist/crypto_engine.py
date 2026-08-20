@@ -14,6 +14,54 @@ MASTER_SECRET = os.getenv("FLEED_MASTER_SECRET", "fleed_guard_super_secret_maste
 
 class CryptoEngine:
     @staticmethod
+    def inject_watermark(source_code: str, license_key: str, user_id: Optional[int] = None, discord_id: Optional[str] = None) -> str:
+        """
+        Injects an invisible, deterministic steganographic watermark into the Lua source code
+        before VM compilation or encryption. If a dumped script is leaked online, the developer
+        can decode the embedded watermarks to identify the leaking license and Discord user.
+        """
+        raw_uid = str(user_id or 0)
+        raw_disc = str(discord_id or "NONE")
+        sig_data = f"{license_key}|{raw_uid}|{raw_disc}"
+        
+        # 1. Cryptographic Watermark Tag
+        tag_hash = hashlib.sha256(f"{MASTER_SECRET}:{sig_data}".encode()).hexdigest()[:16]
+        encoded_sig = base64.b64encode(sig_data.encode()).decode()
+        
+        # Non-executable embedded watermark identifier variable (folded inside local scope)
+        watermark_header = f'local _FG_WM = "{tag_hash}:{encoded_sig}"; '
+        
+        # 2. Steganographic zero-width spacing fingerprint appended as invisible bits
+        # Space (0x20) and Tab (0x09) represent binary 0 and 1
+        bin_str = "".join(f"{b:08b}" for b in tag_hash.encode())
+        stego_chars = "".join(" " if bit == "0" else "\t" for bit in bin_str)
+        stego_comment = f"--[[\n{stego_chars}\n]]\n"
+        
+        return f"{stego_comment}{watermark_header}\n{source_code}"
+
+    @staticmethod
+    def decode_watermark(source_or_dump: str) -> Optional[Dict[str, str]]:
+        """Extracts and verifies a steganographic watermark from a dumped Lua script."""
+        import re
+        match = re.search(r'_FG_WM\s*=\s*"([a-f0-9]{16}):([^"]+)"', source_or_dump)
+        if match:
+            tag_hash, encoded_sig = match.group(1), match.group(2)
+            try:
+                sig_data = base64.b64decode(encoded_sig).decode()
+                expected_hash = hashlib.sha256(f"{MASTER_SECRET}:{sig_data}".encode()).hexdigest()[:16]
+                if hmac.compare_digest(tag_hash, expected_hash):
+                    parts = sig_data.split("|")
+                    return {
+                        "verified": True,
+                        "license_key": parts[0] if len(parts) > 0 else "UNKNOWN",
+                        "roblox_user_id": parts[1] if len(parts) > 1 else "0",
+                        "discord_id": parts[2] if len(parts) > 2 else "NONE",
+                    }
+            except Exception:
+                pass
+        return None
+
+    @staticmethod
     def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
         """Hashes password with PBKDF2-HMAC-SHA256 and salt."""
         if not salt:

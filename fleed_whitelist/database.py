@@ -214,6 +214,27 @@ class WhitelistDB:
                 )
             """)
 
+            # 8. Real-Time In-Game Live Presence & Heartbeats
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS live_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    script_id INTEGER,
+                    license_key TEXT NOT NULL,
+                    hwid TEXT NOT NULL,
+                    roblox_username TEXT,
+                    roblox_user_id INTEGER,
+                    game_name TEXT,
+                    place_id INTEGER,
+                    job_id TEXT,
+                    executor_name TEXT,
+                    ip_address TEXT,
+                    started_at TEXT NOT NULL,
+                    last_heartbeat TEXT NOT NULL,
+                    is_kicked INTEGER DEFAULT 0,
+                    UNIQUE(license_key, hwid) ON CONFLICT REPLACE
+                )
+            """)
+
             # Indices for ultra-fast lookup
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_script ON licenses(script_id);")
@@ -224,6 +245,7 @@ class WhitelistDB:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_status_time ON execution_logs(status, timestamp);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_blacklists_val ON blacklists(target_value);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_kicks_val ON session_kicks(target_value);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_live_hb ON live_sessions(last_heartbeat);")
             await conn.commit()
 
 db = WhitelistDB()

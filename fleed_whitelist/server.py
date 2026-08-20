@@ -1582,6 +1582,25 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         )
         encrypted_payload, auth_tag = crypto_engine.encrypt_payload(raw_code, session_key, req.nonce)
 
+        # Track in real-time live_sessions presence table
+        try:
+            await conn.execute("""
+                INSERT INTO live_sessions (script_id, license_key, hwid, roblox_username, roblox_user_id, game_name, place_id, job_id, executor_name, ip_address, started_at, last_heartbeat)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(license_key, hwid) DO UPDATE SET
+                    last_heartbeat = excluded.last_heartbeat,
+                    roblox_username = excluded.roblox_username,
+                    roblox_user_id = excluded.roblox_user_id,
+                    game_name = excluded.game_name,
+                    place_id = excluded.place_id,
+                    job_id = excluded.job_id,
+                    executor_name = excluded.executor_name,
+                    ip_address = excluded.ip_address,
+                    is_kicked = 0
+            """, (row["script_id"], row["license_key"], bound_hwid, rbx_user, rbx_uid, game_name, place_id, job_id, exec_name, client_ip, now_iso, now_iso))
+        except Exception:
+            pass
+
     # Note: session_key is NEVER returned to the client
     return {
         "success": True,
@@ -1645,11 +1664,28 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
         """, (claims["key"], presented))
         kick_row = await k_cur.fetchone()
         if kick_row:
+            try:
+                await conn.execute("UPDATE live_sessions SET is_kicked = 1 WHERE UPPER(license_key) = UPPER(?)", (claims["key"],))
+                await conn.commit()
+            except Exception:
+                pass
             return JSONResponse(status_code=403, content={
                 "success": False, 
                 "action": "kick", 
                 "kick_reason": kick_row["reason"] or "FleedGuard: You have been kicked from the game by the administrator."
             })
+
+        # Update real-time heartbeat timestamp
+        now_iso = datetime.now(timezone.utc).isoformat()
+        try:
+            await conn.execute("""
+                UPDATE live_sessions 
+                SET last_heartbeat = ? 
+                WHERE UPPER(license_key) = UPPER(?) AND hwid = ?
+            """, (now_iso, claims["key"], presented))
+            await conn.commit()
+        except Exception:
+            pass
 
     # Roll the execution token so the fused guard's background re-check keeps
     # validating without needing a long-lived token. Short TTL + rolling means a
@@ -2019,21 +2055,48 @@ async def kick_player_session(req: KickPlayerRequest, user: Dict = Depends(get_c
 @app.get("/api/sessions/active")
 async def get_active_sessions(user: Dict = Depends(get_current_user)):
     """
-    Returns players and devices with handshakes in the last 15 minutes.
+    Returns live in-game sessions with real-time heartbeat pulse and presence status.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(minutes=15)).isoformat()
     async with db.get_db() as conn:
         cursor = await conn.execute("""
-            SELECT l.id, l.license_key, l.roblox_username, l.roblox_user_id, l.game_name, l.place_id, 
-                   l.executor_name, l.hwid, l.ip_address, l.timestamp, s.name as script_name, s.slug as script_slug
-            FROM execution_logs l
+            SELECT l.id, l.license_key, l.hwid, l.roblox_username, l.roblox_user_id, l.game_name, l.place_id, 
+                   l.job_id, l.executor_name, l.ip_address, l.started_at, l.last_heartbeat, l.is_kicked,
+                   s.name as script_name, s.slug as script_slug
+            FROM live_sessions l
             LEFT JOIN scripts s ON l.script_id = s.id
-            WHERE l.timestamp >= ? AND l.status = 'SUCCESS'
-            ORDER BY l.id DESC
+            WHERE l.last_heartbeat >= ?
+            ORDER BY l.last_heartbeat DESC
             LIMIT 50
         """, (cutoff,))
         rows = await cursor.fetchall()
-    return [dict(r) for r in rows]
+
+    results = []
+    for r in rows:
+        d = dict(r)
+        try:
+            hb_dt = datetime.fromisoformat(d["last_heartbeat"])
+            secs_ago = max(0, int((now - hb_dt).total_seconds()))
+        except Exception:
+            secs_ago = 999
+
+        if secs_ago <= 35:
+            presence_state = "online"
+            presence_label = "ONLINE"
+        elif secs_ago <= 90:
+            presence_state = "idle"
+            presence_label = "IDLE / LAG"
+        else:
+            presence_state = "offline"
+            presence_label = "LEFT GAME"
+
+        d["seconds_ago"] = secs_ago
+        d["presence_state"] = presence_state
+        d["presence_label"] = presence_label
+        results.append(d)
+
+    return results
 
 
 

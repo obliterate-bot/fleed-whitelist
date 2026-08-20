@@ -1816,6 +1816,34 @@ async function loadActiveSessions() {
       const profileUrl = (s.roblox_user_id && s.roblox_user_id > 0) ? `https://www.roblox.com/users/${s.roblox_user_id}/profile` : '#';
       const placeUrl = s.place_id > 0 ? `https://www.roblox.com/games/${s.place_id}` : '#';
 
+      let presenceBadge = "";
+      if (s.is_kicked) {
+        presenceBadge = `
+          <span class="badge badge-danger" style="display:inline-flex; align-items:center; gap:5px; font-size:10px;">
+            <i class="fa-solid fa-bolt"></i> KICKED
+          </span>
+        `;
+      } else if (s.presence_state === "online") {
+        presenceBadge = `
+          <span class="badge badge-success" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:700; background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.4); color:#4ade80;">
+            <span class="live-radar-dot" style="width:7px; height:7px; background:#22c55e; border-radius:50%; box-shadow:0 0 8px #22c55e; display:inline-block;"></span>
+            LIVE (${s.seconds_ago}s ago)
+          </span>
+        `;
+      } else if (s.presence_state === "idle") {
+        presenceBadge = `
+          <span class="badge badge-zinc" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#facc15; border-color:rgba(250,204,21,0.3);">
+            <i class="fa-solid fa-clock" style="font-size:8px;"></i> IDLE (${s.seconds_ago}s ago)
+          </span>
+        `;
+      } else {
+        presenceBadge = `
+          <span class="badge badge-zinc" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:var(--text-zinc-500);">
+            <i class="fa-solid fa-power-off" style="font-size:8px;"></i> LEFT GAME
+          </span>
+        `;
+      }
+
       return `
         <tr>
           <td>
@@ -1840,9 +1868,7 @@ async function loadActiveSessions() {
             <span class="key-badge" style="font-size:11px;" onclick="copyText('${s.license_key}')">${s.license_key.substring(0, 14)}... <i class="fa-solid fa-copy"></i></span>
           </td>
           <td><span class="badge badge-gold" style="font-size:10px;">${escapeHtml(s.executor_name || 'Universal')}</span></td>
-          <td style="font-size:11px; color:var(--text-zinc-400); font-family:var(--font-mono);">
-            ${new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-          </td>
+          <td>${presenceBadge}</td>
           <td>
             <button class="btn btn-danger btn-sm" onclick="openKickModal({ key: '${s.license_key || ''}', hwid: '${s.hwid || ''}', userId: ${s.roblox_user_id || 0}, username: '${s.roblox_username || ''}', displayName: '${s.roblox_username || s.license_key || 'Player'}' })">
               <i class="fa-solid fa-bolt"></i> Kick

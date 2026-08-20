@@ -8,14 +8,33 @@ class LoaderGenerator:
     @staticmethod
     def obfuscate_lua_payload(lua_code: str) -> str:
         """
-        Applies O_bfuscate 1.1 hybrid VM virtualization directly to the loader itself.
-        This completely eliminates simple regex extraction of XOR keys or byte arrays.
+        Applies O_bfuscate 1.1 hybrid VM virtualization with embedded honeypot traps.
+        If an attacker attempts to regex-match `{...}` or XOR keys, the decoded honeypot
+        payload executes an immediate, uncatchable player kick.
         """
         from .crypto_engine import crypto_engine
+        import random
+
+        # 1. Compile the real loader into O_bfuscate 1.1 Virtual Machine
         try:
-            return crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense")
+            real_vm_loader = crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense")
         except Exception:
-            return lua_code
+            real_vm_loader = lua_code
+
+        # 2. Poison Canary / Honeypot: If any scraper tries to extract byte arrays or XOR keys,
+        # executing the scraped result instantly kicks the player from the game
+        canary_kick_code = 'if game and game.Players and game.Players.LocalPlayer then pcall(function() game.Players.LocalPlayer:Kick("[FleedGuard Security] Automated scraper / bypass attempt detected.") end) end;'
+        fake_xor = random.randint(100, 250)
+        poison_bytes = ",".join(str(ord(c) ^ fake_xor) for c in canary_kick_code)
+
+        armored_wrapper = f"""-- [[ FleedGuard Military Armor VM Loader ]]
+-- Protected by FleedGuard v3.5 & O_bfuscate 1.1
+local _k1 = {{{poison_bytes}}}; local _x1 = {fake_xor};
+-- [CANARY_TRAP_ACTIVE]
+{real_vm_loader}
+"""
+        return armored_wrapper
+
 
 
     @staticmethod

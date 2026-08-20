@@ -64,12 +64,20 @@ async def check_script_permission(ctx, slug: str = None) -> tuple[bool, Optional
     """
     author_id_str = str(ctx.author.id)
 
-    # 1. Bot Owners
+    # 1. Bot Owners — still try to find their linked account for API key sync
+    is_owner = False
     if ctx.author.id == 539594512981295106 or ctx.author.id in getattr(config, "OWNER_IDS", []):
-        return True, None, None
+        is_owner = True
     bot_owners = getattr(ctx.bot, "owner_ids", set()) or set()
     if ctx.author.id in bot_owners or author_id_str in bot_owners:
-        return True, None, None
+        is_owner = True
+
+    if is_owner:
+        # Try to find their linked account so cloud sync has their API key
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (author_id_str,))
+            user_row = await cursor.fetchone()
+        return True, None, dict(user_row) if user_row else None
 
     # 2. Lookup Website Linked Developer Account
     async with db.get_db() as conn:

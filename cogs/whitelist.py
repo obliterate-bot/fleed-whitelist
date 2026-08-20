@@ -1461,6 +1461,57 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             )
         await ctx.send(embed=embed)
 
+    @whitelist_group.command(name="mode", aliases=["setmode", "protection"])
+    async def mode_cmd(self, ctx, slug: str, mode: str):
+        """
+        Toggles protection mode for a script: 'raw' / 'unobfuscated' (0) or 'vm' / 'obfuscated' (2).
+        """
+        clean_slug = slug.strip().lower()
+        ok, err_msg, user_row = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
+        clean_mode = mode.strip().lower()
+        if clean_mode in ["0", "raw", "unobfuscated", "none", "off"]:
+            mode_val = 0
+            mode_name = "Unobfuscated Mode (Raw Script + Server Whitelist)"
+        elif clean_mode in ["1", "stream", "armor"]:
+            mode_val = 1
+            mode_name = "Stream Armor"
+        elif clean_mode in ["2", "vm", "obfuscated", "on", "dense"]:
+            mode_val = 2
+            mode_name = "O_bfuscate 1.1 VM Protected"
+        else:
+            return await ctx.send(embed=error_embed("invalid mode. choose `raw` (unobfuscated) or `vm` (protected).", ctx.author))
+
+        # Update local DB and remote API if applicable
+        async with db.get_db() as conn:
+            await conn.execute("UPDATE scripts SET is_obfuscated_mode = ? WHERE slug = ?", (mode_val, clean_slug))
+            await conn.commit()
+
+        # Update remote backend API if configured
+        pub_url = loader_generator.get_public_url()
+        api_key = (user_row and user_row.get("api_key")) or await get_cloud_api_key(clean_slug)
+        if pub_url and pub_url.startswith("http") and api_key:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    # Get script id
+                    async with session.get(f"{pub_url}/api/scripts", headers={"X-API-Key": api_key}, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status == 200:
+                            scripts = await resp.json()
+                            for s in scripts:
+                                if s["slug"].strip().lower() == clean_slug:
+                                    await session.patch(
+                                        f"{pub_url}/api/scripts/{s['id']}",
+                                        headers={"X-API-Key": api_key},
+                                        json={"is_obfuscated_mode": mode_val},
+                                        timeout=aiohttp.ClientTimeout(total=5)
+                                    )
+                                    break
+            except Exception:
+                pass
+
+        await ctx.send(embed=success_embed(f"updated protection mode for **`{clean_slug}`** to **{mode_name}**.", ctx.author))
 
     @whitelist_group.command(name="ban")
     async def ban_key_cmd(self, ctx, target: str, *, reason: str = "banned by administrator"):

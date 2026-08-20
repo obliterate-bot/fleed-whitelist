@@ -35,10 +35,8 @@ class LoaderGenerator:
         fake_xor = random.randint(100, 250)
         poison_bytes = ",".join(str(ord(c) ^ fake_xor) for c in canary_kick_code)
 
-        armored_wrapper = f"""-- [[ FleedGuard Military Armor VM Loader ]]
--- Protected by FleedGuard v3.5 & O_bfuscate 1.1
-local _k1 = {{{poison_bytes}}}; local _x1 = {fake_xor};
--- [CANARY_TRAP_ACTIVE]
+        armored_wrapper = f"""local _FG={{{poison_bytes}}}
+local _XK={fake_xor}
 {real_vm_loader}
 """
         return armored_wrapper

@@ -289,6 +289,17 @@ async def regenerate_api_key(user: Dict = Depends(get_current_user)):
         await conn.commit()
     return {"success": True, "api_key": new_api_key}
 
+class BindDiscordRequest(BaseModel):
+    discord_id: str
+
+@app.post("/api/auth/bind_discord")
+async def bind_discord(req: BindDiscordRequest, user: Dict = Depends(get_current_user)):
+    clean_id = str(req.discord_id).strip("<@!>")
+    async with db.get_db() as conn:
+        await conn.execute("UPDATE users SET discord_id = ? WHERE id = ?", (clean_id, user["id"]))
+        await conn.commit()
+    return {"success": True, "message": f"Linked Discord ID {clean_id} to user {user['username']}"}
+
 # ----------------- 2FA Configuration Endpoints -----------------
 @app.post("/api/auth/2fa/setup")
 async def setup_2fa(user: Dict = Depends(get_current_user)):

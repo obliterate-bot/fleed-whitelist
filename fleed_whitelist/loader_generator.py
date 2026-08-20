@@ -223,18 +223,30 @@ task.spawn(exec_fn)
 
     @staticmethod
     def get_public_url(fallback: str = "http://localhost:8000") -> str:
-        """Retrieves the live public HTTPS Cloudflare URL if available."""
+        """Retrieves the live public HTTPS Cloudflare or Railway URL."""
         import os
+        env_url = os.getenv("FLEED_SERVER_URL")
+        if env_url and env_url.startswith("http"):
+            return env_url.rstrip("/")
         url_file = os.path.join(os.path.dirname(__file__), "public_url.txt")
         if os.path.exists(url_file):
             try:
                 with open(url_file, "r", encoding="utf-8") as f:
                     url = f.read().strip()
-                    if url.startswith("https://"):
-                        return url
+                    if url.startswith("https://") or url.startswith("http://"):
+                        return url.rstrip("/")
             except Exception:
                 pass
         return fallback
+
+    @staticmethod
+    def set_public_url(url: str):
+        """Saves a custom server URL to public_url.txt."""
+        import os
+        clean_url = str(url).strip().rstrip("/")
+        url_file = os.path.join(os.path.dirname(__file__), "public_url.txt")
+        with open(url_file, "w", encoding="utf-8") as f:
+            f.write(clean_url)
 
     @staticmethod
     def generate_one_liner(server_url: str = None, script_slug: str = "") -> str:

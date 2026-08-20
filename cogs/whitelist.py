@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import datetime
 import secrets
+import aiohttp
 from typing import Optional, Union
 import config
 from utils import fleed_embed, success_embed, error_embed, warn_embed, find_role, send_group_help
@@ -385,8 +386,20 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """Displays interactive paginated help menu for whitelist commands."""
         await send_group_help(ctx, ctx.command, "whitelist")
 
+    @whitelist_group.command(name="seturl", aliases=["url"])
+    async def set_url_cmd(self, ctx, url: str):
+        """
+        Configures the backend live public API URL (e.g. Railway app URL).
+        """
+        clean_url = url.strip().rstrip("/")
+        if not clean_url.startswith("http"):
+            return await ctx.send(embed=error_embed("URL must start with http:// or https://", ctx.author))
+
+        loader_generator.set_public_url(clean_url)
+        await ctx.send(embed=success_embed(f"configured backend public url to `{clean_url}`.", ctx.author))
+
     @whitelist_group.command(name="link", aliases=["bind", "connect"])
-    async def link_account_cmd(self, ctx, api_key: str):
+    async def link_account_cmd(self, ctx, *, api_key: str):
         """
         Links your Discord account to your website developer login using your API key.
         """
@@ -396,19 +409,56 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         except Exception:
             pass
 
-        clean_key = api_key.strip()
+        clean_key = api_key.strip().strip("'\"`").replace("Bearer ", "").strip()
         author_id_str = str(ctx.author.id)
 
+        user_row = None
+        # 1. Try local database
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT * FROM users WHERE api_key = ? AND is_active = 1", (clean_key,))
-            user_row = await cursor.fetchone()
+            row = await cursor.fetchone()
+            if row:
+                await conn.execute("UPDATE users SET discord_id = ? WHERE id = ?", (author_id_str, row["id"]))
+                await conn.commit()
+                user_row = dict(row)
 
-            if not user_row:
-                return await ctx.send(embed=error_embed("invalid developer api key. find your api key on the website dashboard.", ctx.author))
+        # 2. If not found locally, query live backend servers via HTTP
+        if not user_row:
+            urls_to_try = [
+                loader_generator.get_public_url(),
+                "http://localhost:8000",
+                "http://127.0.0.1:8000"
+            ]
+            async with aiohttp.ClientSession() as session:
+                for base_url in urls_to_try:
+                    if not base_url:
+                        continue
+                    try:
+                        async with session.get(f"{base_url}/api/auth/me", headers={"X-API-Key": clean_key}, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                # Bind on server
+                                try:
+                                    await session.post(f"{base_url}/api/auth/bind_discord", headers={"X-API-Key": clean_key}, json={"discord_id": author_id_str}, timeout=aiohttp.ClientTimeout(total=5))
+                                except Exception:
+                                    pass
 
-            # Bind discord_id
-            await conn.execute("UPDATE users SET discord_id = ? WHERE id = ?", (author_id_str, user_row["id"]))
-            await conn.commit()
+                                # Sync to local DB
+                                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                                async with db.get_db() as conn:
+                                    await conn.execute("""
+                                        INSERT INTO users (username, email, password_hash, salt, api_key, role, is_active, discord_id, created_at)
+                                        VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                                        ON CONFLICT(username) DO UPDATE SET api_key = excluded.api_key, discord_id = excluded.discord_id
+                                    """, (data["username"], data.get("email", ""), "remote_synced", "remote_salt", clean_key, data.get("role", "developer"), author_id_str, now_iso))
+                                    await conn.commit()
+                                user_row = data
+                                break
+                    except Exception:
+                        pass
+
+        if not user_row:
+            return await ctx.send(embed=error_embed("invalid developer api key. verify your api key on the website settings tab.", ctx.author))
 
         embed = success_embed(
             f"successfully linked discord to website developer **{user_row['username']}**.\n"

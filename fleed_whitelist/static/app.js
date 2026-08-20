@@ -53,6 +53,26 @@ function escapeHtml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
+// Relative time formatting helper (e.g., "5s ago", "2m ago", "1h ago")
+function formatTimeAgo(isoString) {
+  if (!isoString) return "Just now";
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return "Just now";
+    const now = new Date();
+    const diffSec = Math.max(0, Math.floor((now.getTime() - d.getTime()) / 1000));
+    if (diffSec < 45) return `${diffSec}s ago`;
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `${diffMin}m ago`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr}h ago`;
+    const diffDays = Math.floor(diffHr / 24);
+    return `${diffDays}d ago`;
+  } catch (e) {
+    return "Just now";
+  }
+}
+
 // Generic API Fetch Wrapper
 async function apiCall(endpoint, method = "GET", body = null) {
   const headers = { "Content-Type": "application/json" };

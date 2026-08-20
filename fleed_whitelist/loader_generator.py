@@ -363,13 +363,7 @@ for i = 1, decoded_len do
 end
 
 -- 9. Anti-Dumping, Anti-Decompiler & Sandboxed Execution Guard
-local function securityKick(reason)
-    if game and game.Players and game.Players.LocalPlayer then
-        pcall(function()
-            game.Players.LocalPlayer:Kick("[FleedGuard Security] " .. _tostring(reason))
-        end)
-    end
-end
+-- (securityKick already defined at top of loader — reuse it)
 
 -- Trap 1: Verify compiler and execution environment
 if not isNative(_loadstring) or detectMetatableTamper() then
@@ -377,52 +371,75 @@ if not isNative(_loadstring) or detectMetatableTamper() then
     return
 end
 
--- Trap 2: Anti-Dumper Traps (Detect if global clipboard, file dumping, or memory scanning functions are hooked)
-if setclipboard and not isNative(setclipboard) then
-    securityKick("Memory dumper / clipboard hook detected.")
-    return
+-- Trap 2: Anti-Dumper Traps (clipboard, file, memory scanning hooks)
+local dump_checks = {{
+    {{setclipboard, "setclipboard"}},
+    {{writefile, "writefile"}},
+    {{appendfile, "appendfile"}},
+    {{getgc, "getgc"}},
+    {{getprotos, "getprotos"}},
+    {{getconstants, "getconstants"}},
+    {{getupvalues, "getupvalues"}},
+    {{decompile, "decompile"}},
+    {{saveinstance, "saveinstance"}},
+    {{getscriptclosure, "getscriptclosure"}},
+}}
+for _, check in _rawget(dump_checks, 1) and pairs(dump_checks) or next, dump_checks do
+    local fn, name = check[1], check[2]
+    if fn and not isNative(fn) then
+        securityKick("Hooked function detected: " .. _tostring(name))
+        return
+    end
 end
 
-if writefile and not isNative(writefile) then
-    securityKick("File interceptor hook detected.")
-    return
+-- Trap 3: hookfunction / hookmetamethod / newcclosure / clonefunction detection
+-- These are the primary tools attackers use to intercept FleedGuard functions after loading
+local hook_tools = {{
+    {{hookfunction, "hookfunction"}},
+    {{hookmetamethod, "hookmetamethod"}},
+    {{newcclosure, "newcclosure"}},
+    {{clonefunction, "clonefunction"}},
+}}
+for _, check in _rawget(hook_tools, 1) and pairs(hook_tools) or next, hook_tools do
+    local fn, name = check[1], check[2]
+    if fn and not isNative(fn) then
+        securityKick("Hook injection tool tampered: " .. _tostring(name))
+        return
+    end
 end
 
-if appendfile and not isNative(appendfile) then
-    securityKick("File logging hook detected.")
-    return
+-- Trap 4: debug.setupvalue / debug.getupvalue / debug.getinfo reflection attacks
+-- Attackers can use debug.setupvalue to replace source_code variable with a dumper BEFORE we nil it
+if debug then
+    if debug.setupvalue and not isNative(debug.setupvalue) then
+        securityKick("Debug reflection hook (setupvalue) detected.")
+        return
+    end
+    if debug.getupvalue and not isNative(debug.getupvalue) then
+        securityKick("Debug reflection hook (getupvalue) detected.")
+        return
+    end
+    if debug.getinfo and not isNative(debug.getinfo) then
+        securityKick("Debug reflection hook (getinfo) detected.")
+        return
+    end
+    if debug.setmetatable and not isNative(debug.setmetatable) then
+        securityKick("Debug metatable hook detected.")
+        return
+    end
 end
 
-if getgc and not isNative(getgc) then
-    securityKick("GC memory scanner detected.")
+-- Trap 5: getrenv / getgenv scraping (attackers scan entire env for string references)
+if getrenv and not isNative(getrenv) then
+    securityKick("Registry environment scraper detected.")
     return
 end
-
-if getprotos and not isNative(getprotos) then
-    securityKick("Prototype extractor detected.")
-    return
-end
-
-if getconstants and not isNative(getconstants) then
-    securityKick("Constant extractor detected.")
-    return
-end
-
-if getupvalues and not isNative(getupvalues) then
-    securityKick("Upvalue reflection hook detected.")
-    return
-end
-
-if decompile and not isNative(decompile) then
-    securityKick("Decompiler hook detected.")
-    return
-end
-
 
 -- Decrypt source code in ephemeral memory
+local key_bytes = session_key .. nonce
 local source_code = stream_decrypt(cipher_bytes, key_bytes)
 
--- Trap 3: Integrity verification on decrypted payload buffer
+-- Trap 6: Integrity verification on decrypted payload buffer
 if not source_code or #source_code == 0 then
     securityKick("Payload verification error.")
     return
@@ -454,7 +471,7 @@ local sandbox_env = _getfenv(exec_fn)
 sandbox_env.script = nil
 _setfenv(exec_fn, sandbox_env)
 
--- Scramble and zero memory references immediately to foil GC scrapers (getgc / getprotos)
+-- Scramble and zero ALL memory references immediately to foil GC scrapers (getgc / getprotos)
 source_code = nil
 verify_data = nil
 cipher_bytes = nil
@@ -465,10 +482,30 @@ client_sig = nil
 init_resp = nil
 verify_resp = nil
 decoded_str = nil
+raw_b64 = nil
+decode_func = nil
+decoded_str = nil
+
+-- Trap 7: Post-execution continuous integrity monitor
+-- Spawns a background thread that continuously checks for late-hook attempts
+-- (attacker hooks writefile/setclipboard AFTER FleedGuard loads but BEFORE script runs)
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if (writefile and not isNative(writefile)) or
+           (setclipboard and not isNative(setclipboard)) or
+           (hookfunction and not isNative(hookfunction)) or
+           detectMetatableTamper() then
+            securityKick("Post-load hook injection detected.")
+            return
+        end
+    end
+end)
 
 -- Execute securely
 print("[FleedGuard] Successfully authenticated " .. _tostring(SCRIPT_SLUG) .. "! Launching...")
 task.spawn(exec_fn)
+
 
 '''
 

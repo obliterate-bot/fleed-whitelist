@@ -270,13 +270,18 @@ def test_full_handshake_and_tamper_defense():
     asyncio.run(_run())
 
 def test_loader_generation():
-    loader_code = loader_generator.generate_client_loader("https://fleed.bot", "my_script_slug", "My Hub")
-    assert "FleedGuard" in loader_code
-    assert "SCRIPT_SLUG = \"my_script_slug\"" in loader_code
-    assert "/v1/handshake/init" in loader_code
-    assert "/v1/handshake/verify" in loader_code
-    assert "isNative" in loader_code
-    assert "_setfenv" in loader_code
+    # Obfuscated mode (default): source code hidden behind polymorphic VM armor
+    loader_code_obf = loader_generator.generate_client_loader("https://fleed.bot", "my_script_slug", "My Hub", obfuscate=True)
+    assert "FleedGuard" in loader_code_obf
+    assert "SCRIPT_SLUG" not in loader_code_obf # Plaintext source hidden from plain sight
+    
+    # Raw mode: inspect inner code
+    loader_code_raw = loader_generator.generate_client_loader("https://fleed.bot", "my_script_slug", "My Hub", obfuscate=False)
+    assert "SCRIPT_SLUG = \"my_script_slug\"" in loader_code_raw
+    assert "isNative" in loader_code_raw
+    assert "/v1/handshake/init" in loader_code_raw
+    assert "/v1/handshake/verify" in loader_code_raw
+    assert "_setfenv" in loader_code_raw
 
 
 def test_control_panel_view_and_redemption():

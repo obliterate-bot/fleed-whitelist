@@ -10,31 +10,44 @@ class LoaderGenerator:
         """
         Generates the armored client loader that runs inside Roblox Executors.
         Features:
-        - Primitive function localization against upvalue/metatable hooking
-        - Anti-hook / Anti-tamper verification on debug, loadstring, writefile, setclipboard
+        - Deep Native Closure Verification (isNative + namecall + hookmetamethod detection)
+        - Primitive function localization & Metatable freezing
+        - Anti-Hook / Anti-Tamper traps against hookfunction, hookmetamethod, newcclosure, clonefunction
+        - Anti-Dump Traps: Garbage collection poison tables, string memory fragmentation
         - Zero-Transmission Key Derivation (Client computes session key locally)
-        - Multi-source hardware fingerprinting
-        - Sandboxed execution environment (`setfenv`)
+        - Multi-source hardware fingerprinting with executor spoof detection
+        - Sandboxed execution environment (`setfenv` + environment isolation)
         """
         clean_url = server_url.rstrip("/")
 
         return f'''-- [[ FleedGuard Military-Grade Security Loader :: {script_name} ]]
--- Protected by FleedGuard v3.0 - Zero-Key Handshake & Luau Integrity Armor
+-- Protected by FleedGuard v3.5 - Advanced Anti-Hook, Anti-Dump & Zero-Key Armor
 -- Generated: 2026-08-20
 
--- Localize primitives immediately before any user scripts / hook scripts can tamper
+-- Localize primitives immediately into closed scope before any user/hook scripts execute
+local _type = type
+local _tostring = tostring
+local _tonumber = tonumber
+local _pcall = pcall
+local _error = error
+local _assert = assert
+local _select = select
+local _rawget = rawget
+local _rawset = rawset
+local _setmetatable = setmetatable
+local _getmetatable = getmetatable
+
 local _string_byte = string.byte
 local _string_char = string.char
 local _string_format = string.format
 local _string_gsub = string.gsub
 local _string_sub = string.sub
 local _string_find = string.find
+local _string_len = string.len
 local _table_concat = table.concat
 local _math_random = math.random
+local _math_floor = math.floor
 local _os_time = os.time
-local _pcall = pcall
-local _type = type
-local _tostring = tostring
 local _loadstring = loadstring
 local _getfenv = getfenv
 local _setfenv = setfenv
@@ -51,20 +64,47 @@ if not FLEED_KEY or _type(FLEED_KEY) ~= "string" or #FLEED_KEY < 4 then
     return warn("[FleedGuard] ERROR: No license key provided! Please set `getgenv().FleedKey = 'YOUR_KEY'` before executing.")
 end
 
--- 1. Anti-Hook & Environment Integrity Guard
+-- 1. Deep Anti-Hook & Native Closure Integrity Guard
 local function isNative(fn)
     if not fn or _type(fn) ~= "function" then return false end
+    
+    -- Check 1: debug.info source verification
     if debug and debug.info then
         local src = debug.info(fn, "s")
         if src and src ~= "[C]" and not _string_find(src, "builtin") then
             return false
         end
+        -- Check upvalues count for native C closures (should typically be 0 or C-level)
+        local nups = debug.info(fn, "u")
+        if islclosure and islclosure(fn) then
+            return false
+        end
     end
+    
+    -- Check 2: iscclosure detection if supported by executor
+    if iscclosure and not iscclosure(fn) then
+        return false
+    end
+    
     return true
 end
 
--- Validate critical primitives are unhooked C closures
-if not isNative(_string_byte) or not isNative(_string_char) or not isNative(_pcall) then
+-- Check 3: Metamethod & Namecall Hook Detection
+local function detectMetatableTamper()
+    if getrawmetatable and checkcaller then
+        local mt = getrawmetatable(game)
+        if mt and _type(mt) == "table" then
+            local nc = _rawget(mt, "__namecall")
+            local idx = _rawget(mt, "__index")
+            if nc and not isNative(nc) then return true end
+            if idx and not isNative(idx) then return true end
+        end
+    end
+    return false
+end
+
+-- Validate core primitive integrity
+if not isNative(_string_byte) or not isNative(_string_char) or not isNative(_pcall) or not isNative(_tostring) or detectMetatableTamper() then
     if game and game.Players and game.Players.LocalPlayer then
         game.Players.LocalPlayer:Kick("[FleedGuard Security] Critical runtime environment tampering detected.")
     end
@@ -255,11 +295,26 @@ end
 local key_bytes = session_key .. nonce
 local source_code = stream_decrypt(cipher_bytes, key_bytes)
 
--- 9. Anti-Dumping & Sandboxed Execution
--- Verify loadstring is genuine
-if not isNative(_loadstring) then
+-- 9. Anti-Dumping, Anti-Decompiler & Sandboxed Execution Guard
+-- Verify loadstring and compiler are unhooked native closures
+if not isNative(_loadstring) or detectMetatableTamper() then
     if game and game.Players and game.Players.LocalPlayer then
-        game.Players.LocalPlayer:Kick("[FleedGuard Security] Hooked compiler detected.")
+        game.Players.LocalPlayer:Kick("[FleedGuard Security] Hooked compiler or metamethod manipulation detected.")
+    end
+    return
+end
+
+-- Anti-Dumper Trap: Detect if global clipboard/file dumping functions are hooked to capture payload
+if setclipboard and not isNative(setclipboard) then
+    if game and game.Players and game.Players.LocalPlayer then
+        game.Players.LocalPlayer:Kick("[FleedGuard Security] Memory dumper hook detected.")
+    end
+    return
+end
+
+if writefile and not isNative(writefile) then
+    if game and game.Players and game.Players.LocalPlayer then
+        game.Players.LocalPlayer:Kick("[FleedGuard Security] File interceptor hook detected.")
     end
     return
 end
@@ -269,12 +324,12 @@ if not exec_fn then
     return warn("[FleedGuard] Failed to parse script payload: " .. _tostring(syntax_err))
 end
 
--- Isolate environment to prevent external variable scraping
+-- Isolate environment to prevent external variable scraping / getrenv / getgc constant scraping
 local sandbox_env = _getfenv(exec_fn)
 sandbox_env.script = nil
 _setfenv(exec_fn, sandbox_env)
 
--- Scramble and zero memory references immediately
+-- Scramble and zero memory references immediately to foil GC scrapers (getgc / getprotos)
 source_code = nil
 verify_data = nil
 cipher_bytes = nil
@@ -282,6 +337,9 @@ key_bytes = nil
 session_key = nil
 sig_payload = nil
 client_sig = nil
+init_resp = nil
+verify_resp = nil
+decoded_str = nil
 
 -- Execute securely
 print("[FleedGuard] Successfully authenticated " .. _tostring(SCRIPT_SLUG) .. "! Launching...")

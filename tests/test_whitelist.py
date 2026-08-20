@@ -276,9 +276,23 @@ def test_full_handshake_and_tamper_defense():
             assert "KILLSWITCH ACTIVE" in blocked_init.json()["message"]
 
             # 11. Test Frontend HTML and Loader endpoint
-            loader_resp = client.get(f"/v1/loader/{slug}")
-            assert loader_resp.status_code == 200
-            assert "FleedGuard" in loader_resp.text
+            # Request without key must be DENIED (403)
+            unauth_loader_resp = client.get(f"/v1/loader/{slug}")
+            assert unauth_loader_resp.status_code == 403
+            assert "Valid license key required" in unauth_loader_resp.text
+
+            # While killswitch is active, loader request with key must also be DENIED (403)
+            ks_loader_resp = client.get(f"/v1/loader/{slug}?key={license_key}")
+            assert ks_loader_resp.status_code == 403
+            assert "temporarily offline" in ks_loader_resp.text
+
+            # Disable killswitch
+            client.patch(f"/api/scripts/{script_id}", json={"killswitch_active": 0}, headers=headers)
+
+            # Request with valid key and killswitch off must SUCCEED (200) and be obfuscated
+            auth_loader_resp = client.get(f"/v1/loader/{slug}?key={license_key}")
+            assert auth_loader_resp.status_code == 200
+            assert "FleedGuard" in auth_loader_resp.text
 
             getkey_resp = client.get(f"/getkey/{slug}")
             assert getkey_resp.status_code == 200
@@ -289,15 +303,67 @@ def test_full_handshake_and_tamper_defense():
 def test_loader_generation():
     loader_code = loader_generator.generate_client_loader("https://fleed.bot", "my_script_slug", "My Hub")
     assert "FleedGuard" in loader_code
+    # Obfuscated loader must NOT leak plaintext endpoints or variable identifiers
+    assert "SCRIPT_SLUG = \"my_script_slug\"" not in loader_code
+    assert "/v1/handshake/init" not in loader_code
+    assert "print(\"[FleedGuard]" not in loader_code  # Stealth mode check
     
     # Raw mode: inspect inner code
     loader_code_raw = loader_generator.generate_client_loader("https://fleed.bot", "my_script_slug", "My Hub", obfuscate=False)
     assert "SCRIPT_SLUG = \"my_script_slug\"" in loader_code_raw
     assert "isNative" in loader_code_raw
-
     assert "/v1/handshake/init" in loader_code_raw
     assert "/v1/handshake/verify" in loader_code_raw
     assert "_setfenv" in loader_code_raw
+    assert "print(\"[FleedGuard]" not in loader_code_raw  # Stealth mode in raw as well
+
+def test_loader_endpoint_security():
+    async def _run():
+        await db.init()
+        with TestClient(app) as client:
+            # 1. Register and create script
+            reg = client.post("/api/auth/register", json={
+                "username": f"loader_test_{int(time.time())}",
+                "email": f"loader_test_{int(time.time())}@test.com",
+                "password": "Password123!"
+            })
+            headers = {"Authorization": f"Bearer {reg.json()['token']}"}
+            slug = f"loader_sec_{int(time.time())}"
+            script_resp = client.post("/api/scripts", json={
+                "name": "Sec Test",
+                "slug": slug,
+                "raw_source": "print('hello')",
+                "is_obfuscated_mode": 1
+            }, headers=headers)
+            script_id = script_resp.json()["id"]
+
+            key_resp = client.post("/api/licenses/bulk", json={
+                "script_id": script_id,
+                "count": 1,
+                "duration_days": 30,
+                "note": "Test Customer Key"
+            }, headers=headers)
+            license_key = key_resp.json()["keys"][0]
+
+            # 2. Blocked scraper User-Agent (curl / python-requests)
+            scraper_resp = client.get(f"/v1/loader/{slug}?key={license_key}", headers={"User-Agent": "python-requests/2.31.0"})
+            assert scraper_resp.status_code == 403
+            assert "Automated scraper" in scraper_resp.text
+
+            # 3. Unauthenticated request without key (must be denied 403)
+            no_key_resp = client.get(f"/v1/loader/{slug}", headers={"User-Agent": "Roblox/WinInet"})
+            assert no_key_resp.status_code == 403
+            assert "Valid license key required" in no_key_resp.text
+
+            # 4. Legitimate executor request with valid key
+            legit_resp = client.get(f"/v1/loader/{slug}?key={license_key}", headers={"User-Agent": "Roblox/WinInet"})
+            assert legit_resp.status_code == 200
+            assert "FleedGuard" in legit_resp.text
+            # Verify no plaintext URLs or variable names in served loader
+            assert "/v1/handshake/init" not in legit_resp.text
+            assert "SCRIPT_SLUG" not in legit_resp.text
+
+    asyncio.run(_run())
 
 
 def test_control_panel_view_and_redemption():

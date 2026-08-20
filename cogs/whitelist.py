@@ -327,7 +327,7 @@ class WhitelistControlPanelView(discord.ui.View):
                 except Exception:
                     pass
 
-        loadstring_snippet = f'getgenv().FleedKey = "{license_row["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{slug}"))()'
+        loadstring_snippet = f'getgenv().FleedKey = "{license_row["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{slug}?key={license_row["license_key"]}"))()'
         
         embed = fleed_embed(
             title=f"{license_row['script_name']} — Loadstring",
@@ -732,7 +732,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                     pass
 
         pub_url = loader_generator.get_public_url()
-        loadstring_snippet = f'getgenv().FleedKey = "{key}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{clean_slug}"))()'
+        loadstring_snippet = f'getgenv().FleedKey = "{key}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{clean_slug}?key={key}"))()'
 
         # Build DM embed
         dm_embed = fleed_embed(
@@ -950,7 +950,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             added += 1
 
             # DM the user
-            loadstring_snippet = f'getgenv().FleedKey = "{key}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{clean_slug}"))()'
+            loadstring_snippet = f'getgenv().FleedKey = "{key}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{clean_slug}?key={key}"))()'
             dm_embed = fleed_embed(
                 title=f"{script['name']} — License & Loadstring",
                 description=f"You have been whitelisted for **{script['name']}**.\n\n"
@@ -1297,7 +1297,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                     except Exception:
                         pass
 
-            loadstr = f'getgenv().FleedKey = "{r["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{r["script_slug"]}"))()'
+            loadstr = f'getgenv().FleedKey = "{r["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{r["script_slug"]}?key={r["license_key"]}"))()'
             embed = fleed_embed(
                 title=f"{r['script_name']} — loadstring",
                 description=f"```lua\n{loadstr}\n```\nkey: `{r['license_key']}`",

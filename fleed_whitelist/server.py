@@ -698,23 +698,71 @@ def check_rate_limit(key: str, max_requests: int = 30, window_sec: int = 60) -> 
 
 # ----------------- Roblox Executor Loader & Handshake API -----------------
 @app.get("/v1/loader/{slug}", response_class=PlainTextResponse)
-async def serve_raw_loader(slug: str, request: Request):
+async def serve_raw_loader(slug: str, request: Request, key: Optional[str] = None):
     """
-    Returns the dynamic Luau loader for a specific script with ephemeral HMAC loader token.
+    Returns the dynamic armored Luau loader for a specific script with ephemeral HMAC loader token.
+    Protected by strict license key validation, O_bfuscate VM virtualization, rate limiting, and scraper detection.
     """
-    async with db.get_db() as conn:
-        cursor = await conn.execute("SELECT name, slug FROM scripts WHERE slug = ?", (slug,))
-        script = await cursor.fetchone()
-        if not script:
-            return f'error("[FleedGuard] ERROR: Script \'{slug}\' was not found on this server. Please check your slug.")'
+    client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "127.0.0.1").split(",")[0].strip()
+    
+    # Rate Limiting on Loader requests
+    if not check_rate_limit(f"loader_ip:{client_ip}", max_requests=40, window_sec=60):
+        return PlainTextResponse('error("[FleedGuard Security] Rate limit exceeded. Please wait a moment.")', status_code=429)
 
-    base_url = str(request.base_url)
+    # Scraper & Automated Extractor Trap
+    ua = (request.headers.get("User-Agent") or "").lower()
+    blocked_agents = [
+        "python-requests", "curl", "wget", "postmanruntime", "aiohttp",
+        "go-http-client", "scrapy", "node-fetch", "axios", "http.client",
+        "urllib", "insomnia", "httpie", "libwww-perl", "apache-httpclient"
+    ]
+    if any(b in ua for b in blocked_agents):
+        return PlainTextResponse('local p=game:GetService("Players").LocalPlayer; if p then p:Kick("[FleedGuard Security] Automated scraper / bypass attempt detected.") end', status_code=403)
+
+    clean_slug = slug.strip().lower()
+    clean_key = (key or request.headers.get("X-License-Key") or "").strip().upper()
+
+    if not clean_key:
+        # Refuse to send the loader if no key is attached
+        return PlainTextResponse('local p=game:GetService("Players").LocalPlayer; if p then p:Kick("[FleedGuard Security] Access Denied: Valid license key required.") end', status_code=403)
+
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT l.*, s.name as script_name, s.slug as script_slug, s.killswitch_active, s.killswitch_reason
+            FROM licenses l
+            JOIN scripts s ON l.script_id = s.id
+            WHERE UPPER(l.license_key) = ? AND LOWER(s.slug) = ?
+        """, (clean_key, clean_slug))
+        license_row = await cursor.fetchone()
+        
+        if not license_row:
+            return PlainTextResponse('local p=game:GetService("Players").LocalPlayer; if p then p:Kick("[FleedGuard Security] Access Denied: Invalid license key.") end', status_code=403)
+
+        if license_row["is_banned"]:
+            return PlainTextResponse('local p=game:GetService("Players").LocalPlayer; if p then p:Kick("[FleedGuard Security] Access Denied: License key has been banned.") end', status_code=403)
+
+        if license_row["killswitch_active"]:
+            return PlainTextResponse('local p=game:GetService("Players").LocalPlayer; if p then p:Kick("[FleedGuard Security] Access Denied: Script is temporarily offline.") end', status_code=403)
+
+        if license_row["expires_at"]:
+            try:
+                exp_dt = datetime.fromisoformat(license_row["expires_at"])
+                if datetime.now(timezone.utc) > exp_dt:
+                    return PlainTextResponse('local p=game:GetService("Players").LocalPlayer; if p then p:Kick("[FleedGuard Security] Access Denied: License key has expired.") end', status_code=403)
+            except Exception:
+                pass
+
+        script_name = license_row["script_name"]
+        script_slug = license_row["script_slug"]
+
+    base_url = str(request.base_url).rstrip("/")
     if request.headers.get("X-Forwarded-Proto") and request.headers.get("X-Forwarded-Host"):
-        base_url = f"{request.headers.get('X-Forwarded-Proto')}://{request.headers.get('X-Forwarded-Host')}"
+        base_url = f"{request.headers.get('X-Forwarded-Proto')}://{request.headers.get('X-Forwarded-Host')}".rstrip("/")
 
     # Generate ephemeral HMAC loader armor token bound to slug and short time window
-    loader_token = crypto_engine.generate_loader_token(script["slug"])
-    return loader_generator.generate_client_loader(base_url, script["slug"], script["name"], loader_token=loader_token)
+    loader_token = crypto_engine.generate_loader_token(script_slug)
+    armored_loader = loader_generator.generate_client_loader(base_url, script_slug, script_name, loader_token=loader_token, obfuscate=True)
+    return PlainTextResponse(armored_loader, media_type="text/plain")
 
 @app.post("/v1/handshake/init")
 async def handshake_init(req: HandshakeInitRequest, request: Request):

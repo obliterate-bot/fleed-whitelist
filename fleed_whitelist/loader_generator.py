@@ -5,6 +5,8 @@ Supports both VM Obfuscated scripts and Unobfuscated scripts.
 """
 
 class LoaderGenerator:
+    _loader_cache = {}
+
     @staticmethod
     def obfuscate_lua_payload(lua_code: str) -> str:
         """
@@ -22,10 +24,9 @@ class LoaderGenerator:
 
         import random
 
-
         # 1. Compile the real loader into O_bfuscate 1.1 Virtual Machine
         try:
-            real_vm_loader = crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense")
+            real_vm_loader = crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense", fail_closed=False)
         except Exception:
             real_vm_loader = lua_code
 
@@ -35,7 +36,8 @@ class LoaderGenerator:
         fake_xor = random.randint(100, 250)
         poison_bytes = ",".join(str(ord(c) ^ fake_xor) for c in canary_kick_code)
 
-        armored_wrapper = f"""local _FG={{{poison_bytes}}}
+        armored_wrapper = f"""-- [FleedGuard Security Loader]
+local _FG={{{poison_bytes}}}
 local _XK={fake_xor}
 {real_vm_loader}
 """
@@ -58,6 +60,13 @@ local _XK={fake_xor}
         - Dynamic polymorphic encryption wrapper
         - Ephemeral HMAC Loader Armor Token
         """
+        import time
+        cache_key = (server_url, script_slug, loader_token, obfuscate)
+        if cache_key in LoaderGenerator._loader_cache:
+            cached_code, cached_time = LoaderGenerator._loader_cache[cache_key]
+            if time.time() - cached_time < 90:
+                return cached_code
+
         clean_url = server_url.rstrip("/")
 
         raw_loader = f'''-- [[ FleedGuard Military-Grade Security Loader :: {script_name} ]]
@@ -101,10 +110,6 @@ local SCRIPT_SLUG = "{script_slug}"
 local LOADER_ARMOR_TOKEN = "{loader_token}"
 local FLEED_KEY = getgenv().FleedKey or getgenv().Key or _G.FleedKey or _G.Key
 
-if not FLEED_KEY or _type(FLEED_KEY) ~= "string" or #FLEED_KEY < 4 then
-    return warn("[FleedGuard] ERROR: No license key provided! Please set `getgenv().FleedKey = 'YOUR_KEY'` before executing.")
-end
-
 -- 1. Security Kick Enforcer
 local function securityKick(reason)
     if game and game.Players and game.Players.LocalPlayer then
@@ -112,6 +117,11 @@ local function securityKick(reason)
             game.Players.LocalPlayer:Kick("[FleedGuard Security] " .. _tostring(reason))
         end)
     end
+end
+
+if not FLEED_KEY or _type(FLEED_KEY) ~= "string" or #FLEED_KEY < 4 then
+    securityKick("No license key provided. Set getgenv().FleedKey = 'YOUR_KEY'")
+    return
 end
 
 -- Check 0: Environment Dumper & Global Interception Trap
@@ -506,12 +516,16 @@ task.spawn(function()
     end
 end)
 
--- Execute securely
-print("[FleedGuard] Successfully authenticated " .. _tostring(SCRIPT_SLUG) .. "! Launching...")
+-- Execute securely in stealth mode (zero console output)
 task.spawn(exec_fn)
 
 
 '''
+
+        if obfuscate:
+            obf_code = LoaderGenerator.obfuscate_lua_payload(raw_loader)
+            LoaderGenerator._loader_cache[cache_key] = (obf_code, time.time())
+            return obf_code
 
         return raw_loader
 

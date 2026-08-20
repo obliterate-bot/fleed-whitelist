@@ -447,6 +447,39 @@ async def list_licenses(script_id: int, user: Dict = Depends(get_current_user)):
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
+class LicenseCreateDirectRequest(BaseModel):
+    slug: str
+    license_key: str
+    discord_id: Optional[str] = None
+    note: Optional[str] = None
+    expires_at: Optional[str] = None
+
+@app.post("/api/licenses/create")
+async def create_single_license(req: LicenseCreateDirectRequest, user: Dict = Depends(get_current_user)):
+    clean_slug = req.slug.strip().lower()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (clean_slug, user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            # Check if admin or create placeholder script
+            cursor2 = await conn.execute("SELECT id FROM scripts WHERE slug = ?", (clean_slug,))
+            script = await cursor2.fetchone()
+            if not script:
+                raise HTTPException(status_code=404, detail=f"Script '{clean_slug}' not found")
+
+        clean_key = str(req.license_key).strip().upper()
+        clean_discord_id = str(req.discord_id).strip("<@!>") if req.discord_id else None
+
+        await conn.execute("""
+            INSERT INTO licenses (script_id, license_key, discord_id, note, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(license_key) DO UPDATE SET discord_id = excluded.discord_id, note = excluded.note
+        """, (script["id"], clean_key, clean_discord_id, req.note, req.expires_at, now_iso))
+        await conn.commit()
+
+    return {"success": True, "license_key": clean_key}
+
 @app.post("/api/licenses/bulk")
 async def create_bulk_licenses(req: LicenseBulkCreateRequest, user: Dict = Depends(get_current_user)):
     async with db.get_db() as conn:

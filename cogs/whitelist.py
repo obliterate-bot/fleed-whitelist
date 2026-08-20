@@ -616,6 +616,27 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             """, (script["id"], key, discord_id, user_note, expires_at, now_iso))
             await conn.commit()
 
+        # Also sync to live Railway Cloud Backend if developer is linked with API key
+        if user_row and user_row.get("api_key"):
+            pub_url = loader_generator.get_public_url()
+            if pub_url and pub_url.startswith("http"):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        await session.post(
+                            f"{pub_url}/api/licenses/create",
+                            headers={"X-API-Key": user_row["api_key"]},
+                            json={
+                                "slug": clean_slug,
+                                "license_key": key,
+                                "discord_id": discord_id,
+                                "note": user_note,
+                                "expires_at": expires_at
+                            },
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        )
+                except Exception:
+                    pass
+
         role_text = ""
         if script["buyer_role_id"] and ctx.guild:
             role = ctx.guild.get_role(script["buyer_role_id"])
@@ -705,6 +726,27 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                 VALUES (?, ?, NULL, ?, ?, ?)
             """, (script["id"], key, user_note, expires_at, now_iso))
             await conn.commit()
+
+        # Also sync to live Railway Cloud Backend if developer is linked with API key
+        if user_row and user_row.get("api_key"):
+            pub_url = loader_generator.get_public_url()
+            if pub_url and pub_url.startswith("http"):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        await session.post(
+                            f"{pub_url}/api/licenses/create",
+                            headers={"X-API-Key": user_row["api_key"]},
+                            json={
+                                "slug": clean_slug,
+                                "license_key": key,
+                                "discord_id": None,
+                                "note": user_note,
+                                "expires_at": expires_at
+                            },
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        )
+                except Exception:
+                    pass
 
         dm_embed = fleed_embed(
             title=f"{script['name']} — Generated License Key",

@@ -26,13 +26,40 @@ class LoaderGenerator:
         # 1. Compile the real loader into O_bfuscate 1.1 Virtual Machine (fail-closed)
         real_vm_loader = crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense", fail_closed=True)
 
-        # 2. Poison Canary / Honeypot: If any scraper tries to extract byte arrays or XOR keys,
-        # executing the scraped result instantly kicks the player from the game
+        # 2. Poison Canary / Honeypot + Tripwire Kick Check
+        # If loadstring, getgenv, task.spawn, or hook tools are tampered when the wrapper starts, kick IMMEDIATELY
+        tripwire_preamble = """do
+    local function _k(r)
+        if game and game:GetService("Players") and game:GetService("Players").LocalPlayer then
+            pcall(function() game:GetService("Players").LocalPlayer:Kick("[FleedGuard Security] " .. tostring(r)) end)
+        end
+    end
+    if isfunctionhooked and (isfunctionhooked(loadstring) or isfunctionhooked(task.spawn) or (hookfunction and isfunctionhooked(hookfunction))) then
+        _k("Active compiler / execution hook detected.")
+        return
+    end
+    if iscclosure and islclosure and not iscclosure(loadstring) and islclosure(loadstring) then
+        _k("LClosure loadstring compiler hook detected.")
+        return
+    end
+    if getupvalues and not (islclosure and islclosure(loadstring)) then
+        local ok, upvs = pcall(getupvalues, loadstring)
+        if ok and type(upvs) == "table" and #upvs > 0 then
+            for _, u in pairs(upvs) do
+                if type(u) == "function" then
+                    _k("Upvalue proxy loadstring hook detected.")
+                    return
+                end
+            end
+        end
+    end
+end
+"""
         canary_kick_code = 'local Plrs=game:GetService("Players"); local p=Plrs.LocalPlayer or Plrs.PlayerAdded:Wait(); if p then p:Kick("[FleedGuard Security] Automated scraper / bypass attempt detected.") end;'
         fake_xor = random.randint(100, 250)
         poison_bytes = ",".join(str(ord(c) ^ fake_xor) for c in canary_kick_code)
 
-        armored_wrapper = f"""local _FG={{{poison_bytes}}}
+        armored_wrapper = f"""{tripwire_preamble}local _FG={{{poison_bytes}}}
 local _XK={fake_xor}
 {real_vm_loader}
 """

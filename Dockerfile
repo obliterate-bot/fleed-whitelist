@@ -24,9 +24,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy source files
 COPY . .
+RUN chmod +x /app/start.sh
 
 # Expose API/Dashboard port
 EXPOSE 8000
 
-# Start the Whitelist server on Railway's assigned PORT
-CMD ["sh", "-c", "uvicorn fleed_whitelist.server:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Start both Whitelist API and Discord Bot
+CMD ["/bin/sh", "/app/start.sh"]

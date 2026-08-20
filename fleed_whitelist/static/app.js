@@ -434,29 +434,16 @@ async function fetchRobloxAvatarPreview() {
 }
 
 async function saveUserAvatar() {
-  // 1. If user selected a local file from PC, upload multipart
-  if (pendingAvatarFile) {
+  // 1. If user selected a local file from PC (data URL), use base64 upload
+  if (selectedAvatarUrl && selectedAvatarUrl.startsWith("data:image/")) {
     showToast("Uploading avatar image from PC...", "info");
-    const formData = new FormData();
-    formData.append("file", pendingAvatarFile);
     try {
-      const token = localStorage.getItem("fleed_token");
-      const res = await fetch("/api/auth/upload_avatar", {
-        method: "POST",
-        headers: {
-          "Authorization": token ? `Bearer ${token}` : ""
-        },
-        body: formData
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || data.message || "Upload failed");
-      }
+      const res = await apiCall("/api/auth/upload_avatar_base64", "POST", { image_data: selectedAvatarUrl });
       showToast("Avatar uploaded and saved successfully!", "success");
       if (currentUser) {
-        currentUser.avatar_url = data.avatar_url;
+        currentUser.avatar_url = res.avatar_url;
       }
-      updateAvatarUI(data.avatar_url, currentUser?.username);
+      updateAvatarUI(res.avatar_url, currentUser?.username);
       closeModal("modalChangeAvatar");
       return;
     } catch (err) {

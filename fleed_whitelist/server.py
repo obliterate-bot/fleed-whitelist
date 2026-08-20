@@ -3,6 +3,7 @@ import json
 import time
 import secrets
 import asyncio
+import base64
 import urllib.request
 import aiohttp
 from datetime import datetime, timezone, timedelta
@@ -532,6 +533,41 @@ async def upload_avatar(
     avatar_url = f"/static/uploads/avatars/{safe_filename}"
 
     # Update user in database
+    async with db.get_db() as conn:
+        await conn.execute("UPDATE users SET avatar_url = ? WHERE id = ?", (avatar_url, user["id"]))
+        await conn.commit()
+
+    return {"success": True, "avatar_url": avatar_url, "message": "Avatar uploaded and updated successfully!"}
+
+class Base64AvatarUploadRequest(BaseModel):
+    image_data: str # "data:image/png;base64,iVBOR..."
+
+@app.post("/api/auth/upload_avatar_base64")
+async def upload_avatar_base64(req: Base64AvatarUploadRequest, user: Dict = Depends(get_current_user)):
+    """Allows uploading a custom avatar image via base64 data URL."""
+    raw = req.image_data.strip()
+    if not raw.startswith("data:image/"):
+        raise HTTPException(status_code=400, detail="Invalid image payload. Must be a valid image data URL.")
+
+    try:
+        header, b64_str = raw.split(",", 1)
+        mime = header.split(";")[0].split(":")[1].lower()
+        ext_map = {"image/png": ".png", "image/jpeg": ".jpg", "image/jpg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
+        ext = ext_map.get(mime, ".png")
+        file_bytes = base64.b64decode(b64_str)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Failed to decode image data.")
+
+    if len(file_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image file too large (Max 5MB).")
+
+    safe_filename = f"avatar_{user['id']}_{int(time.time())}_{secrets.token_hex(4)}{ext}"
+    target_path = os.path.join(UPLOADS_AVATAR_DIR, safe_filename)
+    with open(target_path, "wb") as f:
+        f.write(file_bytes)
+
+    avatar_url = f"/static/uploads/avatars/{safe_filename}"
+
     async with db.get_db() as conn:
         await conn.execute("UPDATE users SET avatar_url = ? WHERE id = ?", (avatar_url, user["id"]))
         await conn.commit()

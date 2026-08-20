@@ -266,6 +266,20 @@ class WhitelistDB:
                 except Exception:
                     pass
 
+            # 9. Delegated Whitelist Managers & Sub-Admins
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS whitelist_managers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    discord_user_id TEXT NOT NULL,
+                    is_role INTEGER DEFAULT 0,
+                    script_slug TEXT DEFAULT 'all',
+                    guild_id TEXT,
+                    granted_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(discord_user_id, script_slug, is_role, guild_id) ON CONFLICT REPLACE
+                )
+            """)
+
             # Indices for ultra-fast lookup
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_script ON licenses(script_id);")
@@ -277,6 +291,7 @@ class WhitelistDB:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_blacklists_val ON blacklists(target_value);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_kicks_val ON session_kicks(target_value);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_live_hb ON live_sessions(last_heartbeat);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_wl_mgr_user ON whitelist_managers(discord_user_id, script_slug);")
             await conn.commit()
 
 db = WhitelistDB()

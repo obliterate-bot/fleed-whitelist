@@ -84,15 +84,69 @@ async def get_cloud_api_key(slug: str = None) -> Optional[str]:
         row = await cursor.fetchone()
         return row["api_key"] if row else None
 
+async def is_script_owner_or_admin(ctx, slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
+    """
+    Strict permission check: only bot owners, platform admins, or the website creator of the script.
+    Managers CANNOT grant access to other managers (prevents privilege escalation).
+    """
+    author_id_str = str(ctx.author.id)
+    clean_slug = slug.strip().lower() if slug else None
+
+    # 1. Bot Owners
+    is_owner = False
+    if ctx.author.id == 539594512981295106 or ctx.author.id in getattr(config, "OWNER_IDS", []):
+        is_owner = True
+    bot_owners = getattr(ctx.bot, "owner_ids", set()) or set()
+    if ctx.author.id in bot_owners or author_id_str in bot_owners:
+        is_owner = True
+
+    if is_owner:
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (author_id_str,))
+            user_row = await cursor.fetchone()
+            if not user_row and clean_slug:
+                cursor = await conn.execute("""
+                    SELECT u.* FROM users u
+                    JOIN scripts s ON s.user_id = u.id
+                    WHERE s.slug = ? AND u.is_active = 1
+                """, (clean_slug,))
+                user_row = await cursor.fetchone()
+        return True, None, dict(user_row) if user_row else None
+
+    # 2. Website Developer Account (Owner or Admin)
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (author_id_str,))
+        user_row = await cursor.fetchone()
+
+        if not user_row:
+            return False, f"you must be linked to a website developer account to manage permissions. run `{ctx.prefix}whitelist link <api_key>`.", None
+
+        if user_row["role"] == "admin":
+            return True, None, dict(user_row)
+
+        if clean_slug and clean_slug != "all":
+            cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+            script_row = await cursor.fetchone()
+            if not script_row:
+                return False, f"script `{clean_slug}` does not exist.", dict(user_row)
+
+            if script_row["user_id"] != user_row["id"]:
+                return False, f"only the creator of `{clean_slug}` can delegate manager permissions for this script.", dict(user_row)
+
+        return True, None, dict(user_row)
+
+
 async def check_script_permission(ctx, slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
     """
     Verifies that the Discord user is authorized to manage a specific script or platform.
     Checks:
     1. Bot Owners (universal bypass)
     2. Website Developer Account linked via `discord_id` (owns the script or is platform admin)
-    3. Server Administrator if guild configured on script
+    3. Delegated Whitelist Managers in `whitelist_managers` table (User ID or Role ID)
     """
     author_id_str = str(ctx.author.id)
+    clean_slug = slug.strip().lower() if slug else None
+    guild_id_str = str(ctx.guild.id) if ctx.guild else None
 
     # 1. Bot Owners — still try to find their linked account for API key sync
     is_owner = False
@@ -103,34 +157,80 @@ async def check_script_permission(ctx, slug: str = None) -> tuple[bool, Optional
         is_owner = True
 
     if is_owner:
-        # Try to find their linked account so cloud sync has their API key
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (author_id_str,))
             user_row = await cursor.fetchone()
+            if not user_row and clean_slug:
+                cursor = await conn.execute("""
+                    SELECT u.* FROM users u
+                    JOIN scripts s ON s.user_id = u.id
+                    WHERE s.slug = ? AND u.is_active = 1
+                """, (clean_slug,))
+                user_row = await cursor.fetchone()
         return True, None, dict(user_row) if user_row else None
 
-    # 2. Lookup Website Linked Developer Account
     async with db.get_db() as conn:
+        # 2. Check direct Website Linked Developer Account
         cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (author_id_str,))
         user_row = await cursor.fetchone()
 
+        if user_row:
+            if user_row["role"] == "admin":
+                return True, None, dict(user_row)
+
+            if clean_slug:
+                cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+                script_row = await cursor.fetchone()
+                if script_row and script_row["user_id"] == user_row["id"]:
+                    return True, None, dict(user_row)
+            else:
+                return True, None, dict(user_row)
+
+        # 3. Check Delegated Whitelist Manager permissions (User ID or Role ID)
+        # A) Check direct user delegation
+        cursor = await conn.execute("""
+            SELECT * FROM whitelist_managers 
+            WHERE discord_user_id = ? AND is_role = 0
+              AND (script_slug = ? OR script_slug = 'all')
+              AND (guild_id = ? OR guild_id IS NULL)
+        """, (author_id_str, clean_slug or 'all', guild_id_str))
+        mgr_row = await cursor.fetchone()
+
+        # B) Check role delegation if in a guild
+        if not mgr_row and ctx.guild and hasattr(ctx.author, "roles"):
+            role_ids = [str(r.id) for r in ctx.author.roles]
+            if role_ids:
+                placeholders = ",".join(["?"] * len(role_ids))
+                params = [clean_slug or 'all', guild_id_str] + role_ids
+                cursor = await conn.execute(f"""
+                    SELECT * FROM whitelist_managers
+                    WHERE is_role = 1
+                      AND (script_slug = ? OR script_slug = 'all')
+                      AND (guild_id = ? OR guild_id IS NULL)
+                      AND discord_user_id IN ({placeholders})
+                """, tuple(params))
+                mgr_row = await cursor.fetchone()
+
+        if mgr_row:
+            # Authorized manager! Retrieve script owner account for API key sync
+            owner_user_row = None
+            if clean_slug:
+                cursor = await conn.execute("""
+                    SELECT u.* FROM users u
+                    JOIN scripts s ON s.user_id = u.id
+                    WHERE s.slug = ? AND u.is_active = 1
+                """, (clean_slug,))
+                owner_user_row = await cursor.fetchone()
+            if not owner_user_row:
+                cursor = await conn.execute("SELECT * FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 1")
+                owner_user_row = await cursor.fetchone()
+
+            return True, None, dict(owner_user_row) if owner_user_row else None
+
         if not user_row:
-            return False, f"you are not linked to a website developer account. run `{ctx.prefix}whitelist link <api_key>` to link your website login.", None
+            return False, f"you do not have permission to manage whitelists. ask the owner to grant you access via `{ctx.prefix}whitelist manager add @{ctx.author.name}`.", None
 
-        if user_row["role"] == "admin":
-            return True, None, dict(user_row)
-
-        if slug:
-            clean_slug = slug.strip().lower()
-            cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
-            script_row = await cursor.fetchone()
-            if not script_row:
-                return False, f"script `{clean_slug}` does not exist.", dict(user_row)
-
-            if script_row["user_id"] != user_row["id"]:
-                return False, f"you do not own the script `{clean_slug}` on the website.", dict(user_row)
-
-        return True, None, dict(user_row)
+        return False, f"you do not own or have manager access for `{clean_slug}`.", dict(user_row)
 
 class RedeemKeyModal(discord.ui.Modal, title="Redeem License Key"):
     def __init__(self, slug: str, script_name: str, script_id: int, buyer_role_id: int = 0):
@@ -1628,6 +1728,237 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             author=ctx.author
         )
         await ctx.send(embed=embed)
+
+    # ------------------- Delegated Whitelist Manager Commands -------------------
+
+    @whitelist_group.group(name="manager", aliases=["managers", "mgr", "access", "subadmin"], invoke_without_command=True)
+    async def manager_group(self, ctx):
+        """
+        Manage delegated whitelist permissions (giving other users/roles access to whitelist people).
+        """
+        embed = fleed_embed(
+            title="Whitelist Manager Access Control",
+            description="Delegate whitelist permissions to trusted Discord users or staff roles.\n\n"
+                        f"**Commands:**\n"
+                        f"• `{ctx.prefix}whitelist manager add <@user> [slug/all]` — Grant user whitelist permissions\n"
+                        f"• `{ctx.prefix}whitelist manager remove <@user> [slug/all]` — Revoke user whitelist permissions\n"
+                        f"• `{ctx.prefix}whitelist manager role <@role> [slug/all]` — Grant an entire staff/reseller role permissions\n"
+                        f"• `{ctx.prefix}whitelist manager unrole <@role> [slug/all]` — Revoke role permissions\n"
+                        f"• `{ctx.prefix}whitelist manager list [slug]` — List all authorized managers\n\n"
+                        f"**Shortcuts:**\n"
+                        f"• `{ctx.prefix}whitelist grant <@user> [slug]`\n"
+                        f"• `{ctx.prefix}whitelist revoke <@user> [slug]`",
+            author=ctx.author
+        )
+        await ctx.send(embed=embed)
+
+    @manager_group.command(name="add", aliases=["give", "grant", "user"])
+    async def manager_add_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str = "all"):
+        """
+        Grants a Discord user permission to whitelist people for a script (or all scripts).
+        Usage: ,whitelist manager add @user [slug/all]
+        """
+        clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await is_script_owner_or_admin(ctx, clean_slug if clean_slug != "all" else None)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
+        discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
+        guild_id_str = str(ctx.guild.id) if ctx.guild else None
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        async with db.get_db() as conn:
+            # Validate script if not 'all'
+            script_name = "All Scripts"
+            if clean_slug != "all":
+                cursor = await conn.execute("SELECT name FROM scripts WHERE slug = ?", (clean_slug,))
+                s_row = await cursor.fetchone()
+                if not s_row:
+                    return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
+                script_name = s_row["name"]
+
+            await conn.execute("""
+                INSERT INTO whitelist_managers (discord_user_id, is_role, script_slug, guild_id, granted_by, created_at)
+                VALUES (?, 0, ?, ?, ?, ?)
+                ON CONFLICT(discord_user_id, script_slug, is_role, guild_id) DO UPDATE SET
+                    granted_by = excluded.granted_by,
+                    created_at = excluded.created_at
+            """, (discord_id, clean_slug, guild_id_str, str(ctx.author.id), now_iso))
+            await conn.commit()
+
+        # DM notification to the authorized manager
+        target_obj = ctx.guild.get_member(int(discord_id)) if (ctx.guild and discord_id.isdigit()) else None
+        if not target_obj and discord_id.isdigit():
+            try:
+                target_obj = await ctx.bot.fetch_user(int(discord_id))
+            except Exception:
+                target_obj = None
+
+        if target_obj:
+            try:
+                dm_embed = fleed_embed(
+                    title="Whitelist Manager Access Granted",
+                    description=f"You have been granted whitelist management access for **{script_name}** (`{clean_slug}`).\n\n"
+                                f"**Granted By:** {ctx.author.mention} (`{ctx.author.name}`)\n\n"
+                                f"**You can now use:**\n"
+                                f"• `{ctx.prefix}whitelist add <@user> {clean_slug if clean_slug != 'all' else '<slug>'} [duration]`\n"
+                                f"• `{ctx.prefix}whitelist genkey {clean_slug if clean_slug != 'all' else '<slug>'} [duration]`\n"
+                                f"• `{ctx.prefix}whitelist remove <@user> {clean_slug if clean_slug != 'all' else '<slug>'}`\n"
+                                f"• `{ctx.prefix}whitelist check <@user>`",
+                    author=ctx.author
+                )
+                await target_obj.send(embed=dm_embed)
+            except Exception:
+                pass
+
+        embed = success_embed(
+            f"successfully granted whitelist manager access to <@{discord_id}> for **{script_name}** (`{clean_slug}`).\n"
+            f"they can now whitelist users and generate license keys.",
+            ctx.author
+        )
+        await ctx.send(embed=embed)
+
+    @manager_group.command(name="remove", aliases=["revoke", "del", "delete"])
+    async def manager_remove_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str = "all"):
+        """
+        Revokes a Discord user's whitelist management access.
+        Usage: ,whitelist manager remove @user [slug/all]
+        """
+        clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await is_script_owner_or_admin(ctx, clean_slug if clean_slug != "all" else None)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
+        discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("""
+                SELECT * FROM whitelist_managers 
+                WHERE discord_user_id = ? AND is_role = 0 AND (script_slug = ? OR ? = 'all')
+            """, (discord_id, clean_slug, clean_slug))
+            rows = await cursor.fetchall()
+
+            if not rows:
+                return await ctx.send(embed=error_embed(f"<@{discord_id}> does not have manager access for `{clean_slug}`.", ctx.author))
+
+            if clean_slug == "all":
+                await conn.execute("DELETE FROM whitelist_managers WHERE discord_user_id = ? AND is_role = 0", (discord_id,))
+            else:
+                await conn.execute("DELETE FROM whitelist_managers WHERE discord_user_id = ? AND is_role = 0 AND script_slug = ?", (discord_id, clean_slug))
+            await conn.commit()
+
+        await ctx.send(embed=success_embed(f"revoked whitelist manager access from <@{discord_id}> for `{clean_slug}`.", ctx.author))
+
+    @manager_group.command(name="role", aliases=["addrole", "grantrole", "giverole"])
+    async def manager_role_cmd(self, ctx, role: discord.Role, slug: str = "all"):
+        """
+        Grants an entire Discord role whitelist management access.
+        Usage: ,whitelist manager role @StaffRole [slug/all]
+        """
+        clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await is_script_owner_or_admin(ctx, clean_slug if clean_slug != "all" else None)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
+        guild_id_str = str(ctx.guild.id) if ctx.guild else None
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        async with db.get_db() as conn:
+            script_name = "All Scripts"
+            if clean_slug != "all":
+                cursor = await conn.execute("SELECT name FROM scripts WHERE slug = ?", (clean_slug,))
+                s_row = await cursor.fetchone()
+                if not s_row:
+                    return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
+                script_name = s_row["name"]
+
+            await conn.execute("""
+                INSERT INTO whitelist_managers (discord_user_id, is_role, script_slug, guild_id, granted_by, created_at)
+                VALUES (?, 1, ?, ?, ?, ?)
+                ON CONFLICT(discord_user_id, script_slug, is_role, guild_id) DO UPDATE SET
+                    granted_by = excluded.granted_by,
+                    created_at = excluded.created_at
+            """, (str(role.id), clean_slug, guild_id_str, str(ctx.author.id), now_iso))
+            await conn.commit()
+
+        embed = success_embed(
+            f"successfully granted whitelist manager access to role {role.mention} for **{script_name}** (`{clean_slug}`).\n"
+            f"all members with this role can now whitelist users and generate license keys.",
+            ctx.author
+        )
+        await ctx.send(embed=embed)
+
+    @manager_group.command(name="unrole", aliases=["removerole", "revokerole", "delrole"])
+    async def manager_unrole_cmd(self, ctx, role: discord.Role, slug: str = "all"):
+        """
+        Revokes a Discord role's whitelist management access.
+        Usage: ,whitelist manager unrole @StaffRole [slug/all]
+        """
+        clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await is_script_owner_or_admin(ctx, clean_slug if clean_slug != "all" else None)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
+        async with db.get_db() as conn:
+            if clean_slug == "all":
+                await conn.execute("DELETE FROM whitelist_managers WHERE discord_user_id = ? AND is_role = 1", (str(role.id),))
+            else:
+                await conn.execute("DELETE FROM whitelist_managers WHERE discord_user_id = ? AND is_role = 1 AND script_slug = ?", (str(role.id), clean_slug))
+            await conn.commit()
+
+        await ctx.send(embed=success_embed(f"revoked whitelist manager access from role {role.mention} for `{clean_slug}`.", ctx.author))
+
+    @manager_group.command(name="list", aliases=["show", "all"])
+    async def manager_list_cmd(self, ctx, slug: Optional[str] = None):
+        """
+        Lists all authorized whitelist managers and manager roles.
+        Usage: ,whitelist manager list [slug]
+        """
+        ok, err_msg, _ = await check_script_permission(ctx, slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
+        query = "SELECT * FROM whitelist_managers"
+        params = []
+        if slug:
+            query += " WHERE script_slug = ? OR script_slug = 'all'"
+            params.append(slug.strip().lower())
+        query += " ORDER BY id DESC LIMIT 30"
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute(query, tuple(params))
+            rows = await cursor.fetchall()
+
+        if not rows:
+            return await ctx.send(embed=warn_embed("no delegated whitelist managers configured yet.", ctx.author))
+
+        embed = fleed_embed(title="Authorized Whitelist Managers", author=ctx.author)
+        for r in rows:
+            is_role = r["is_role"] == 1
+            target_str = f"<@&{r['discord_user_id']}> (Role)" if is_role else f"<@{r['discord_user_id']}> (User)"
+            scope_str = f"`{r['script_slug']}`" if r["script_slug"] != "all" else "`All Scripts (Global)`"
+            granted_by_str = f"<@{r['granted_by']}>" if r["granted_by"] else "Owner"
+            created_str = r["created_at"][:10] if r["created_at"] else "—"
+
+            embed.add_field(
+                name=f"{target_str}",
+                value=f"**Scope:** {scope_str}\n"
+                      f"**Granted By:** {granted_by_str}\n"
+                      f"**Date:** {created_str}",
+                inline=False
+            )
+        await ctx.send(embed=embed)
+
+    # Top-level direct shortcuts
+    @whitelist_group.command(name="grant", aliases=["grantaccess", "giveaccess"])
+    async def grant_shortcut_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str = "all"):
+        """Shortcut to grant a user whitelist permissions."""
+        await self.manager_add_cmd(ctx, target, slug)
+
+    @whitelist_group.command(name="revoke", aliases=["revokeaccess"])
+    async def revoke_shortcut_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str = "all"):
+        """Shortcut to revoke a user's whitelist permissions."""
+        await self.manager_remove_cmd(ctx, target, slug)
 
 async def setup(bot):
     await bot.add_cog(WhitelistCog(bot))

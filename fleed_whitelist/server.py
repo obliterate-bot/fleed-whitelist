@@ -2,12 +2,14 @@ import os
 import json
 import time
 import secrets
+import urllib.request
+import aiohttp
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException, status, Header
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -636,31 +638,34 @@ async def get_logs(limit: int = 100, status_filter: Optional[str] = None, user: 
 # Cache avatar headshots in memory to avoid repeated requests to Roblox API
 avatar_cache: Dict[int, str] = {}
 
+DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2371717a'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z'/%3E%3C/svg%3E"
+
 @app.get("/api/roblox/avatar/{user_id}")
 async def get_roblox_avatar(user_id: int):
     """Fetches high-res Roblox user headshot and redirects directly to CDN."""
     if user_id <= 0:
-        return RedirectResponse(url="https://tr.rbxcdn.com/30DAY-AvatarHeadshot-1.png", status_code=302)
+        return RedirectResponse(url=DEFAULT_AVATAR_SVG, status_code=302)
         
     if user_id in avatar_cache:
         return RedirectResponse(url=avatar_cache[user_id], status_code=302)
 
     try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=150x150&format=Png&isCircular=true"
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=4)) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get("data") and len(data["data"]) > 0:
-                        img_url = data["data"][0].get("imageUrl")
-                        if img_url:
-                            avatar_cache[user_id] = img_url
-                            return RedirectResponse(url=img_url, status_code=302)
+        url = f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=150x150&format=Png&isCircular=true"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode('utf-8'))
+                if data.get("data") and len(data["data"]) > 0:
+                    img_url = data["data"][0].get("imageUrl")
+                    if img_url:
+                        avatar_cache[user_id] = img_url
+                        return RedirectResponse(url=img_url, status_code=302)
     except Exception:
         pass
 
-    fallback = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot-1.png"
-    return RedirectResponse(url=fallback, status_code=302)
+    return RedirectResponse(url=DEFAULT_AVATAR_SVG, status_code=302)
+
 
 
 

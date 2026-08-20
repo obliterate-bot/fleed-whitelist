@@ -5577,9 +5577,7 @@ async def _flexible_role_convert(self, ctx, argument: str) -> discord.Role:
         return role
     return await _orig_role_convert(self, ctx, argument)
 
-commands.RoleConverter.convert = _flexible_role_convert
-
-_PRESERVE_RE = re.compile(r"https?://[^\s<>]+|<a?:[a-zA-Z0-9_]+:[0-9]+>|<@[!&]?[0-9]+>|<#[0-9]+>|<t:[0-9]+(?::[tTdDfFR])?>", re.IGNORECASE)
+_PRESERVE_RE = re.compile(r"```[\s\S]*?```|`[^`]+`|https?://[^\s<>]+|<a?:[a-zA-Z0-9_]+:[0-9]+>|<@[!&]?[0-9]+>|<#[0-9]+>|<t:[0-9]+(?::[tTdDfFR])?>|FLEED-[A-F0-9-]+|fg_live_[a-f0-9]+", re.IGNORECASE)
 
 
 

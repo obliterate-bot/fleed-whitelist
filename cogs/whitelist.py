@@ -630,14 +630,51 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         pub_url = loader_generator.get_public_url()
         loadstring_snippet = f'getgenv().FleedKey = "{key}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{clean_slug}"))()'
 
-        embed = success_embed(
-            f"whitelisted <@{discord_id}> for **{script['name']}**.\n\n"
-            f"key: `{key}`\n"
-            f"duration: {duration_label}\n"
-            f"note: {user_note}{role_text}\n\n"
-            f"loadstring:\n```lua\n{loadstring_snippet}\n```",
-            ctx.author
+        # Build DM embed
+        dm_embed = fleed_embed(
+            title=f"{script['name']} — License & Loadstring",
+            description=f"You have been whitelisted for **{script['name']}**.\n\n"
+                        f"**Key:** `{key}`\n"
+                        f"**Duration:** {duration_label}\n"
+                        f"**Note:** {user_note}\n\n"
+                        f"**Loadstring:**\n```lua\n{loadstring_snippet}\n```\n"
+                        f"Execute this loadstring inside your Roblox executor.",
+            author=ctx.author
         )
+
+        dm_delivered = False
+        target_obj = None
+        if isinstance(target, (discord.Member, discord.User)):
+            target_obj = target
+        elif discord_id.isdigit() and ctx.guild:
+            target_obj = ctx.guild.get_member(int(discord_id)) or await ctx.bot.fetch_user(int(discord_id))
+
+        if target_obj:
+            try:
+                await target_obj.send(embed=dm_embed)
+                dm_delivered = True
+            except Exception:
+                dm_delivered = False
+
+        # If whitelisting someone else, also send a receipt copy to the developer's DMs
+        if target_obj and target_obj.id != ctx.author.id:
+            try:
+                await ctx.author.send(embed=dm_embed)
+            except Exception:
+                pass
+
+        if dm_delivered:
+            embed = success_embed(
+                f"whitelisted <@{discord_id}> for **{script['name']}** ({duration_label}).{role_text}\n"
+                f"sent their license key and loadstring directly to their dms.",
+                ctx.author
+            )
+        else:
+            embed = warn_embed(
+                f"whitelisted <@{discord_id}> for **{script['name']}** ({duration_label}).{role_text}\n"
+                f"could not deliver to their dms (dms are closed). they can click **Get Script** on the control panel or open their dms.",
+                ctx.author
+            )
         await ctx.send(embed=embed)
 
     @whitelist_group.command(name="genkey", aliases=["gen", "generate", "createkey"])
@@ -669,15 +706,20 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             """, (script["id"], key, user_note, expires_at, now_iso))
             await conn.commit()
 
-        embed = success_embed(
-            f"generated license key for **{script['name']}**.\n\n"
-            f"key: `{key}`\n"
-            f"duration: {duration_label}\n"
-            f"note: {user_note}\n\n"
-            f"buyers can redeem this key via `{ctx.prefix}redeem {key}` or the control panel.",
-            ctx.author
+        dm_embed = fleed_embed(
+            title=f"{script['name']} — Generated License Key",
+            description=f"**Key:** `{key}`\n"
+                        f"**Duration:** {duration_label}\n"
+                        f"**Note:** {user_note}\n\n"
+                        f"Buyers can redeem this key via `{ctx.prefix}redeem {key}` or by clicking **Redeem Key** on the control panel.",
+            author=ctx.author
         )
-        await ctx.send(embed=embed)
+
+        try:
+            await ctx.author.send(embed=dm_embed)
+            await ctx.send(embed=success_embed(f"generated license key for **{script['name']}** ({duration_label}). sent to your dms.", ctx.author))
+        except discord.Forbidden:
+            await ctx.send(embed=dm_embed)
 
     @whitelist_group.command(name="remove", aliases=["unwhitelist", "del", "delete"])
     async def remove_whitelist_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str):

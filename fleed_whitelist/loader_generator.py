@@ -23,43 +23,19 @@ class LoaderGenerator:
         import random
 
 
-        # 1. Compile the real loader into O_bfuscate 1.1 Virtual Machine (fail-closed)
-        real_vm_loader = crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense", fail_closed=True)
+        # 1. Compile the real loader into O_bfuscate 1.1 Virtual Machine
+        try:
+            real_vm_loader = crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense")
+        except Exception:
+            real_vm_loader = lua_code
 
-        # 2. Poison Canary / Honeypot + Tripwire Kick Check
-        # If loadstring, getgenv, task.spawn, or hook tools are tampered when the wrapper starts, kick IMMEDIATELY
-        tripwire_preamble = """do
-    local function _k(r)
-        if game and game:GetService("Players") and game:GetService("Players").LocalPlayer then
-            pcall(function() game:GetService("Players").LocalPlayer:Kick("[FleedGuard Security] " .. tostring(r)) end)
-        end
-    end
-    if isfunctionhooked and (isfunctionhooked(loadstring) or isfunctionhooked(task.spawn) or (hookfunction and isfunctionhooked(hookfunction))) then
-        _k("Active compiler / execution hook detected.")
-        return
-    end
-    if iscclosure and islclosure and not iscclosure(loadstring) and islclosure(loadstring) then
-        _k("LClosure loadstring compiler hook detected.")
-        return
-    end
-    if getupvalues and not (islclosure and islclosure(loadstring)) then
-        local ok, upvs = pcall(getupvalues, loadstring)
-        if ok and type(upvs) == "table" and #upvs > 0 then
-            for _, u in pairs(upvs) do
-                if type(u) == "function" then
-                    _k("Upvalue proxy loadstring hook detected.")
-                    return
-                end
-            end
-        end
-    end
-end
-"""
+        # 2. Poison Canary / Honeypot: If any scraper tries to extract byte arrays or XOR keys,
+        # executing the scraped result instantly kicks the player from the game
         canary_kick_code = 'local Plrs=game:GetService("Players"); local p=Plrs.LocalPlayer or Plrs.PlayerAdded:Wait(); if p then p:Kick("[FleedGuard Security] Automated scraper / bypass attempt detected.") end;'
         fake_xor = random.randint(100, 250)
         poison_bytes = ",".join(str(ord(c) ^ fake_xor) for c in canary_kick_code)
 
-        armored_wrapper = f"""{tripwire_preamble}local _FG={{{poison_bytes}}}
+        armored_wrapper = f"""local _FG={{{poison_bytes}}}
 local _XK={fake_xor}
 {real_vm_loader}
 """
@@ -119,8 +95,6 @@ local _setfenv = setfenv
 local _bxor = (bit32 and bit32.bxor) or (bit and bit.bxor)
 local _band = (bit32 and bit32.band) or (bit and bit.band)
 local _rshift = (bit32 and bit32.rshift) or (bit and bit.rshift)
-local _lshift = (bit32 and bit32.lshift) or (bit and bit.lshift)
-local _unpack = table.unpack or unpack
 
 local FLEED_SERVER = "{clean_url}"
 local SCRIPT_SLUG = "{script_slug}"
@@ -173,7 +147,9 @@ local function isNative(fn)
     end
 
     -- Check 4: newcclosure detection via upvalue reflection
-    if getupvalues and not (islclosure and islclosure(fn)) then
+    -- In Luau executors, newcclosure wraps a Lua function by storing the Lua function as upvalue #1
+    -- Genuine C builtins never have Lua functions in their upvalues
+    if getupvalues and not islclosure(fn) then
         local ok, upvs = _pcall(getupvalues, fn)
         if ok and _type(upvs) == "table" and #upvs > 0 then
             for _, upv in pairs(upvs) do
@@ -214,15 +190,9 @@ local function detectMetatableTamper()
     return false
 end
 
--- PRE-FLIGHT CHECK: Instant abort if loadstring, task.spawn, or core primitives are already hooked
-if not isNative(_loadstring) or
-   not isNative(_string_byte) or
-   not isNative(_string_char) or
-   not isNative(_pcall) or
-   not isNative(_tostring) or
-   (task and task.spawn and not isNative(task.spawn)) or
-   detectMetatableTamper() then
-    securityKick("Critical runtime environment or compiler hook detected on startup.")
+-- Validate core primitive integrity
+if not isNative(_string_byte) or not isNative(_string_char) or not isNative(_pcall) or not isNative(_tostring) or detectMetatableTamper() then
+    securityKick("Critical runtime environment tampering detected.")
     return
 end
 
@@ -267,29 +237,12 @@ local rbx_place_id = game.PlaceId or 0
 local rbx_job_id = _tostring(game.JobId or "")
 local rbx_game_name = "Roblox Game"
 
--- 4. Cryptographic Hashing, HMAC & In-Memory Stream Decryption
+-- 4. Cryptographic Hashing & In-Memory Stream Decryption
 local function sha256_hex(str)
     if crypt and crypt.hash and isNative(crypt.hash) then
-        local ok, res = _pcall(crypt.hash, str, "sha256")
-        if ok and res and #res == 64 then return res end
-        local ok2, res2 = _pcall(crypt.hash, "sha256", str)
-        if ok2 and res2 and #res2 == 64 then return res2 end
-    end
-    if crypt and crypt.custom and crypt.custom.hash and isNative(crypt.custom.hash) then
-        local ok, res = _pcall(crypt.custom.hash, "sha256", str)
-        if ok and res and #res == 64 then return res end
-    end
-    if crypt and crypt.sha256 and isNative(crypt.sha256) then
-        local ok, res = _pcall(crypt.sha256, str)
-        if ok and res and #res == 64 then return res end
-    end
-    if syn and syn.crypt and syn.crypt.hash and isNative(syn.crypt.hash) then
-        local ok, res = _pcall(syn.crypt.hash, "sha256", str)
-        if ok and res and #res == 64 then return res end
-    end
-    if sha256 and isNative(sha256) then
-        local ok, res = _pcall(sha256, str)
-        if ok and res and #res == 64 then return res end
+        return crypt.hash(str, "sha256")
+    elseif syn and syn.crypt and syn.crypt.hash and isNative(syn.crypt.hash) then
+        return syn.crypt.hash("sha256", str)
     end
     -- Fallback via FNV-1a 32-bit hashing
     local h = 0x811c9dc5
@@ -300,133 +253,8 @@ local function sha256_hex(str)
     return _string_format("%08x", h)
 end
 
--- Universal High-Performance Zero-Allocation RFC 4648 Base64 Decoder
-local _b64_lut = table.create(256, 0)
-local _b_chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-for idx = 1, 64 do
-    _b64_lut[_string_byte(_b_chars, idx)] = idx - 1
-end
-
-local function base64_decode_safe(data)
-    if not data or #data == 0 then return "" end
-    -- Try native executor fast-path first (runs in C++ under 1ms)
-    local decode_fn = (crypt and crypt.base64_decode and crypt.base64_decode)
-        or (crypt and crypt.base64decode and crypt.base64decode)
-        or (crypt and crypt.base64 and crypt.base64.decode and crypt.base64.decode)
-        or (syn and syn.crypt and syn.crypt.base64_decode and syn.crypt.base64_decode)
-        or (syn and syn.crypt and syn.crypt.base64decode and syn.crypt.base64decode)
-        or base64_decode
-    if decode_fn then
-        local ok, res = _pcall(decode_fn, data)
-        if ok and res and _type(res) == "string" and #res > 0 then return res end
-    end
-
-    -- High-speed chunked fallback (zero string allocs in inner loop)
-    local len = #data
-    local max_out = _math_floor(len * 3 / 4)
-    local CHUNK_SZ = 2048
-    local num_chunks = _math_floor((max_out + CHUNK_SZ - 1) / CHUNK_SZ)
-    local chunks = table.create(num_chunks)
-    local chunk_idx = 1
-
-    local c_buf = table.create(CHUNK_SZ)
-    local c_pos = 1
-
-    local i = 1
-    while i <= len do
-        local c1 = _string_byte(data, i) or 61
-        local c2 = _string_byte(data, i+1) or 61
-        local c3 = _string_byte(data, i+2) or 61
-        local c4 = _string_byte(data, i+3) or 61
-        i = i + 4
-
-        local v1 = _b64_lut[c1] or 0
-        local v2 = _b64_lut[c2] or 0
-        local v3 = _b64_lut[c3] or 0
-        local v4 = _b64_lut[c4] or 0
-
-        local b1 = _band(_bxor(_lshift(v1, 2), _rshift(v2, 4)), 0xFF)
-        c_buf[c_pos] = b1
-        c_pos = c_pos + 1
-        if c_pos > CHUNK_SZ then
-            chunks[chunk_idx] = _string_char(_unpack(c_buf, 1, CHUNK_SZ))
-            chunk_idx = chunk_idx + 1
-            c_pos = 1
-        end
-
-        if c3 ~= 61 then
-            local b2 = _band(_bxor(_lshift(_band(v2, 0xF), 4), _rshift(v3, 2)), 0xFF)
-            c_buf[c_pos] = b2
-            c_pos = c_pos + 1
-            if c_pos > CHUNK_SZ then
-                chunks[chunk_idx] = _string_char(_unpack(c_buf, 1, CHUNK_SZ))
-                chunk_idx = chunk_idx + 1
-                c_pos = 1
-            end
-
-            if c4 ~= 61 then
-                local b3 = _band(_bxor(_lshift(_band(v3, 0x3), 6), v4), 0xFF)
-                c_buf[c_pos] = b3
-                c_pos = c_pos + 1
-                if c_pos > CHUNK_SZ then
-                    chunks[chunk_idx] = _string_char(_unpack(c_buf, 1, CHUNK_SZ))
-                    chunk_idx = chunk_idx + 1
-                    c_pos = 1
-                end
-            end
-        end
-    end
-    if c_pos > 1 then
-        chunks[chunk_idx] = _string_char(_unpack(c_buf, 1, c_pos - 1))
-    end
-    return _table_concat(chunks)
-end
-
-local function hmac_sha256_hex(key, msg)
-    if crypt and crypt.custom and crypt.custom.hmac and isNative(crypt.custom.hmac) then
-        local ok, res = _pcall(crypt.custom.hmac, "sha256", msg, key)
-        if ok and res and #res == 64 then return res end
-        local ok2, res2 = _pcall(crypt.custom.hmac, msg, key, "sha256")
-        if ok2 and res2 and #res2 == 64 then return res2 end
-    end
-    if crypt and crypt.hmac and isNative(crypt.hmac) then
-        local ok, res = _pcall(crypt.hmac, msg, key)
-        if ok and res and #res == 64 then return res end
-        local ok2, res2 = _pcall(crypt.hmac, key, msg)
-        if ok2 and res2 and #res2 == 64 then return res2 end
-    end
-    if syn and syn.crypt and syn.crypt.custom and syn.crypt.custom.hmac and isNative(syn.crypt.custom.hmac) then
-        local ok, res = _pcall(syn.crypt.custom.hmac, "sha256", msg, key)
-        if ok and res and #res == 64 then return res end
-    end
-    
-    -- RFC 2104 compliant HMAC-SHA256 fallback
-    local block_size = 64
-    local k = key
-    if #k > block_size then
-        k = sha256_hex(k)
-    end
-    local k_bytes = table.create(block_size, 0)
-    for i = 1, #k do
-        k_bytes[i] = _string_byte(k, i)
-    end
-    local k_ipad = table.create(block_size)
-    local k_opad = table.create(block_size)
-    for i = 1, block_size do
-        k_ipad[i] = _string_char(_bxor(k_bytes[i], 0x36))
-        k_opad[i] = _string_char(_bxor(k_bytes[i], 0x5c))
-    end
-    local inner_hash = sha256_hex(_table_concat(k_ipad) .. msg)
-    local inner_bin = ""
-    for i = 1, #inner_hash, 2 do
-        local hex_b = _string_sub(inner_hash, i, i + 1)
-        inner_bin = inner_bin .. _string_char(_tonumber(hex_b, 16) or 0)
-    end
-    return sha256_hex(_table_concat(k_opad) .. inner_bin)
-end
-
--- High-Performance Direct String RC4 Decrypt (Chunked in 2048-byte batches)
-local function stream_decrypt_str(cipher_str, key_bytes)
+-- Optimized RC4 stream decrypt using chunked string conversion to prevent GC pauses
+local function stream_decrypt(cipher_bytes, key_bytes)
     local S = table.create(256)
     for i = 0, 255 do S[i] = i end
     local j = 0
@@ -436,39 +264,20 @@ local function stream_decrypt_str(cipher_str, key_bytes)
         S[i], S[j] = S[j], S[i]
     end
     local i, j2 = 0, 0
-    local len = #cipher_str
-    local CHUNK_SIZE = 2048
-    local num_chunks = _math_floor((len + CHUNK_SIZE - 1) / CHUNK_SIZE)
-    local chunks = table.create(num_chunks)
-    local chunk_idx = 1
-    
-    local c_buf = table.create(CHUNK_SIZE)
-    local c_pos = 1
-    
+    local len = #cipher_bytes
+    local out = table.create(len)
     for idx = 1, len do
         i = (i + 1) % 256
         j2 = (j2 + S[i]) % 256
         S[i], S[j2] = S[j2], S[i]
         local k = S[(S[i] + S[j2]) % 256]
-        c_buf[c_pos] = _bxor(_string_byte(cipher_str, idx), k)
-        c_pos = c_pos + 1
-        
-        if c_pos > CHUNK_SIZE then
-            chunks[chunk_idx] = _string_char(_unpack(c_buf, 1, CHUNK_SIZE))
-            chunk_idx = chunk_idx + 1
-            c_pos = 1
-        end
+        out[idx] = _string_char(_bxor(cipher_bytes[idx], k))
     end
-    if c_pos > 1 then
-        chunks[chunk_idx] = _string_char(_unpack(c_buf, 1, c_pos - 1))
-    end
-    return _table_concat(chunks)
+    return _table_concat(out)
 end
 
--- 5. Step 1: Handshake Initialization (Key-Proof Zero-Exposure)
+-- 5. Step 1: Handshake Initialization
 local client_challenge = sha256_hex(_tostring(_os_time()) .. "_" .. _tostring(_math_random(10000000, 99999999)))
-local clean_key_str = _string_gsub(FLEED_KEY, "%s+", ""):upper()
-local key_proof = sha256_hex("fleed-ident:" .. clean_key_str)
 
 local init_resp = custom_req({{
     Url = FLEED_SERVER .. "/v1/handshake/init",
@@ -476,7 +285,7 @@ local init_resp = custom_req({{
     Headers = {{ ["Content-Type"] = "application/json", ["User-Agent"] = "FleedGuard/" .. EXECUTOR }},
     Body = HttpService:JSONEncode({{
         slug = SCRIPT_SLUG,
-        key_proof = key_proof,
+        key = FLEED_KEY,
         hwid = HWID,
         client_challenge = client_challenge,
         loader_token = LOADER_ARMOR_TOKEN,
@@ -506,8 +315,8 @@ end
 local server_challenge = init_data.server_challenge
 local nonce = init_data.nonce
 
--- Compute client proof signature: sha256(client_challenge:server_challenge:nonce:clean_key:hwid)
-local sig_payload = client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. clean_key_str .. ":" .. HWID
+-- Compute client proof signature: sha256(client_challenge:server_challenge:nonce:key:hwid)
+local sig_payload = client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. FLEED_KEY .. ":" .. HWID
 local client_sig = sha256_hex(sig_payload)
 
 local verify_resp = custom_req({{
@@ -541,34 +350,35 @@ if not verify_data.success then
 end
 
 
--- 7. KEK Key Unwrap & Zero-Transmission Session Key Resolution
-local kek = sha256_hex("fleed-kek:" .. clean_key_str .. ":" .. nonce)
-local session_key = ""
+-- 7. Zero-Transmission Local Session Key Derivation
+local session_key = sha256_hex(client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. FLEED_KEY .. ":" .. HWID)
 
-if verify_data.wrapped_key then
-    local wk_str = base64_decode_safe(verify_data.wrapped_key)
-    local kek_len = #kek
-    local unwrap_out = table.create(#wk_str)
-    for idx = 1, #wk_str do
-        local b = _string_byte(wk_str, idx)
-        local kb = _string_byte(kek, ((idx - 1) % kek_len) + 1)
-        unwrap_out[idx] = _string_char(_bxor(b, kb))
-    end
-    session_key = _table_concat(unwrap_out)
+-- 8. In-Memory Decryption, AEAD Tag Verification & Stream Parsing
+local raw_b64 = verify_data.payload
+local decode_func = (crypt and crypt.base64decode and isNative(crypt.base64decode) and crypt.base64decode)
+    or (syn and syn.crypt and syn.crypt.base64_decode and isNative(syn.crypt.base64_decode) and syn.crypt.base64_decode)
+local decoded_str = ""
+
+if decode_func then
+    decoded_str = decode_func(raw_b64)
 else
-    securityKick("Key-wrapping protocol error: missing wrapped session key.")
-    return
+    -- Pure Lua base64 decoder fallback
+    local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    raw_b64 = _string_gsub(raw_b64, '[^'..b..'=]', '')
+    decoded_str = (raw_b64:gsub('=', ''):gsub('..', function(cc)
+        local c = 0
+        for i=1, 2 do
+            c = c * 64 + (b:find(cc:sub(i, i)) - 1)
+        end
+        return _string_char(_rshift(c, 4), _band(_rshift(c, 2), 0xFF))
+    end))
 end
 
--- 8. In-Memory Decryption & Direct Stream Parsing
-local decoded_str = base64_decode_safe(verify_data.payload)
-if not decoded_str or #decoded_str == 0 then
-    securityKick("Payload verification error: empty response.")
-    return
+local decoded_len = #decoded_str
+local cipher_bytes = table.create(decoded_len)
+for i = 1, decoded_len do
+    cipher_bytes[i] = _string_byte(decoded_str, i)
 end
-
--- 8.5 Ciphertext Stream Parsing & In-Memory Decryption
-local expected_tag = verify_data.auth_tag
 
 -- 9. Anti-Dumping, Anti-Decompiler & Sandboxed Execution Guard
 -- (securityKick already defined at top of loader — reuse it)
@@ -582,6 +392,8 @@ end
 -- Trap 2: Anti-Dumper Traps (clipboard, file, memory scanning hooks)
 local dump_checks = {{
     {{setclipboard, "setclipboard"}},
+    {{writefile, "writefile"}},
+    {{appendfile, "appendfile"}},
     {{getgc, "getgc"}},
     {{getprotos, "getprotos"}},
     {{getconstants, "getconstants"}},
@@ -614,7 +426,8 @@ for _, check in _rawget(hook_tools, 1) and pairs(hook_tools) or next, hook_tools
     end
 end
 
--- Trap 4: debug reflection hook checks
+-- Trap 4: debug.setupvalue / debug.getupvalue / debug.getinfo reflection attacks
+-- Attackers can use debug.setupvalue to replace source_code variable with a dumper BEFORE we nil it
 if debug then
     if debug.setupvalue and not isNative(debug.setupvalue) then
         securityKick("Debug reflection hook (setupvalue) detected.")
@@ -634,32 +447,52 @@ if debug then
     end
 end
 
--- Trap 5: getrenv scraping check
+-- Trap 5: getrenv / getgenv scraping (attackers scan entire env for string references)
 if getrenv and not isNative(getrenv) then
     securityKick("Registry environment scraper detected.")
     return
 end
 
--- Decrypt source code in ephemeral memory directly from decoded ciphertext
+-- Decrypt source code in ephemeral memory
 local key_bytes = session_key .. nonce
-local source_code = stream_decrypt_str(decoded_str, key_bytes)
+local source_code = stream_decrypt(cipher_bytes, key_bytes)
 
 -- Trap 6: Integrity verification on decrypted payload buffer
 if not source_code or #source_code == 0 then
-    securityKick("Payload decryption error.")
+    securityKick("Payload verification error.")
     return
 end
 
--- Fast-path JIT loadstring compilation
-local exec_fn, syntax_err = _loadstring(source_code)
+-- Attempt Luau Bytecode compilation or Loadstring
+local exec_fn = nil
+local syntax_err = nil
+
+local _loadbytecode = loadbytecode or (crypt and crypt.luau_load)
+if _loadbytecode and crypt and crypt.luau_compile and isNative(_loadbytecode) then
+    local compiled_ok, bc = _pcall(function() return crypt.luau_compile(source_code) end)
+    if compiled_ok and bc then
+        exec_fn = _loadbytecode(bc)
+    end
+end
+
 if not exec_fn then
-    securityKick("Tampered payload execution failed: " .. _tostring(syntax_err))
+    exec_fn, syntax_err = _loadstring(source_code)
+end
+
+if not exec_fn then
+    securityKick("Tampered payload execution failed.")
     return
 end
+
+-- Isolate environment to prevent external variable scraping / getrenv / getgc constant scraping
+local sandbox_env = _getfenv(exec_fn)
+sandbox_env.script = nil
+_setfenv(exec_fn, sandbox_env)
 
 -- Scramble and zero ALL memory references immediately to foil GC scrapers (getgc / getprotos)
 source_code = nil
 verify_data = nil
+cipher_bytes = nil
 key_bytes = nil
 session_key = nil
 sig_payload = nil
@@ -667,6 +500,25 @@ client_sig = nil
 init_resp = nil
 verify_resp = nil
 decoded_str = nil
+raw_b64 = nil
+decode_func = nil
+decoded_str = nil
+
+-- Trap 7: Post-execution continuous integrity monitor
+-- Spawns a background thread that continuously checks for late-hook attempts
+-- (attacker hooks writefile/setclipboard AFTER FleedGuard loads but BEFORE script runs)
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if (writefile and not isNative(writefile)) or
+           (setclipboard and not isNative(setclipboard)) or
+           (hookfunction and not isNative(hookfunction)) or
+           detectMetatableTamper() then
+            securityKick("Post-load hook injection detected.")
+            return
+        end
+    end
+end)
 
 -- Execute securely
 print("[FleedGuard] Successfully authenticated " .. _tostring(SCRIPT_SLUG) .. "! Launching...")

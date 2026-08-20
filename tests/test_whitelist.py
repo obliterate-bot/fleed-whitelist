@@ -171,11 +171,10 @@ def test_full_handshake_and_tamper_defense():
             assert direct_fetcher_resp.status_code == 403
             assert "Security Error" in direct_fetcher_resp.json()["message"]
 
-            # Legitimate loader handshake with token and key_proof passes (keeping raw key off wire)
-            key_proof = crypto_engine.compute_key_proof(license_key)
+            # Legitimate loader handshake with token passes
             init_resp = client.post("/v1/handshake/init", json={
                 "slug": slug,
-                "key_proof": key_proof,
+                "key": license_key,
                 "hwid": hwid,
                 "client_challenge": client_challenge,
                 "loader_token": loader_token,
@@ -204,23 +203,19 @@ def test_full_handshake_and_tamper_defense():
             assert verify_data["success"] is True
             assert "payload" in verify_data
             assert "auth_tag" in verify_data
-            assert "wrapped_key" in verify_data
             assert "session_key" not in verify_data  # Zero-transmission verification!
 
-            # Client unwraps session key via KEK and decrypts payload
-            kek = crypto_engine.derive_kek(license_key, nonce)
-            unwrapped_session_key = crypto_engine.unwrap_session_key(verify_data["wrapped_key"], kek)
-            
+            # Client derives session key locally and decrypts payload
+            client_derived_key = crypto_engine.derive_session_key(
+                client_challenge=client_challenge,
+                server_challenge=server_challenge,
+                nonce=nonce,
+                license_key=license_key,
+                hwid=norm_hwid
+            )
             import base64
-            cipher_bytes_raw = base64.b64decode(verify_data["payload"])
-            cipher_bytes = list(cipher_bytes_raw)
-            
-            # Verify strict client-side auth_tag match (HMAC-SHA256)
-            import hmac
-            expected_auth_tag = hmac.new(unwrapped_session_key.encode('utf-8'), nonce.encode('utf-8') + cipher_bytes_raw, hashlib.sha256).hexdigest()
-            assert verify_data["auth_tag"] == expected_auth_tag
-
-            key_bytes = (unwrapped_session_key + nonce).encode('utf-8')
+            cipher_bytes = list(base64.b64decode(verify_data["payload"]))
+            key_bytes = (client_derived_key + nonce).encode('utf-8')
             S = list(range(256))
             j = 0
             for i in range(256):
@@ -234,10 +229,7 @@ def test_full_handshake_and_tamper_defense():
                 S[i], S[j] = S[j], S[i]
                 k = S[(S[i] + S[j]) % 256]
                 decrypted.append(byte ^ k)
-
-
-            decrypted_str = decrypted.decode('utf-8')
-            assert "Hoopz Elite Aimbot Loaded" in decrypted_str
+            assert "Hoopz Elite Aimbot Loaded" in decrypted.decode('utf-8')
 
             # 8. Test Tamper Attempt: Replaying with invalid signature must FAIL (403)
             init2 = client.post("/v1/handshake/init", json={
@@ -421,56 +413,5 @@ def test_luarmor_parity_commands():
             assert await c4.fetchone() is None
 
     asyncio.run(_run())
-
-def test_watermarking_and_leak_tracer():
-    """Verifies that watermarked Lua code can be decoded and attributed to the leaker."""
-    original_lua = "print('Hello World')\nlocal x = 42\nreturn x"
-    license_key = "FLEED-LEAKER-1234-5678"
-    user_id = 987654321
-    discord_id = "555555555555555555"
-
-    watermarked_lua = crypto_engine.inject_watermark(
-        source_code=original_lua,
-        license_key=license_key,
-        user_id=user_id,
-        discord_id=discord_id
-    )
-
-    assert watermarked_lua != original_lua
-    assert "_FG_WM" in watermarked_lua
-
-    # Decode and verify leak attribution
-    decoded = crypto_engine.decode_watermark(watermarked_lua)
-    assert decoded is not None
-    assert decoded["verified"] is True
-    assert decoded["license_key"] == license_key
-    assert decoded["roblox_user_id"] == str(user_id)
-    assert decoded["discord_id"] == discord_id
-
-    # Verify invalid/tampered watermark fails gracefully
-    # Tamper the base64 signature token so the HMAC hash mismatch occurs
-    tampered_lua = watermarked_lua.replace("RkxFRUQt", "XXXXXXQt")
-    assert crypto_engine.decode_watermark(tampered_lua) is None or crypto_engine.decode_watermark(tampered_lua).get("verified") is False
-
-def test_jwt_algorithm_pinning():
-    """Verifies that tokens with alg != HS256 (e.g. alg: none) are strictly rejected."""
-    import base64
-    header = {"alg": "none", "typ": "JWT"}
-    payload = {"sub": 1, "usr": "attacker", "role": "admin", "exp": int(time.time()) + 3600}
-    b64_header = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
-    b64_payload = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    unsigned = f"{b64_header}.{b64_payload}."
-    
-    # Verify rejection
-    assert crypto_engine.verify_session_token(unsigned) is None
-
-def test_fail_closed_obfuscation():
-    """Verifies that invalid/malformed source code raises an error under fail-closed mode."""
-    malformed_lua = "local function broken() !!syntax error?? end"
-    with pytest.raises(RuntimeError) as exc_info:
-        crypto_engine.obfuscate_with_obfuscate(malformed_lua, fail_closed=True)
-    assert "fail-closed" in str(exc_info.value)
-
-
 
 

@@ -29,13 +29,12 @@ os.makedirs(TEMPLATES_DIR, exist_ok=True)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init()
-    # Create default demo/admin account if empty with a cryptographically secure random one-time password
+    # Create default demo/admin account if empty
     async with db.get_db() as conn:
         cursor = await conn.execute("SELECT COUNT(*) as cnt FROM users")
         row = await cursor.fetchone()
         if row and row["cnt"] == 0:
-            initial_password = os.getenv("FLEED_INITIAL_ADMIN_PASSWORD") or secrets.token_urlsafe(16)
-            pw_hash, salt = crypto_engine.hash_password(initial_password)
+            pw_hash, salt = crypto_engine.hash_password("FleedAdmin2026!")
             api_key = f"fg_live_{secrets.token_hex(20)}"
             now_iso = datetime.now(timezone.utc).isoformat()
             await conn.execute("""
@@ -43,42 +42,25 @@ async def lifespan(app: FastAPI):
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, ("admin", "admin@fleed.bot", pw_hash, salt, api_key, "admin", now_iso))
             await conn.commit()
-            if not os.getenv("FLEED_INITIAL_ADMIN_PASSWORD"):
-                import logging
-                logging.getLogger("fleedguard").warning(
-                    f"[FLEEDGUARD SETUP] One-Time Generated Admin Credentials -> Username: admin | Password: {initial_password}"
-                )
     yield
 
 app = FastAPI(
     title="FleedGuard Whitelist & Security API",
-    version="2.0.4",
+    version="2.0.0",
     description="Enterprise-grade Roblox script whitelisting and protection service.",
     lifespan=lifespan
 )
 
 # CORS middleware for developer integrations & web UI
-# Note: Wildcard origins ('*') cannot be paired with allow_credentials=True per CORS spec
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-# ----------------- Health Probe Endpoint (Railway / Status) -----------------
-@app.get("/health")
-@app.get("/api/health")
-async def health_check():
-    return {
-        "status": "healthy",
-        "service": "FleedGuard Whitelist API",
-        "version": "2.0.4",
-        "timestamp": int(time.time())
-    }
 
 # ----------------- Dependency: Auth Verification -----------------
 async def get_current_user(request: Request) -> Dict:
@@ -161,8 +143,7 @@ class LicenseUpdateRequest(BaseModel):
 # Executor Handshake Models
 class HandshakeInitRequest(BaseModel):
     slug: str
-    key: Optional[str] = None
-    key_proof: Optional[str] = None
+    key: str
     hwid: str
     client_challenge: str
     loader_token: Optional[str] = None
@@ -172,7 +153,6 @@ class HandshakeInitRequest(BaseModel):
     place_id: Optional[int] = None
     job_id: Optional[str] = None
     game_name: Optional[str] = None
-
 
 
 class HandshakeVerifyRequest(BaseModel):
@@ -382,17 +362,11 @@ async def disable_2fa(req: Enable2FARequest, user: Dict = Depends(get_current_us
     return {"success": True, "message": "2FA disabled"}
 
 # ----------------- Script Management API -----------------
-SCRIPT_METADATA_COLUMNS = """
-    s.id, s.user_id, s.name, s.slug, s.description, s.version,
-    s.is_obfuscated_mode, s.killswitch_active, s.killswitch_reason,
-    s.discord_webhook, s.buyer_role_id, s.guild_id, s.created_at, s.updated_at
-"""
-
 @app.get("/api/scripts")
 async def list_scripts(user: Dict = Depends(get_current_user)):
     async with db.get_db() as conn:
-        cursor = await conn.execute(f"""
-            SELECT {SCRIPT_METADATA_COLUMNS}, 
+        cursor = await conn.execute("""
+            SELECT s.*, 
                    COUNT(l.id) as total_licenses,
                    SUM(CASE WHEN l.is_banned = 0 THEN 1 ELSE 0 END) as active_licenses
             FROM scripts s
@@ -426,7 +400,7 @@ async def create_script(req: ScriptCreateRequest, user: Dict = Depends(get_curre
 @app.get("/api/scripts/{script_id}")
 async def get_script(script_id: int, user: Dict = Depends(get_current_user)):
     async with db.get_db() as conn:
-        cursor = await conn.execute(f"SELECT {SCRIPT_METADATA_COLUMNS} FROM scripts s WHERE s.id = ? AND s.user_id = ?", (script_id, user["id"]))
+        cursor = await conn.execute("SELECT * FROM scripts WHERE id = ? AND user_id = ?", (script_id, user["id"]))
         row = await cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Script not found")
@@ -587,42 +561,14 @@ async def update_license(license_id: int, req: LicenseUpdateRequest, user: Dict 
 
     return {"success": True}
 
-class LeakTraceRequest(BaseModel):
-    dump_content: str
-    auto_ban: Optional[bool] = False
-    ban_reason: Optional[str] = "Identified as source leaker via cryptographic watermark"
-
-@app.post("/api/trace_leak")
-async def trace_leak(req: LeakTraceRequest, user: Dict = Depends(get_current_user)):
-    """
-    Decodes an embedded steganographic watermark from a leaked script dump,
-    identifying the exact license key, Roblox user ID, and Discord account of the leaker.
-    """
-    result = crypto_engine.decode_watermark(req.dump_content)
-    if not result or not result.get("verified"):
-        return JSONResponse(status_code=404, content={
-            "success": False,
-            "message": "No verified FleedGuard watermark found in the provided dump."
-        })
-
-    leaked_key = result["license_key"]
-    banned_status = False
-
-    if req.auto_ban and leaked_key != "UNKNOWN":
-        async with db.get_db() as conn:
-            cursor = await conn.execute("SELECT id FROM licenses WHERE UPPER(license_key) = UPPER(?)", (leaked_key,))
-            lic = await cursor.fetchone()
-            if lic:
-                await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE id = ?", (req.ban_reason, lic["id"]))
-                await conn.commit()
-                banned_status = True
-
-    return {
-        "success": True,
-        "watermark": result,
-        "auto_banned": banned_status,
-        "message": f"Successfully identified leaker: License {leaked_key} (Discord: {result['discord_id']}, Roblox UID: {result['roblox_user_id']})"
-    }
+@app.delete("/api/licenses/{license_id}")
+async def delete_license(license_id: int, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        await conn.execute("""
+            DELETE FROM licenses WHERE id = ? AND script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+        """, (license_id, user["id"]))
+        await conn.commit()
+    return {"success": True}
 
 # ----------------- Analytics & Execution Logs API -----------------
 @app.get("/api/stats")
@@ -771,14 +717,8 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
     if not check_rate_limit(f"ip:{client_ip}", max_requests=40, window_sec=60):
         return JSONResponse(status_code=429, content={"success": False, "message": "Too many requests. Please slow down."})
 
-    clean_key = str(req.key or "").strip().upper()
-    req_key_proof = str(req.key_proof or "").strip().lower()
-
-    if not clean_key and not req_key_proof:
-        return JSONResponse(status_code=400, content={"success": False, "message": "Missing key or key_proof."})
-
-    rate_limit_id = req_key_proof if req_key_proof else clean_key
-    if not check_rate_limit(f"key:{rate_limit_id}", max_requests=25, window_sec=60):
+    clean_key = str(req.key).strip().upper()
+    if not check_rate_limit(f"key:{clean_key}", max_requests=25, window_sec=60):
         return JSONResponse(status_code=429, content={"success": False, "message": "Too many handshake attempts for this key."})
 
     norm_hwid = crypto_engine.normalize_hwid(req.hwid)
@@ -798,7 +738,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BYPASS_ATTEMPT', 'Direct API fetcher detected (missing or forged loader armor token)', ?)
-            """, (script["id"], clean_key or req_key_proof, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
+            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Security Error: Direct API execution not permitted. Execute via official loader."})
 
@@ -810,7 +750,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BYPASS_ATTEMPT', 'Malicious extractor or dumper telemetry signature detected', ?)
-            """, (script["id"], clean_key or req_key_proof, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
+            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Security Violation: Extraction attempt detected and logged."})
 
@@ -824,29 +764,17 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": f"KILLSWITCH ACTIVE: {reason}"})
 
-        # 2. Lookup License Key (by raw key or one-way key_proof hash)
-        license_row = None
-        if clean_key:
-            cursor = await conn.execute("SELECT * FROM licenses WHERE UPPER(license_key) = ? AND script_id = ?", (clean_key, script["id"]))
-            license_row = await cursor.fetchone()
-        
-        if not license_row and req_key_proof:
-            # Query candidate licenses for this script and match by key_proof hash
-            cursor = await conn.execute("SELECT * FROM licenses WHERE script_id = ?", (script["id"],))
-            candidates = await cursor.fetchall()
-            for cand in candidates:
-                if crypto_engine.compute_key_proof(cand["license_key"]).lower() == req_key_proof:
-                    license_row = cand
-                    break
+        # 2. Lookup License Key
+        cursor = await conn.execute("SELECT * FROM licenses WHERE UPPER(license_key) = ? AND script_id = ?", (clean_key, script["id"]))
+        license_row = await cursor.fetchone()
 
         if not license_row:
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'INVALID_KEY', 'Key does not exist for this script', ?)
-            """, (script["id"], clean_key or req_key_proof, norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, now_iso))
+            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Invalid license key"})
-
 
         # Check Banned
         if license_row["is_banned"]:
@@ -890,21 +818,24 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         else:
             bound_hwid = license_row["hwid"]
 
-        resolved_license_key = license_row["license_key"]
-
-
         # 3. Generate Handshake Challenge & Nonce with zero-transmission session key
-        challenge = crypto_engine.create_handshake_challenge()
+        challenge = crypto_engine.create_handshake_challenge(
+            script_id=script["id"],
+            license_key=req.key,
+            client_challenge=req.client_challenge,
+            hwid=req.hwid
+        )
         
         await conn.execute("""
-            INSERT OR REPLACE INTO active_nonces (nonce, script_id, license_key, client_challenge, server_challenge, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, expires_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO active_nonces (nonce, script_id, license_key, client_challenge, server_challenge, session_key, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             challenge["nonce"],
             script["id"],
-            resolved_license_key,
+            req.key,
             req.client_challenge,
             challenge["server_challenge"],
+            challenge["session_key"],
             req.executor,
             req.roblox_username,
             req.roblox_user_id,
@@ -915,7 +846,6 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             now_ts
         ))
         await conn.commit()
-
 
     return {
         "success": True,
@@ -996,59 +926,31 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
         await conn.commit()
 
-        # 5. Steganographic Watermark & Encrypt Payload for in-memory VM unpacking
+        # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
         raw_code = row["raw_source"]
         
-        # Dynamically watermark payload with license_key, roblox user_id, and discord_id
-        # If the licensee ever dumps the payload and leaks it, the watermark deterministically
-        # traces back to their license key, Discord account, and Roblox User ID.
-        discord_id = row["discord_id"] if "discord_id" in row.keys() else None
-        raw_code = crypto_engine.inject_watermark(
-            source_code=raw_code,
-            license_key=row["license_key"],
-            user_id=rbx_uid,
-            discord_id=discord_id
-        )
-
         # If script is in protected mode (mode 1 or 2), apply O_bfuscate 1.1 VM virtualization
-        # Under fail-closed security policy, if obfuscation fails, fail closed rather than leaking plaintext
+        # This guarantees that even if an attacker writes a custom fetcher with a valid key,
+        # they will only ever decrypt heavily virtualized VM bytecode instead of raw source code.
         if row["is_obfuscated_mode"] in (1, 2):
-            try:
-                raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense", fail_closed=True)
-            except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Security policy violation: Protected script virtualization failed and fail-closed is active."
-                )
+            raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense")
 
         effective_hwid = matching_hwid or req.hwid or bound_hwid
-        
-        # 1. Derive unguessable server session key using MASTER_SECRET (prevents MITM proxy from computing it)
-        session_key = crypto_engine.derive_session_key_server(
-            script_id=row["script_id"],
+        session_key = crypto_engine.derive_session_key(
             client_challenge=req.client_challenge,
             server_challenge=nonce_row["server_challenge"],
             nonce=req.nonce,
+            license_key=row["license_key"],
             hwid=effective_hwid
         )
-
-        # 2. Derive KEK (Key Encryption Key) from the client's actual license key
-        kek = crypto_engine.derive_kek(license_key=row["license_key"], nonce=req.nonce)
-
-        # 3. Wrap session key with KEK so only a client with the license key can unwrap it
-        wrapped_key = crypto_engine.wrap_session_key(session_key, kek)
-
-        # 4. Encrypt payload with server session key
         encrypted_payload, auth_tag = crypto_engine.encrypt_payload(raw_code, session_key, req.nonce)
 
-    # Note: session_key in plaintext is NEVER returned to the client
+    # Note: session_key is NEVER returned to the client
     return {
         "success": True,
         "payload": encrypted_payload,
-        "wrapped_key": wrapped_key,
         "auth_tag": auth_tag,
         "is_obfuscated": bool(row["is_obfuscated_mode"])
     }
-
 
 

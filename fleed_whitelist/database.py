@@ -161,6 +161,7 @@ class WhitelistDB:
                     license_key TEXT NOT NULL,
                     client_challenge TEXT NOT NULL,
                     server_challenge TEXT NOT NULL,
+                    session_key TEXT,
                     executor_name TEXT,
                     roblox_username TEXT,
                     roblox_user_id INTEGER,

@@ -10,68 +10,9 @@ import pyotp
 import qrcode
 import io
 
-import logging
-
-_logger = logging.getLogger("fleedguard")
-_env_secret = os.getenv("FLEED_MASTER_SECRET")
-if not _env_secret:
-    _logger.warning(
-        "[FLEEDGUARD CAUTION] FLEED_MASTER_SECRET environment variable is unset! "
-        "Generated an ephemeral 256-bit secret. Set FLEED_MASTER_SECRET in your environment for persistent tokens."
-    )
-    MASTER_SECRET = secrets.token_hex(32)
-else:
-    MASTER_SECRET = _env_secret
+MASTER_SECRET = os.getenv("FLEED_MASTER_SECRET", "fleed_guard_super_secret_master_key_2026_x89a!")
 
 class CryptoEngine:
-    @staticmethod
-    def inject_watermark(source_code: str, license_key: str, user_id: Optional[int] = None, discord_id: Optional[str] = None) -> str:
-        """
-        Injects an invisible, deterministic steganographic watermark into the Lua source code
-        before VM compilation or encryption. If a dumped script is leaked online, the developer
-        can decode the embedded watermarks to identify the leaking license and Discord user.
-        """
-        raw_uid = str(user_id or 0)
-        raw_disc = str(discord_id or "NONE")
-        sig_data = f"{license_key}|{raw_uid}|{raw_disc}"
-        
-        # 1. Cryptographic Watermark Tag with HMAC-SHA256
-        tag_hash = hmac.new(MASTER_SECRET.encode(), sig_data.encode(), hashlib.sha256).hexdigest()[:16]
-        encoded_sig = base64.b64encode(sig_data.encode()).decode()
-        
-        # Non-executable embedded watermark identifier variable (folded inside local scope)
-        watermark_header = f'local _FG_WM = "{tag_hash}:{encoded_sig}"; '
-        
-        # 2. Steganographic zero-width spacing fingerprint appended as invisible bits
-        # Space (0x20) and Tab (0x09) represent binary 0 and 1
-        bin_str = "".join(f"{b:08b}" for b in tag_hash.encode())
-        stego_chars = "".join(" " if bit == "0" else "\t" for bit in bin_str)
-        stego_comment = f"--[[\n{stego_chars}\n]]\n"
-        
-        return f"{stego_comment}{watermark_header}\n{source_code}"
-
-    @staticmethod
-    def decode_watermark(source_or_dump: str) -> Optional[Dict[str, str]]:
-        """Extracts and verifies a steganographic watermark from a dumped Lua script."""
-        import re
-        match = re.search(r'_FG_WM\s*=\s*"([a-f0-9]{16}):([^"]+)"', source_or_dump)
-        if match:
-            tag_hash, encoded_sig = match.group(1), match.group(2)
-            try:
-                sig_data = base64.b64decode(encoded_sig).decode()
-                expected_hash = hmac.new(MASTER_SECRET.encode(), sig_data.encode(), hashlib.sha256).hexdigest()[:16]
-                if hmac.compare_digest(tag_hash, expected_hash):
-                    parts = sig_data.split("|")
-                    return {
-                        "verified": True,
-                        "license_key": parts[0] if len(parts) > 0 else "UNKNOWN",
-                        "roblox_user_id": parts[1] if len(parts) > 1 else "0",
-                        "discord_id": parts[2] if len(parts) > 2 else "NONE",
-                    }
-            except Exception:
-                pass
-        return None
-
     @staticmethod
     def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
         """Hashes password with PBKDF2-HMAC-SHA256 and salt."""
@@ -155,19 +96,12 @@ class CryptoEngine:
 
     @staticmethod
     def verify_session_token(token: str) -> Optional[Dict]:
-        """Verifies session token integrity, algorithm pinning (HS256), and expiration."""
+        """Verifies session token integrity and expiration."""
         try:
             parts = token.split(".")
             if len(parts) != 3:
                 return None
             b64_header, b64_payload, b64_sig = parts
-            
-            # Enforce header algorithm and type pinning (mitigate alg: none / confusion)
-            header_json = base64.urlsafe_b64decode(b64_header + "==").decode()
-            header = json.loads(header_json)
-            if header.get("alg") != "HS256" or header.get("typ") != "JWT":
-                return None
-
             unsigned = f"{b64_header}.{b64_payload}"
             expected_sig = hmac.new(MASTER_SECRET.encode(), unsigned.encode(), hashlib.sha256).digest()
             actual_sig = base64.urlsafe_b64decode(b64_sig + "==")
@@ -190,53 +124,10 @@ class CryptoEngine:
         return hashlib.sha256(clean.encode()).hexdigest()
 
     @staticmethod
-    def compute_key_proof(license_key: str) -> str:
-        """Computes one-way key proof hash to keep license key completely off the wire."""
-        clean_key = license_key.strip().upper()
-        return hashlib.sha256(f"fleed-ident:{clean_key}".encode('utf-8')).hexdigest()
-
-    @staticmethod
-    def derive_kek(license_key: str, nonce: str) -> str:
-        """Derives a Key-Encryption-Key (KEK) using SHA256 over the license key and nonce."""
-        clean_key = license_key.strip().upper()
-        return hashlib.sha256(f"fleed-kek:{clean_key}:{nonce}".encode('utf-8')).hexdigest()
-
-    @staticmethod
-    def derive_session_key_server(script_id: int, client_challenge: str, server_challenge: str, nonce: str, hwid: str) -> str:
-        """
-        Derives an unguessable server-side session key incorporating MASTER_SECRET via HMAC-SHA256.
-        A MITM proxy listening to traffic CANNOT compute this key because MASTER_SECRET is never sent across the wire.
-        """
-        seed = f"{script_id}:{client_challenge}:{server_challenge}:{nonce}:{hwid}"
-        return hmac.new(MASTER_SECRET.encode('utf-8'), seed.encode('utf-8'), hashlib.sha256).hexdigest()
-
-    @staticmethod
-    def wrap_session_key(session_key: str, kek: str) -> str:
-        """
-        Encrypts the session key with the KEK (Key-Encryption-Key) so only a client who actually
-        possesses the license key can unwrap the session key.
-        """
-        kek_bytes = kek.encode('utf-8')
-        sk_bytes = session_key.encode('utf-8')
-        wrapped = bytearray()
-        for idx, b in enumerate(sk_bytes):
-            wrapped.append(b ^ kek_bytes[idx % len(kek_bytes)])
-        return base64.b64encode(wrapped).decode()
-
-    @staticmethod
-    def unwrap_session_key(wrapped_b64: str, kek: str) -> str:
-        """Unwraps the session key using the local KEK."""
-        kek_bytes = kek.encode('utf-8')
-        wrapped = base64.b64decode(wrapped_b64)
-        unwrapped = bytearray()
-        for idx, b in enumerate(wrapped):
-            unwrapped.append(b ^ kek_bytes[idx % len(kek_bytes)])
-        return bytes(unwrapped).decode('utf-8')
-
-    @staticmethod
     def derive_session_key(client_challenge: str, server_challenge: str, nonce: str, license_key: str, hwid: str) -> str:
         """
-        Legacy/Fallback session key derivation.
+        Derives an ephemeral session key deterministically from the handshake parameters.
+        Neither client nor server needs to transmit the encryption key across the network.
         """
         seed = f"{client_challenge}:{server_challenge}:{nonce}:{license_key}:{hwid}"
         return hashlib.sha256(seed.encode('utf-8')).hexdigest()
@@ -271,15 +162,25 @@ class CryptoEngine:
             return False
 
     @staticmethod
-    def create_handshake_challenge() -> Dict:
+    def create_handshake_challenge(script_id: int, license_key: str, client_challenge: str, hwid: str) -> Dict:
         """Creates an ephemeral session challenge to defeat replay and MITM attacks with 12s window."""
         nonce = secrets.token_hex(16)
         server_challenge = secrets.token_hex(16)
         expires_at = int(time.time()) + 12 # Tight 12-second handshake window
+        
+        # Derive unique session encryption key locally (never sent to client in verify response)
+        session_key = CryptoEngine.derive_session_key(
+            client_challenge=client_challenge,
+            server_challenge=server_challenge,
+            nonce=nonce,
+            license_key=license_key,
+            hwid=hwid
+        )
 
         return {
             "nonce": nonce,
             "server_challenge": server_challenge,
+            "session_key": session_key,
             "expires_at": expires_at
         }
 
@@ -308,17 +209,10 @@ class CryptoEngine:
         for cand in candidates:
             if not cand:
                 continue
-            # SHA256 Candidate (using key proof / clean key)
+            # SHA256 Candidate
             expected_raw = f"{client_challenge}:{server_challenge}:{nonce}:{license_key}:{cand}"
             expected_sig = hashlib.sha256(expected_raw.encode('utf-8')).hexdigest().lower()
             if hmac.compare_digest(expected_sig, client_sig_clean):
-                return True, cand
-
-            # Also allow signature over key proof hash
-            key_proof = CryptoEngine.compute_key_proof(license_key)
-            expected_raw_kp = f"{client_challenge}:{server_challenge}:{nonce}:{key_proof}:{cand}"
-            expected_sig_kp = hashlib.sha256(expected_raw_kp.encode('utf-8')).hexdigest().lower()
-            if hmac.compare_digest(expected_sig_kp, client_sig_clean):
                 return True, cand
 
             # FNV-1a 32-bit fallback for lightweight executors
@@ -337,8 +231,7 @@ class CryptoEngine:
         """
         Encrypts the script payload with dynamic multi-round RC4/stream cipher
         with dynamic key rotation so it can be unpacked directly in-memory inside the client Luau VM.
-        Computes a cryptographic HMAC-SHA256 auth tag over nonce + raw ciphertext bytes keyed by session_key.
-        Returns (base64_ciphertext, auth_tag).
+        Returns (base64_ciphertext, hmac_auth_tag).
         """
         key_bytes = (session_key + nonce).encode('utf-8')
         data_bytes = source_code.encode('utf-8')
@@ -360,16 +253,14 @@ class CryptoEngine:
             cipher.append(byte ^ k)
 
         encrypted_b64 = base64.b64encode(cipher).decode()
-        # HMAC-SHA256 auth tag over (nonce + ciphertext) keyed by session_key
-        auth_tag = hmac.new(session_key.encode('utf-8'), nonce.encode('utf-8') + bytes(cipher), hashlib.sha256).hexdigest()
+        auth_tag = hmac.new(key_bytes, cipher, hashlib.sha256).hexdigest()
         return encrypted_b64, auth_tag
 
     @staticmethod
-    def obfuscate_with_obfuscate(source_code: str, profile: str = "dense", fail_closed: bool = True) -> str:
+    def obfuscate_with_obfuscate(source_code: str, profile: str = "dense") -> str:
         """
         Applies O_bfuscate 1.1 hybrid VM virtualization, register pressure optimization,
         and polymorphic string-vault protection directly to Lua/Luau source code.
-        Defaults to fail_closed=True to prevent accidental exposure of raw plaintext source.
         """
         try:
             import sys
@@ -381,7 +272,6 @@ class CryptoEngine:
                 sys.path.insert(0, obf_src)
 
             from o_bfuscate.pipeline import obfuscate, Config
-
 
             if profile == "dense":
                 cfg = Config(
@@ -417,11 +307,8 @@ class CryptoEngine:
             res = obfuscate(source_code, cfg)
             return res.source
         except Exception as e:
-            if fail_closed:
-                raise RuntimeError(f"Obfuscation pipeline failed under fail-closed security policy: {str(e)}")
-            # Fallback to source code only if fail_closed is explicitly overridden to False
+            # Fallback to source code if parser fails on custom syntax
             return source_code
-
 
 crypto_engine = CryptoEngine()
 

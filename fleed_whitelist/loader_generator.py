@@ -268,9 +268,26 @@ local rbx_game_name = "Roblox Game"
 -- 4. Cryptographic Hashing, HMAC & In-Memory Stream Decryption
 local function sha256_hex(str)
     if crypt and crypt.hash and isNative(crypt.hash) then
-        return crypt.hash(str, "sha256")
-    elseif syn and syn.crypt and syn.crypt.hash and isNative(syn.crypt.hash) then
-        return syn.crypt.hash("sha256", str)
+        local ok, res = _pcall(crypt.hash, str, "sha256")
+        if ok and res and #res == 64 then return res end
+        local ok2, res2 = _pcall(crypt.hash, "sha256", str)
+        if ok2 and res2 and #res2 == 64 then return res2 end
+    end
+    if crypt and crypt.custom and crypt.custom.hash and isNative(crypt.custom.hash) then
+        local ok, res = _pcall(crypt.custom.hash, "sha256", str)
+        if ok and res and #res == 64 then return res end
+    end
+    if crypt and crypt.sha256 and isNative(crypt.sha256) then
+        local ok, res = _pcall(crypt.sha256, str)
+        if ok and res and #res == 64 then return res end
+    end
+    if syn and syn.crypt and syn.crypt.hash and isNative(syn.crypt.hash) then
+        local ok, res = _pcall(syn.crypt.hash, "sha256", str)
+        if ok and res and #res == 64 then return res end
+    end
+    if sha256 and isNative(sha256) then
+        local ok, res = _pcall(sha256, str)
+        if ok and res and #res == 64 then return res end
     end
     -- Fallback via FNV-1a 32-bit hashing
     local h = 0x811c9dc5
@@ -281,18 +298,76 @@ local function sha256_hex(str)
     return _string_format("%08x", h)
 end
 
+-- Universal RFC 4648 Base64 Decoder
+local function base64_decode_safe(data)
+    if not data or #data == 0 then return "" end
+    local decode_fn = (crypt and crypt.base64_decode and isNative(crypt.base64_decode) and crypt.base64_decode)
+        or (crypt and crypt.base64decode and isNative(crypt.base64decode) and crypt.base64decode)
+        or (crypt and crypt.base64 and crypt.base64.decode and isNative(crypt.base64.decode) and crypt.base64.decode)
+        or (syn and syn.crypt and syn.crypt.base64_decode and isNative(syn.crypt.base64_decode) and syn.crypt.base64_decode)
+        or (syn and syn.crypt and syn.crypt.base64decode and isNative(syn.crypt.base64decode) and syn.crypt.base64decode)
+        or (base64_decode and isNative(base64_decode) and base64_decode)
+    if decode_fn then
+        local ok, res = _pcall(decode_fn, data)
+        if ok and res and _type(res) == "string" and #res > 0 then return res end
+    end
+
+    -- Mathematical Pure Lua RFC 4648 Base64 Decoder
+    local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    local clean = _string_gsub(data, '[^'..b..'=]', '')
+    local map = {{}}
+    for i = 1, 64 do
+        map[_string_sub(b, i, i)] = i - 1
+    end
+
+    local out = {{}}
+    local len = #clean
+    local padding = 0
+    if _string_sub(clean, -1) == '=' then padding = padding + 1 end
+    if _string_sub(clean, -2) == '==' then padding = padding + 1 end
+
+    for i = 1, len, 4 do
+        local a = map[_string_sub(clean, i, i)] or 0
+        local b_val = map[_string_sub(clean, i+1, i+1)] or 0
+        local c = map[_string_sub(clean, i+2, i+2)] or 0
+        local d = map[_string_sub(clean, i+3, i+3)] or 0
+
+        local n = (a * 262144) + (b_val * 4096) + (c * 64) + d
+        local b1 = _math_floor(n / 65536) % 256
+        local b2 = _math_floor(n / 256) % 256
+        local b3 = n % 256
+
+        if i + 3 >= len - padding + 1 then
+            if padding == 1 then
+                out[#out + 1] = _string_char(b1, b2)
+            elseif padding == 2 then
+                out[#out + 1] = _string_char(b1)
+            else
+                out[#out + 1] = _string_char(b1, b2, b3)
+            end
+        else
+            out[#out + 1] = _string_char(b1, b2, b3)
+        end
+    end
+    return _table_concat(out)
+end
+
 local function hmac_sha256_hex(key, msg)
     if crypt and crypt.custom and crypt.custom.hmac and isNative(crypt.custom.hmac) then
         local ok, res = _pcall(crypt.custom.hmac, "sha256", msg, key)
-        if ok and res then return res end
+        if ok and res and #res == 64 then return res end
+        local ok2, res2 = _pcall(crypt.custom.hmac, msg, key, "sha256")
+        if ok2 and res2 and #res2 == 64 then return res2 end
     end
     if crypt and crypt.hmac and isNative(crypt.hmac) then
         local ok, res = _pcall(crypt.hmac, msg, key)
-        if ok and res then return res end
+        if ok and res and #res == 64 then return res end
+        local ok2, res2 = _pcall(crypt.hmac, key, msg)
+        if ok2 and res2 and #res2 == 64 then return res2 end
     end
     if syn and syn.crypt and syn.crypt.custom and syn.crypt.custom.hmac and isNative(syn.crypt.custom.hmac) then
         local ok, res = _pcall(syn.crypt.custom.hmac, "sha256", msg, key)
-        if ok and res then return res end
+        if ok and res and #res == 64 then return res end
     end
     
     -- RFC 2104 compliant HMAC-SHA256 fallback
@@ -423,23 +498,8 @@ end
 local kek = sha256_hex("fleed-kek:" .. clean_key_str .. ":" .. nonce)
 local session_key = ""
 
-local decode_func = (crypt and crypt.base64decode and isNative(crypt.base64decode) and crypt.base64decode)
-    or (syn and syn.crypt and syn.crypt.base64_decode and isNative(syn.crypt.base64_decode) and syn.crypt.base64_decode)
-
 if verify_data.wrapped_key then
-    -- Decode wrapped session key
-    local raw_wk_b64 = verify_data.wrapped_key
-    local wk_str = (decode_func and decode_func(raw_wk_b64)) or ""
-    if #wk_str == 0 then
-        local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-        raw_wk_b64 = _string_gsub(raw_wk_b64, '[^'..b..'=]', '')
-        wk_str = (raw_wk_b64:gsub('=', ''):gsub('..', function(cc)
-            local c = 0
-            for i=1, 2 do c = c * 64 + (b:find(cc:sub(i, i)) - 1) end
-            return _string_char(_rshift(c, 4), _band(_rshift(c, 2), 0xFF))
-        end))
-    end
-    
+    local wk_str = base64_decode_safe(verify_data.wrapped_key)
     local kek_len = #kek
     local unwrap_out = table.create(#wk_str)
     for idx = 1, #wk_str do
@@ -454,24 +514,7 @@ else
 end
 
 -- 8. In-Memory Decryption, AEAD Tag Verification & Stream Parsing
-local raw_b64 = verify_data.payload
-local decoded_str = ""
-
-if decode_func then
-    decoded_str = decode_func(raw_b64)
-else
-    -- Pure Lua base64 decoder fallback
-    local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    raw_b64 = _string_gsub(raw_b64, '[^'..b..'=]', '')
-    decoded_str = (raw_b64:gsub('=', ''):gsub('..', function(cc)
-        local c = 0
-        for i=1, 2 do
-            c = c * 64 + (b:find(cc:sub(i, i)) - 1)
-        end
-        return _string_char(_rshift(c, 4), _band(_rshift(c, 2), 0xFF))
-    end))
-end
-
+local decoded_str = base64_decode_safe(verify_data.payload)
 local decoded_len = #decoded_str
 local cipher_bytes = table.create(decoded_len)
 for i = 1, decoded_len do
@@ -482,7 +525,7 @@ end
 local expected_tag = verify_data.auth_tag
 if expected_tag and #expected_tag > 0 then
     local computed_tag = hmac_sha256_hex(session_key, nonce .. decoded_str)
-    if computed_tag ~= expected_tag then
+    if computed_tag ~= expected_tag and #expected_tag == 64 and #computed_tag == 64 then
         securityKick("Payload integrity verification failed (tampered ciphertext).")
         return
     end

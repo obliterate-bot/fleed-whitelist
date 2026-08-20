@@ -282,6 +282,34 @@ class WhitelistControlPanelView(discord.ui.View):
                 )
 
         pub_url = loader_generator.get_public_url()
+
+        # Always ensure the key exists on Railway cloud (catches pre-sync keys)
+        if pub_url and pub_url.startswith("http"):
+            async with db.get_db() as conn:
+                cursor = await conn.execute("""
+                    SELECT u.api_key FROM users u
+                    JOIN scripts s ON s.user_id = u.id
+                    WHERE s.slug = ? AND u.api_key IS NOT NULL
+                """, (slug,))
+                dev_row = await cursor.fetchone()
+            if dev_row and dev_row["api_key"]:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        await session.post(
+                            f"{pub_url}/api/licenses/create",
+                            headers={"X-API-Key": dev_row["api_key"]},
+                            json={
+                                "slug": slug,
+                                "license_key": license_row["license_key"],
+                                "discord_id": user_id_str,
+                                "note": "synced via Get Script",
+                                "expires_at": None
+                            },
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        )
+                except Exception:
+                    pass
+
         loadstring_snippet = f'getgenv().FleedKey = "{license_row["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{slug}"))()'
         
         embed = fleed_embed(

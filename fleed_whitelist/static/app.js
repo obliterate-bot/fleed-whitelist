@@ -486,9 +486,9 @@ async function loadBypassLogs() {
     }
 
     tableBody.innerHTML = logs.map(log => {
-      const avatarUrl = log.roblox_user_id && log.roblox_user_id > 0
-        ? `https://www.roblox.com/headshot-thumbnail/image?userId=${log.roblox_user_id}&width=150&height=150&format=png`
-        : `https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png`;
+      const avatarUrl = (log.roblox_user_id && log.roblox_user_id > 0)
+        ? `/api/roblox/avatar/${log.roblox_user_id}`
+        : `/api/roblox/avatar/1`;
 
       let threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> ${log.status}</span>`;
       if (log.status === 'TAMPER_DETECTED') {
@@ -509,7 +509,7 @@ async function loadBypassLogs() {
           <td>${threatBadge}</td>
           <td>
             <div style="display:flex; align-items:center; gap:10px;">
-              <img src="${avatarUrl}" alt="Roblox Avatar" style="width:34px; height:34px; border-radius:50%; border:1px solid rgba(239,68,68,0.4); background:var(--bg-elevated); object-fit:cover;" onerror="this.src='https://tr.rbxcdn.com/30DAY-AvatarHeadshot-1.png'">
+              <img src="${avatarUrl}" alt="Roblox Avatar" style="width:34px; height:34px; border-radius:50%; border:1px solid rgba(239,68,68,0.4); background:var(--bg-elevated); object-fit:cover;" loading="lazy">
               <div>
                 <a href="${log.roblox_user_id ? `https://www.roblox.com/users/${log.roblox_user_id}/profile` : '#'}" target="_blank" style="color:var(--text-white); font-weight:600; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:13px;">
                   ${escapeHtml(log.roblox_username || "Unknown")} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>
@@ -552,17 +552,17 @@ async function loadBypassLogs() {
 }
 
 function renderLogRow(log) {
-  // Roblox Avatar Headshot via official Roblox thumbnail CDN
-  const avatarUrl = log.roblox_user_id && log.roblox_user_id > 0
-    ? `https://www.roblox.com/headshot-thumbnail/image?userId=${log.roblox_user_id}&width=150&height=150&format=png`
-    : `https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png`;
+  // Roblox Avatar Headshot via local backend avatar resolver
+  const avatarUrl = (log.roblox_user_id && log.roblox_user_id > 0)
+    ? `/api/roblox/avatar/${log.roblox_user_id}`
+    : `/api/roblox/avatar/1`;
 
   let rbxPlayerHtml = `<span style="color:var(--text-zinc-500);">—</span>`;
   if (log.roblox_username && log.roblox_username !== "Unknown") {
     const profileUrl = log.roblox_user_id ? `https://www.roblox.com/users/${log.roblox_user_id}/profile` : `https://www.roblox.com/search/users?keyword=${encodeURIComponent(log.roblox_username)}`;
     rbxPlayerHtml = `
       <div style="display:flex; align-items:center; gap:10px;">
-        <img src="${avatarUrl}" alt="Avatar" style="width:34px; height:34px; border-radius:50%; border:1px solid var(--border-subtle); background:var(--bg-elevated); object-fit:cover;" onerror="this.src='https://tr.rbxcdn.com/30DAY-AvatarHeadshot-1.png'">
+        <img src="${avatarUrl}" alt="Avatar" style="width:34px; height:34px; border-radius:50%; border:1px solid var(--border-subtle); background:var(--bg-elevated); object-fit:cover;" loading="lazy">
         <div>
           <a href="${profileUrl}" target="_blank" style="color:var(--gold-light); font-weight:600; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:13px;">
             ${escapeHtml(log.roblox_username)} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>

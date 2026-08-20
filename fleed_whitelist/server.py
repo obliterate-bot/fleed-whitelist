@@ -633,6 +633,36 @@ async def get_logs(limit: int = 100, status_filter: Optional[str] = None, user: 
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
+# Cache avatar headshots in memory to avoid repeated requests to Roblox API
+avatar_cache: Dict[int, str] = {}
+
+@app.get("/api/roblox/avatar/{user_id}")
+async def get_roblox_avatar(user_id: int):
+    """Fetches high-res Roblox user headshot and redirects directly to CDN."""
+    if user_id <= 0:
+        return RedirectResponse(url="https://tr.rbxcdn.com/30DAY-AvatarHeadshot-1.png", status_code=302)
+        
+    if user_id in avatar_cache:
+        return RedirectResponse(url=avatar_cache[user_id], status_code=302)
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=150x150&format=Png&isCircular=true"
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("data") and len(data["data"]) > 0:
+                        img_url = data["data"][0].get("imageUrl")
+                        if img_url:
+                            avatar_cache[user_id] = img_url
+                            return RedirectResponse(url=img_url, status_code=302)
+    except Exception:
+        pass
+
+    fallback = "https://tr.rbxcdn.com/30DAY-AvatarHeadshot-1.png"
+    return RedirectResponse(url=fallback, status_code=302)
+
+
 
 # ----------------- Rate Limiting & Anti-Brute Force Engine -----------------
 handshake_rate_limit: Dict[str, List[float]] = {}

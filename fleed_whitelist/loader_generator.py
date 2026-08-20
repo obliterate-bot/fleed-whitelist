@@ -263,11 +263,11 @@ if not verify_data.success then
 end
 
 -- 7. Zero-Transmission Local Session Key Derivation
--- Both client and server compute session_key without sending it across the wire
 local session_key = sha256_hex(client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. FLEED_KEY .. ":" .. HWID)
 
--- 8. In-Memory Decryption & Stream Parsing
+-- 8. In-Memory Decryption, AEAD Tag Verification & Stream Parsing
 local raw_b64 = verify_data.payload
+local auth_tag = verify_data.auth_tag
 local decode_func = (crypt and crypt.base64decode and isNative(crypt.base64decode) and crypt.base64decode)
     or (syn and syn.crypt and syn.crypt.base64_decode and isNative(syn.crypt.base64_decode) and syn.crypt.base64_decode)
 local decoded_str = ""
@@ -293,10 +293,9 @@ for i = 1, #decoded_str do
 end
 
 local key_bytes = session_key .. nonce
-local source_code = stream_decrypt(cipher_bytes, key_bytes)
 
 -- 9. Anti-Dumping, Anti-Decompiler & Sandboxed Execution Guard
--- Verify loadstring and compiler are unhooked native closures
+-- Verify compiler and execution environment
 if not isNative(_loadstring) or detectMetatableTamper() then
     if game and game.Players and game.Players.LocalPlayer then
         game.Players.LocalPlayer:Kick("[FleedGuard Security] Hooked compiler or metamethod manipulation detected.")
@@ -319,7 +318,26 @@ if writefile and not isNative(writefile) then
     return
 end
 
-local exec_fn, syntax_err = _loadstring(source_code)
+-- Decrypt source code in ephemeral memory
+local source_code = stream_decrypt(cipher_bytes, key_bytes)
+
+-- Attempt Luau Bytecode compilation or Loadstring
+local exec_fn = nil
+local syntax_err = nil
+
+-- Check for luau bytecode execution support (e.g. getscriptbytecode / loadbytecode)
+local _loadbytecode = (loadbytecode and isNative(loadbytecode) and loadbytecode)
+if _loadbytecode and crypt and crypt.luau_compile and isNative(crypt.luau_compile) then
+    local compiled_ok, bc = _pcall(function() return crypt.luau_compile(source_code) end)
+    if compiled_ok and bc then
+        exec_fn = _loadbytecode(bc)
+    end
+end
+
+if not exec_fn then
+    exec_fn, syntax_err = _loadstring(source_code)
+end
+
 if not exec_fn then
     return warn("[FleedGuard] Failed to parse script payload: " .. _tostring(syntax_err))
 end

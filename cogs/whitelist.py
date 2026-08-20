@@ -829,6 +829,138 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         except discord.Forbidden:
             await ctx.send(embed=dm_embed)
 
+    @whitelist_group.command(name="bulkadd", aliases=["masswhitelist", "bulkwhitelist"])
+    async def bulk_add_cmd(self, ctx, slug: str, duration: str = "lifetime"):
+        """
+        Whitelists every member who has the buyer role for a script.
+        Skips anyone who already has a key. DMs each person their key.
+        Usage: ,whitelist bulkadd <slug> [duration]
+        """
+        ok, err, user_row = await check_script_permission(ctx, slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err, ctx.author))
+
+        clean_slug = slug.strip().lower()
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+            script = await cursor.fetchone()
+
+        if not script:
+            return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
+
+        if not script["buyer_role_id"] or not ctx.guild:
+            return await ctx.send(embed=error_embed(f"no buyer role configured for `{clean_slug}`. set one with `,whitelist setrole {clean_slug} @Role`.", ctx.author))
+
+        role = ctx.guild.get_role(script["buyer_role_id"])
+        if not role:
+            return await ctx.send(embed=error_embed(f"buyer role not found in this server.", ctx.author))
+
+        # Parse duration
+        dur_map = {"lifetime": 0, "0": 0, "1d": 1, "3d": 3, "7d": 7, "14d": 14, "30d": 30, "90d": 90, "365d": 365}
+        days = dur_map.get(duration.lower(), None)
+        if days is None:
+            try:
+                days = int(duration)
+            except ValueError:
+                return await ctx.send(embed=error_embed(f"invalid duration `{duration}`. use `lifetime`, `7d`, `30d`, etc.", ctx.author))
+
+        expires_at = None
+        if days > 0:
+            expires_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)).isoformat()
+        duration_label = "lifetime" if days == 0 else f"{days}d"
+
+        # Gather members with the role
+        members_with_role = [m for m in role.members if not m.bot]
+        if not members_with_role:
+            return await ctx.send(embed=warn_embed(f"no members found with {role.mention}.", ctx.author))
+
+        status_msg = await ctx.send(embed=fleed_embed(
+            title="Bulk Whitelist — Processing",
+            description=f"found **{len(members_with_role)}** members with {role.mention}.\nprocessing...",
+            author=ctx.author
+        ))
+
+        added = 0
+        skipped = 0
+        dm_sent = 0
+        dm_failed = 0
+        pub_url = loader_generator.get_public_url()
+
+        for member in members_with_role:
+            user_id_str = str(member.id)
+
+            # Check if they already have a key
+            async with db.get_db() as conn:
+                cursor = await conn.execute(
+                    "SELECT * FROM licenses WHERE discord_id = ? AND script_id = ? AND is_banned = 0",
+                    (user_id_str, script["id"])
+                )
+                existing = await cursor.fetchone()
+
+            if existing:
+                skipped += 1
+                continue
+
+            # Generate key
+            key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            async with db.get_db() as conn:
+                await conn.execute("""
+                    INSERT INTO licenses (script_id, license_key, discord_id, note, created_at, expires_at)
+                    VALUES (?, ?, ?, 'Bulk whitelisted via buyer role', ?, ?)
+                """, (script["id"], key, user_id_str, now_iso, expires_at))
+                await conn.commit()
+
+            # Sync to Railway
+            if pub_url and pub_url.startswith("http") and user_row and user_row.get("api_key"):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        await session.post(
+                            f"{pub_url}/api/licenses/create",
+                            headers={"X-API-Key": user_row["api_key"]},
+                            json={
+                                "slug": clean_slug,
+                                "license_key": key,
+                                "discord_id": user_id_str,
+                                "note": "Bulk whitelisted via buyer role",
+                                "expires_at": expires_at
+                            },
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        )
+                except Exception:
+                    pass
+
+            added += 1
+
+            # DM the user
+            loadstring_snippet = f'getgenv().FleedKey = "{key}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{clean_slug}"))()'
+            dm_embed = fleed_embed(
+                title=f"{script['name']} — License & Loadstring",
+                description=f"You have been whitelisted for **{script['name']}**.\n\n"
+                            f"**Key:** `{key}`\n"
+                            f"**Duration:** {duration_label}\n\n"
+                            f"**Loadstring:**\n```lua\n{loadstring_snippet}\n```\n"
+                            f"Execute this loadstring inside your Roblox executor.",
+                author=ctx.author
+            )
+            try:
+                await member.send(embed=dm_embed)
+                dm_sent += 1
+            except Exception:
+                dm_failed += 1
+
+        result_embed = fleed_embed(
+            title="Bulk Whitelist — Complete",
+            description=f"**Script:** {script['name']}\n"
+                        f"**Duration:** {duration_label}\n\n"
+                        f"✅ **Added:** {added}\n"
+                        f"⏭️ **Skipped (already had key):** {skipped}\n"
+                        f"📬 **DMs sent:** {dm_sent}\n"
+                        f"🚫 **DMs failed (closed):** {dm_failed}",
+            author=ctx.author
+        )
+        await status_msg.edit(embed=result_embed)
+
     @whitelist_group.command(name="remove", aliases=["unwhitelist", "del", "delete"])
     async def remove_whitelist_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str):
         """

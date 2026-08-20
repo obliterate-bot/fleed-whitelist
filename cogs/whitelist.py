@@ -170,10 +170,33 @@ class WhitelistControlPanelView(discord.ui.View):
             license_row = await cursor.fetchone()
 
         if not license_row:
-            return await interaction.response.send_message(
-                embed=error_embed(f"You have not redeemed a valid license for `{slug}` yet.\nClick Redeem Key above to link your key.", interaction.user),
-                ephemeral=True
-            )
+            # Check if user already holds the configured buyer role
+            async with db.get_db() as conn:
+                cursor = await conn.execute("SELECT id, name, slug, buyer_role_id FROM scripts WHERE slug = ?", (slug,))
+                script = await cursor.fetchone()
+
+            has_buyer_role = False
+            if script and script["buyer_role_id"] and interaction.guild:
+                role = interaction.guild.get_role(script["buyer_role_id"])
+                if role and role in interaction.user.roles:
+                    has_buyer_role = True
+
+            if has_buyer_role:
+                # Auto-generate key for existing buyer role holder
+                key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                async with db.get_db() as conn:
+                    await conn.execute("""
+                        INSERT INTO licenses (script_id, license_key, discord_id, note, created_at)
+                        VALUES (?, ?, ?, 'Auto-whitelisted via Buyer Role', ?)
+                    """, (script["id"], key, user_id_str, now_iso))
+                    await conn.commit()
+                license_row = {"script_name": script["name"], "license_key": key, "execution_count": 0}
+            else:
+                return await interaction.response.send_message(
+                    embed=error_embed(f"You have not redeemed a valid license for `{slug}` yet.\nClick Redeem Key above to link your key.", interaction.user),
+                    ephemeral=True
+                )
 
         pub_url = loader_generator.get_public_url()
         loadstring_snippet = f'getgenv().FleedKey = "{license_row["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{slug}"))()'
@@ -825,6 +848,25 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         async with db.get_db() as conn:
             cursor = await conn.execute(query, tuple(params))
             rows = await cursor.fetchall()
+
+        if not rows and slug:
+            clean_slug = slug.strip().lower()
+            async with db.get_db() as conn:
+                cursor = await conn.execute("SELECT id, name, slug, buyer_role_id FROM scripts WHERE slug = ?", (clean_slug,))
+                script = await cursor.fetchone()
+
+            if script and script["buyer_role_id"] and ctx.guild:
+                role = ctx.guild.get_role(script["buyer_role_id"])
+                if role and role in ctx.author.roles:
+                    key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+                    now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    async with db.get_db() as conn:
+                        await conn.execute("""
+                            INSERT INTO licenses (script_id, license_key, discord_id, note, created_at)
+                            VALUES (?, ?, ?, 'Auto-whitelisted via Buyer Role', ?)
+                        """, (script["id"], key, user_id_str, now_iso))
+                        await conn.commit()
+                    rows = [{"script_name": script["name"], "script_slug": script["slug"], "license_key": key}]
 
         if not rows:
             return await ctx.send(embed=warn_embed(f"no redeemed keys found{' for `' + slug + '`' if slug else ''}.", ctx.author))

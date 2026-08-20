@@ -1152,6 +1152,17 @@ async function createLicense(slug, key, discordId, note) {
         </div>
       </div>
 
+      <!-- Direct Upload from PC -->
+      <div class="form-group" style="margin-bottom:16px;">
+        <label class="form-label"><i class="fa-solid fa-cloud-arrow-up" style="color:var(--gold-primary); margin-right:4px;"></i> Upload Image from PC</label>
+        <div id="avatarDropZone" onclick="document.getElementById('avatarFileInput').click()" style="border: 2px dashed var(--border-gold-subtle); border-radius: 12px; padding: 14px; text-align: center; cursor: pointer; background: rgba(250, 204, 21, 0.02); transition: all 0.2s ease;">
+          <input type="file" id="avatarFileInput" accept="image/png, image/jpeg, image/webp, image/gif" style="display: none;" onchange="handleAvatarFileSelect(event)">
+          <i class="fa-solid fa-file-arrow-up" style="font-size: 22px; color: var(--gold-primary); margin-bottom: 4px; display: block;"></i>
+          <div style="font-size: 13px; font-weight: 600; color: var(--text-white);" id="avatarDropText">Click to browse or drag & drop image</div>
+          <div style="font-size: 11px; color: var(--text-zinc-500); margin-top: 2px;">PNG, JPG, JPEG, WebP, GIF (Max 5MB)</div>
+        </div>
+      </div>
+
       <!-- Sync from Roblox -->
       <div class="form-group" style="margin-bottom:14px;">
         <label class="form-label"><i class="fa-solid fa-gamepad" style="color:var(--gold-primary); margin-right:4px;"></i> Sync Roblox Avatar Headshot</label>

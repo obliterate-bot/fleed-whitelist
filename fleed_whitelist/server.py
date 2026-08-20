@@ -9,7 +9,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response, Depends, HTTPException, status, Header
+from fastapi import FastAPI, Request, Response, Depends, HTTPException, status, Header, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,11 +22,13 @@ from .loader_generator import loader_generator
 BASE_DIR = os.path.dirname(__file__)
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
+UPLOADS_AVATAR_DIR = os.path.join(STATIC_DIR, "uploads", "avatars")
 
 SERVER_START_TIME = time.time()
 
 os.makedirs(STATIC_DIR, exist_ok=True)
 os.makedirs(TEMPLATES_DIR, exist_ok=True)
+os.makedirs(UPLOADS_AVATAR_DIR, exist_ok=True)
 
 # Modern FastAPI Lifespan Handler
 @asynccontextmanager
@@ -504,6 +506,37 @@ async def update_avatar(req: UpdateAvatarRequest, user: Dict = Depends(get_curre
         await conn.commit()
 
     return {"success": True, "avatar_url": resolved_avatar, "message": "Avatar updated successfully!"}
+
+@app.post("/api/auth/upload_avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    user: Dict = Depends(get_current_user)
+):
+    """Allows uploading a custom avatar image directly from the user's PC."""
+    allowed_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+    filename = file.filename or "avatar.png"
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in allowed_extensions:
+        raise HTTPException(status_code=400, detail="Invalid image format. Supported formats: PNG, JPG, JPEG, WebP, GIF.")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Image file too large (Max 5MB).")
+
+    # Generate unique secure filename
+    safe_filename = f"avatar_{user['id']}_{int(time.time())}_{secrets.token_hex(4)}{ext}"
+    target_path = os.path.join(UPLOADS_AVATAR_DIR, safe_filename)
+    with open(target_path, "wb") as f:
+        f.write(content)
+
+    avatar_url = f"/static/uploads/avatars/{safe_filename}"
+
+    # Update user in database
+    async with db.get_db() as conn:
+        await conn.execute("UPDATE users SET avatar_url = ? WHERE id = ?", (avatar_url, user["id"]))
+        await conn.commit()
+
+    return {"success": True, "avatar_url": avatar_url, "message": "Avatar uploaded and updated successfully!"}
 
 @app.post("/api/auth/regenerate_api_key")
 async def regenerate_api_key(user: Dict = Depends(get_current_user)):

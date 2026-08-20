@@ -11,3 +11,5 @@ fly.toml
 *.sqlite3
 *.zip
 data/
+fleed_whitelist/static/uploads/avatars/*
+!fleed_whitelist/static/uploads/avatars/.gitkeep

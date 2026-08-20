@@ -280,12 +280,79 @@ async function loadProfileStats() {
 }
 
 // ----------------- Avatar Customization Functions -----------------
+let pendingAvatarFile = null;
+
 function openChangeAvatarModal() {
+  pendingAvatarFile = null;
   selectedAvatarUrl = currentUser?.avatar_url || null;
   updateModalAvatarPreview(selectedAvatarUrl);
-  document.getElementById("avatarCustomUrlInput").value = selectedAvatarUrl || "";
+  document.getElementById("avatarCustomUrlInput").value = selectedAvatarUrl && !selectedAvatarUrl.startsWith("data:") ? selectedAvatarUrl : "";
   document.getElementById("avatarRobloxInput").value = "";
+  
+  const dropText = document.getElementById("avatarDropText");
+  if (dropText) dropText.innerText = "Click to browse or drag & drop image";
+  const fileInput = document.getElementById("avatarFileInput");
+  if (fileInput) fileInput.value = "";
+
   document.getElementById("modalChangeAvatar").classList.add("active");
+  setupAvatarDragAndDrop();
+}
+
+function setupAvatarDragAndDrop() {
+  const zone = document.getElementById("avatarDropZone");
+  if (!zone || zone.dataset.dropReady) return;
+  zone.dataset.dropReady = "true";
+
+  zone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    zone.style.borderColor = "var(--gold-primary)";
+    zone.style.background = "rgba(250, 204, 21, 0.08)";
+  });
+
+  zone.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    zone.style.borderColor = "var(--border-gold-subtle)";
+    zone.style.background = "rgba(250, 204, 21, 0.02)";
+  });
+
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.style.borderColor = "var(--border-gold-subtle)";
+    zone.style.background = "rgba(250, 204, 21, 0.02)";
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      processSelectedAvatarFile(e.dataTransfer.files[0]);
+    }
+  });
+}
+
+function handleAvatarFileSelect(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  processSelectedAvatarFile(file);
+}
+
+function processSelectedAvatarFile(file) {
+  if (file.size > 5 * 1024 * 1024) {
+    return showToast("Image file exceeds 5MB limit", "error");
+  }
+
+  const validTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
+  if (!validTypes.includes(file.type)) {
+    return showToast("Invalid image format. Supported: PNG, JPG, WebP, GIF", "error");
+  }
+
+  pendingAvatarFile = file;
+  const dropText = document.getElementById("avatarDropText");
+  if (dropText) dropText.innerText = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    selectedAvatarUrl = e.target.result;
+    updateModalAvatarPreview(selectedAvatarUrl);
+    document.getElementById("avatarCustomUrlInput").value = "";
+    showToast(`Image loaded: ${file.name}`, "info");
+  };
+  reader.readAsDataURL(file);
 }
 
 function updateModalAvatarPreview(url) {
@@ -305,13 +372,23 @@ function updateModalAvatarPreview(url) {
 }
 
 function selectPresetAvatar(url) {
+  pendingAvatarFile = null;
   selectedAvatarUrl = url || null;
   document.getElementById("avatarCustomUrlInput").value = url || "";
+  const dropText = document.getElementById("avatarDropText");
+  if (dropText) dropText.innerText = "Click to browse or drag & drop image";
+  const fileInput = document.getElementById("avatarFileInput");
+  if (fileInput) fileInput.value = "";
   updateModalAvatarPreview(url);
 }
 
 function updateAvatarPreviewDirect(url) {
+  pendingAvatarFile = null;
   selectedAvatarUrl = url.trim() || null;
+  const dropText = document.getElementById("avatarDropText");
+  if (dropText) dropText.innerText = "Click to browse or drag & drop image";
+  const fileInput = document.getElementById("avatarFileInput");
+  if (fileInput) fileInput.value = "";
   updateModalAvatarPreview(selectedAvatarUrl);
 }
 
@@ -338,19 +415,57 @@ async function fetchRobloxAvatarPreview() {
     }
 
     const avatarUrl = `/api/roblox/avatar/${rbxId}`;
+    pendingAvatarFile = null;
     selectedAvatarUrl = avatarUrl;
     document.getElementById("avatarCustomUrlInput").value = avatarUrl;
+    const dropText = document.getElementById("avatarDropText");
+    if (dropText) dropText.innerText = "Click to browse or drag & drop image";
+    const fileInput = document.getElementById("avatarFileInput");
+    if (fileInput) fileInput.value = "";
     updateModalAvatarPreview(avatarUrl);
     showToast(`Found Roblox avatar for User ID ${rbxId}!`, "success");
   } catch (err) {
     // Direct endpoint fallback
     const fallbackUrl = `/api/roblox/avatar/1`;
+    pendingAvatarFile = null;
     selectedAvatarUrl = fallbackUrl;
     updateModalAvatarPreview(fallbackUrl);
   }
 }
 
 async function saveUserAvatar() {
+  // 1. If user selected a local file from PC, upload multipart
+  if (pendingAvatarFile) {
+    showToast("Uploading avatar image from PC...", "info");
+    const formData = new FormData();
+    formData.append("file", pendingAvatarFile);
+    try {
+      const token = localStorage.getItem("fleed_token");
+      const res = await fetch("/api/auth/upload_avatar", {
+        method: "POST",
+        headers: {
+          "Authorization": token ? `Bearer ${token}` : ""
+        },
+        body: formData
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || "Upload failed");
+      }
+      showToast("Avatar uploaded and saved successfully!", "success");
+      if (currentUser) {
+        currentUser.avatar_url = data.avatar_url;
+      }
+      updateAvatarUI(data.avatar_url, currentUser?.username);
+      closeModal("modalChangeAvatar");
+      return;
+    } catch (err) {
+      showToast(err.message || "Failed to upload avatar", "error");
+      return;
+    }
+  }
+
+  // 2. Otherwise update with URL / Preset / Roblox
   const avatar_url = selectedAvatarUrl || document.getElementById("avatarCustomUrlInput")?.value.trim() || null;
 
   try {

@@ -500,7 +500,7 @@ function switchTab(tabName) {
   if (tabName === "scripts") loadScripts();
   if (tabName === "licenses") loadLicensesView();
   if (tabName === "logs") loadLiveLogs();
-  if (tabName === "bypasses") { loadBypassLogs(); loadAnomalies(); loadBlacklists(); }
+  if (tabName === "bypasses") { loadThreatRadarBypasses(); loadAnomalies(); loadBlacklists(); }
   if (tabName === "api") loadApiStudioView();
   if (tabName === "settings") loadProfileStats();
   if (tabName === "system") loadSystemHealth();
@@ -1745,6 +1745,76 @@ async function loadBypassLogs() {
     const logs = await apiCall("/api/logs?limit=50&status_filter=blocked");
     currentBypasses = logs;
   } catch (err) {}
+}
+
+async function loadThreatRadarBypasses() {
+  const tbody = document.getElementById("threatRadarBypassesTableBody");
+  if (!tbody) return;
+
+  try {
+    const kicks = await apiCall("/api/kicks?limit=30");
+    if (!kicks || kicks.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-check" style="color:var(--success-color); margin-right:6px;"></i> Zero blocked attacks or intercepted threat events recorded.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = kicks.map(k => {
+      const avatarSrc = k.avatar_url || (k.roblox_user_id > 0 ? `/api/roblox/avatar/${k.roblox_user_id}` : `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=1&size=150x150&format=Png&isCircular=true`);
+      const placeLink = k.place_id > 0 ? `https://www.roblox.com/games/${k.place_id}` : '#';
+      const timeStr = formatTimeAgo(k.timestamp);
+
+      return `
+        <tr style="background: rgba(239, 68, 68, 0.03);">
+          <td>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <img src="${avatarSrc}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle); flex-shrink:0;">
+              <div>
+                <strong style="color:var(--text-white); font-size:12px;">${escapeHtml(k.roblox_username || 'Unknown')}</strong>
+                <div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">${k.roblox_user_id > 0 ? `ID: ${k.roblox_user_id}` : 'ID: —'}</div>
+              </div>
+            </div>
+          </td>
+          <td>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span class="badge ${k.badge_class || 'badge-danger'}" style="font-weight:700; font-size:11px; white-space:normal; text-align:left; line-height:1.3;">
+                <i class="fa-solid ${k.icon || 'fa-triangle-exclamation'}"></i> ${escapeHtml(k.kick_reason || 'Security Interception')}
+              </span>
+            </div>
+            ${k.ip_address ? `<div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono); margin-top:2px;">IP: ${escapeHtml(k.ip_address)}</div>` : ''}
+          </td>
+          <td>
+            <span class="badge badge-zinc" style="font-size:10px;">${escapeHtml(k.script_name || k.script_slug || 'Hub')}</span>
+          </td>
+          <td>
+            <a href="${placeLink}" target="_blank" style="color:var(--text-zinc-300); font-size:12px; text-decoration:none; display:flex; align-items:center; gap:4px;">
+              <i class="fa-solid fa-gamepad" style="color:var(--gold-primary); font-size:10px;"></i>
+              ${escapeHtml(k.game_name || 'Roblox Experience')}
+              ${k.place_id > 0 ? `<i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>` : ''}
+            </a>
+          </td>
+          <td>
+            <span style="font-size:11px; color:var(--text-zinc-400); white-space:nowrap;">${timeStr}</span>
+          </td>
+          <td>
+            <div style="display:flex; gap:6px;">
+              ${k.license_key && k.license_key !== 'N/A' ? `
+                <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:10px;" onclick="copyText('${escapeHtml(k.license_key)}')">
+                  <i class="fa-solid fa-copy"></i>
+                </button>
+              ` : ''}
+              ${k.hwid ? `
+                <button class="btn btn-danger btn-sm" style="padding:4px 8px; font-size:10px;" onclick="openBlacklistModal({ target: '${escapeHtml(k.hwid)}', type: 'HWID', reason: 'Threat Interception: ${escapeHtml(k.kick_reason || 'Unauthorized Execution')}' })">
+                  <i class="fa-solid fa-ban"></i> Blacklist
+                </button>
+              ` : ''}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--danger-color);">Failed to load threat interceptions.</td></tr>`;
+  }
 }
 
 // ----------------- Threat Radar & Attribution -----------------

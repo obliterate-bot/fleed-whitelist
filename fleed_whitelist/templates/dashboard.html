@@ -481,17 +481,48 @@
         </div>
       </div>
 
+      <!-- Security Interceptions, Blocked Attacks & Remote Kicks -->
+      <div style="margin-bottom: 24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; flex-wrap:wrap; gap:8px;">
+          <div>
+            <h3 style="color:var(--danger-light); font-size: 16px; margin:0;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:8px;"></i>Security Interceptions, Blocked Attacks & Remote Kicks</h3>
+            <p style="color:var(--text-zinc-400); font-size: 12px; margin:4px 0 0 0;">Real-time feed of kicked players, dumper interceptions, tampering attempts, and blocked unauthorized executions.</p>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="loadThreatRadarBypasses()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Threat Feed</button>
+        </div>
+
+        <div class="card" style="padding: 0; overflow: hidden; border-color: var(--danger-border);">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Target Player</th>
+                  <th>Security Event / Reason</th>
+                  <th>Script Hub</th>
+                  <th>Place / Experience</th>
+                  <th>Time</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="threatRadarBypassesTableBody">
+                <tr><td colspan="6" style="text-align:center; color:var(--text-zinc-500); padding:20px;">Scanning security interception logs...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- Behavioral Anomaly Radar (Multi-Account Sharing) -->
       <div style="margin-bottom: 24px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; flex-wrap:wrap; gap:8px;">
           <div>
-            <h3 style="color:var(--danger-light); font-size: 16px; margin:0;"><i class="fa-solid fa-users-slash" style="margin-right:8px;"></i>Behavioral Anomaly Radar (Multi-Account Sharing)</h3>
+            <h3 style="color:var(--gold-light); font-size: 16px; margin:0;"><i class="fa-solid fa-users-slash" style="margin-right:8px;"></i>Behavioral Anomaly Radar (Multi-Account Sharing)</h3>
             <p style="color:var(--text-zinc-400); font-size: 12px; margin:4px 0 0 0;">Licenses shared across multiple distinct Roblox player accounts or proxy IPs in rolling windows.</p>
           </div>
           <button class="btn btn-secondary btn-sm" onclick="loadAnomalies()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Radar</button>
         </div>
 
-        <div class="card" style="padding: 0; overflow: hidden; border-color: var(--danger-border);">
+        <div class="card" style="padding: 0; overflow: hidden; border-color: rgba(250,204,21,0.25);">
           <div class="table-container">
             <table>
               <thead>

@@ -532,7 +532,7 @@ task.spawn(exec_fn)
     _custom_runtime_url = None
 
     @staticmethod
-    def get_public_url(fallback: str = "http://localhost:8000") -> str:
+    def get_public_url(fallback: str = "https://fleed-whitelist-production.up.railway.app") -> str:
         """Retrieves the live public HTTPS Cloudflare or custom backend URL."""
         import os
         if LoaderGenerator._custom_runtime_url and str(LoaderGenerator._custom_runtime_url).startswith("http"):

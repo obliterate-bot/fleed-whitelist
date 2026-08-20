@@ -256,12 +256,66 @@
       </div>
     </section>
 
-    <!-- VIEW 4.5: Bypass Attempts Dedicated Threat Audit -->
+    <!-- VIEW 4.5: Threat Intelligence & Leak Attribution -->
     <section id="view-bypasses" class="tab-view" style="display: none;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; flex-wrap:wrap; gap:12px;">
+      <!-- Forensic Watermark Decoder & Attribution Tool -->
+      <div class="card" style="margin-bottom: 24px; border: 1px solid rgba(250, 204, 21, 0.35); background: linear-gradient(180deg, rgba(250,204,21,0.04) 0%, rgba(10,10,12,0.9) 100%);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; flex-wrap:wrap; gap:8px;">
+          <div>
+            <h3 style="color:var(--gold-light); font-size: 16px; margin:0;"><i class="fa-solid fa-fingerprint" style="margin-right:8px;"></i>Forensic Watermark Decoder & Leak Attribution</h3>
+            <p style="color:var(--text-zinc-400); font-size: 12px; margin:4px 0 0 0;">Paste a leaked <code>.lua</code> script file or raw watermark hash to trace the exact purchaser, Discord ID, and IP history.</p>
+          </div>
+          <span class="badge badge-zinc"><i class="fa-solid fa-lock"></i> HMAC-SHA256 Server Tracing</span>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+          <input type="text" id="watermarkInput" class="form-input" placeholder="Paste leaked script content or 20-character watermark (e.g. _FGWM='a3f8...' or hash)..." style="flex:1; font-family:var(--font-mono); font-size:12px;">
+          <button class="btn btn-primary" onclick="handleWatermarkTrace()"><i class="fa-solid fa-magnifying-glass"></i> Trace Leaker</button>
+        </div>
+
+        <!-- Result Box -->
+        <div id="watermarkResultBox" style="display:none; margin-top:16px; padding:16px; border-radius:10px; background:var(--bg-input); border:1px solid var(--border-subtle);">
+          <!-- Injected via JavaScript -->
+        </div>
+      </div>
+
+      <!-- Detected Key Sharing Anomalies Section -->
+      <div style="margin-bottom: 24px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; flex-wrap:wrap; gap:8px;">
+          <div>
+            <h3 style="color:var(--danger-color); font-size: 16px; margin:0;"><i class="fa-solid fa-users-slash" style="margin-right:8px;"></i>Detected Multi-Account Sharing & IP Anomalies</h3>
+            <p style="color:var(--text-zinc-500); font-size: 12px; margin:4px 0 0 0;">Licenses exhibiting multi-account sprawl or multiple public IPs within rolling windows.</p>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="loadAnomalies()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Anomalies</button>
+        </div>
+
+        <div class="card" style="padding: 0; overflow: hidden; border-color: rgba(239, 68, 68, 0.3);">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>License Key</th>
+                  <th>Hub</th>
+                  <th>Roblox Accounts</th>
+                  <th>Distinct IPs</th>
+                  <th>Last Seen</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="anomaliesTableBody">
+                <tr><td colspan="7" style="text-align:center; color:var(--text-zinc-500); padding:20px;">Scanning for behavioral anomalies...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Raw Threat Interception Feed -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; flex-wrap:wrap; gap:8px;">
         <div>
-          <h2 style="color:var(--danger-color); font-size: 20px;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:8px;"></i>Blocked Bypass Attempts & Threat Feed</h2>
-          <p style="color:var(--text-zinc-500); font-size: 13px;">Intercepted tamper signatures, scraper bots, compiler hooks, and memory extractors.</p>
+          <h3 style="color:var(--danger-color); font-size: 16px; margin:0;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:8px;"></i>Blocked Bypass Attempts & Threat Feed</h3>
+          <p style="color:var(--text-zinc-500); font-size: 12px; margin:4px 0 0 0;">Intercepted scraper bots, direct fetchers, compiler hooks, and memory dumpers.</p>
         </div>
         <button class="btn btn-danger btn-sm" onclick="loadBypassLogs()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Threats</button>
       </div>

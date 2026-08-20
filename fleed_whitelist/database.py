@@ -145,7 +145,8 @@ class WhitelistDB:
                 ("roblox_user_id", "INTEGER"),
                 ("place_id", "INTEGER"),
                 ("job_id", "TEXT"),
-                ("game_name", "TEXT")
+                ("game_name", "TEXT"),
+                ("watermark", "TEXT")
             ]:
                 try:
                     await conn.execute(f"ALTER TABLE execution_logs ADD COLUMN {col} {col_type};")
@@ -191,6 +192,8 @@ class WhitelistDB:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_script ON licenses(script_id);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_scripts_slug ON scripts(slug);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON execution_logs(timestamp);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_watermark ON execution_logs(watermark);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_key_time ON execution_logs(license_key, timestamp);")
             await conn.commit()
 
 db = WhitelistDB()

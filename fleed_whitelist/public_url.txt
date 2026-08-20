@@ -1,1 +1,1 @@
-https://fleed.up.railway.app
+https://fleed-whitelist-production.up.railway.app

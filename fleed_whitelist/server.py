@@ -150,6 +150,114 @@ class LicenseUpdateRequest(BaseModel):
     ban_reason: Optional[str] = None
     expires_at: Optional[str] = None
 
+class WatermarkLookupRequest(BaseModel):
+    watermark_or_source: str
+
+class BanLeakerRequest(BaseModel):
+    license_id: int
+    reason: Optional[str] = "Banned via Forensic Watermark Trace"
+
+async def send_discord_security_alert(webhook_url: str, title: str, description: str, fields: List[Dict], color: int = 0xEF4444):
+    """Sends a rich, non-blocking Discord security alert embed."""
+    if not webhook_url or not str(webhook_url).startswith("https://discord.com/api/webhooks/"):
+        return
+    try:
+        embed = {
+            "title": f"🚨 FleedGuard Security Alert: {title}",
+            "description": description,
+            "color": color,
+            "fields": fields,
+            "footer": {"text": "FleedGuard Automated Anomaly Defense • 2026"},
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        async with aiohttp.ClientSession() as session:
+            await session.post(webhook_url, json={"embeds": [embed]}, timeout=aiohttp.ClientTimeout(total=4))
+    except Exception:
+        pass
+
+async def check_and_enforce_anomalies(conn, script: Dict, license_row: Dict, roblox_username: Optional[str], roblox_user_id: Optional[int], client_ip: str, executor: str, place_id: Optional[int], job_id: Optional[str], game_name: Optional[str]) -> Optional[str]:
+    """
+    Evaluates multi-account and multi-IP sprawl in rolling windows.
+    Returns error message if anomaly triggered and key auto-banned; otherwise None.
+    """
+    clean_key = license_row["license_key"].upper()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    uid = int(roblox_user_id or 0)
+    
+    # 1. Multi-Account Sprawl Check (rolling 24h)
+    if uid > 0:
+        cursor = await conn.execute("""
+            SELECT COUNT(DISTINCT roblox_user_id) as distinct_users,
+                   GROUP_CONCAT(DISTINCT roblox_username) as usernames
+            FROM execution_logs
+            WHERE UPPER(license_key) = ?
+              AND roblox_user_id > 0
+              AND roblox_user_id != ?
+              AND timestamp >= datetime('now', '-24 hours')
+        """, (clean_key, uid))
+        user_stats = await cursor.fetchone()
+        prior_users = user_stats["distinct_users"] if user_stats else 0
+        if prior_users >= 2:  # current + 2 prior = 3 distinct accounts
+            all_users = (user_stats["usernames"] or "") + f", {roblox_username or uid}"
+            ban_reason = f"Automated Leak Shield: Key shared across {prior_users + 1} distinct Roblox accounts ({all_users.strip(', ')})"
+            await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE id = ?", (ban_reason, license_row["id"]))
+            await conn.execute("""
+                INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'LEAK_AUTO_BANNED', ?, ?)
+            """, (script["id"], license_row["id"], clean_key, license_row["hwid"], client_ip, executor, roblox_username, uid, place_id, job_id, game_name, ban_reason, now_iso))
+            await conn.commit()
+            
+            # Send Discord Alert Webhook
+            webhook_url = script.get("discord_webhook")
+            if webhook_url:
+                fields = [
+                    {"name": "License Key", "value": f"`{clean_key}`", "inline": True},
+                    {"name": "Script Hub", "value": f"{script['name']} (`{script['slug']}`)", "inline": True},
+                    {"name": "Trigger Reason", "value": "Multi-Account Distribution (>2 accounts in 24h)", "inline": False},
+                    {"name": "Roblox Accounts Detected", "value": f"```{all_users.strip(', ')}```", "inline": False},
+                    {"name": "Latest IP", "value": f"`{client_ip}`", "inline": True},
+                    {"name": "Action Taken", "value": "🚨 **Key Automatically Banned & Revoked**", "inline": False}
+                ]
+                await send_discord_security_alert(webhook_url, "Script Leak Detected (Auto-Banned)", f"License key `{clean_key}` has been automatically banned due to multi-user distribution.", fields, 0xEF4444)
+            
+            return f"Security Violation: License revoked. Multi-account key sharing detected."
+
+    # 2. Multi-IP Sprawl Check (rolling 2h)
+    cursor = await conn.execute("""
+        SELECT COUNT(DISTINCT ip_address) as distinct_ips,
+               GROUP_CONCAT(DISTINCT ip_address) as ips
+        FROM execution_logs
+        WHERE UPPER(license_key) = ?
+          AND ip_address != ?
+          AND timestamp >= datetime('now', '-2 hours')
+    """, (clean_key, client_ip))
+    ip_stats = await cursor.fetchone()
+    prior_ips = ip_stats["distinct_ips"] if ip_stats else 0
+    if prior_ips >= 3:  # current + 3 prior = 4 distinct IPs in 2 hours
+        all_ips = (ip_stats["ips"] or "") + f", {client_ip}"
+        ban_reason = f"Automated Leak Shield: Key accessed from {prior_ips + 1} distinct IPs in 2h ({all_ips.strip(', ')})"
+        await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE id = ?", (ban_reason, license_row["id"]))
+        await conn.execute("""
+            INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'LEAK_AUTO_BANNED', ?, ?)
+        """, (script["id"], license_row["id"], clean_key, license_row["hwid"], client_ip, executor, roblox_username, uid, place_id, job_id, game_name, ban_reason, now_iso))
+        await conn.commit()
+
+        webhook_url = script.get("discord_webhook")
+        if webhook_url:
+            fields = [
+                {"name": "License Key", "value": f"`{clean_key}`", "inline": True},
+                {"name": "Script Hub", "value": f"{script['name']} (`{script['slug']}`)", "inline": True},
+                {"name": "Trigger Reason", "value": "Multi-IP Proxy Sprawl (>3 IPs in 2h)", "inline": False},
+                {"name": "IPs Detected", "value": f"`{all_ips.strip(', ')}`", "inline": False},
+                {"name": "Action Taken", "value": "🚨 **Key Automatically Banned & Revoked**", "inline": False}
+            ]
+            await send_discord_security_alert(webhook_url, "IP Sprawl / Proxy Leak Detected (Auto-Banned)", f"License key `{clean_key}` has been automatically banned.", fields, 0xEF4444)
+
+        return f"Security Violation: License revoked. IP sprawl / proxy distribution detected."
+
+    return None
+
 # Executor Handshake Models
 class HandshakeInitRequest(BaseModel):
     slug: str
@@ -859,6 +967,22 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         if license_row["max_executions"] != -1 and license_row["execution_count"] >= license_row["max_executions"]:
             return JSONResponse(status_code=403, content={"success": False, "message": "Execution limit reached for this key"})
 
+        # Check Multi-Account / Multi-IP Anomaly Leak Shield
+        anomaly_err = await check_and_enforce_anomalies(
+            conn=conn,
+            script=script,
+            license_row=license_row,
+            roblox_username=req.roblox_username,
+            roblox_user_id=req.roblox_user_id,
+            client_ip=client_ip,
+            executor=req.executor or "Universal",
+            place_id=req.place_id,
+            job_id=req.job_id,
+            game_name=req.game_name
+        )
+        if anomaly_err:
+            return JSONResponse(status_code=403, content={"success": False, "message": anomaly_err})
+
         # HWID Binding / Validation
         if not license_row["hwid"]:
             # Auto-bind HWID on first execution
@@ -1017,9 +1141,9 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         """, (now_iso, row["id"]))
 
         await conn.execute("""
-            INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?)
-        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, f"Script delivered in-memory | watermark={watermark}", now_iso))
+            INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, watermark, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?, ?)
+        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, f"Script delivered in-memory | watermark={watermark}", watermark, now_iso))
         await conn.commit()
 
         # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
@@ -1121,5 +1245,157 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
     # seamlessly in the background (never blocking the game).
     new_token = crypto_engine.generate_exec_token(claims["key"], claims["hwid"])
     return {"success": True, "token": new_token}
+
+
+# ----------------- Leak Intelligence & Forensic Attribution API -----------------
+
+@app.post("/api/audit/lookup-watermark")
+async def lookup_watermark(req: WatermarkLookupRequest, user: Dict = Depends(get_current_user)):
+    """
+    Forensic Watermark Decoder & Attribution Tool.
+    Takes a watermark hash string or a raw dumped .lua script and traces it back to the original buyer.
+    """
+    raw_input = req.watermark_or_source.strip()
+    if not raw_input:
+        raise HTTPException(status_code=400, detail="Watermark hash or script snippet required")
+
+    # Extract watermark hash (20 hex chars or WM: pattern)
+    extracted_wm = None
+    import re
+    wm_match = re.search(r'_FGWM\s*=\s*["\']([a-f0-9]{16,64})["\']', raw_input, re.IGNORECASE)
+    if wm_match:
+        extracted_wm = wm_match.group(1)
+    else:
+        hex_match = re.search(r'[a-f0-9]{16,40}', raw_input, re.IGNORECASE)
+        if hex_match:
+            extracted_wm = hex_match.group(0)
+        else:
+            extracted_wm = raw_input[:20]
+
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT l.*, s.name as script_name, s.slug as script_slug,
+                   e.timestamp as first_delivered, e.details, e.ip_address as deliver_ip,
+                   e.watermark
+            FROM execution_logs e
+            JOIN licenses l ON e.license_id = l.id
+            JOIN scripts s ON l.script_id = s.id
+            WHERE s.user_id = ?
+              AND (e.watermark = ? OR e.details LIKE ? OR UPPER(l.license_key) = UPPER(?))
+            ORDER BY e.id DESC LIMIT 1
+        """, (user["id"], extracted_wm, f"%watermark={extracted_wm}%", extracted_wm))
+        found = await cursor.fetchone()
+
+        if not found:
+            return {
+                "success": True,
+                "found": False,
+                "searched_watermark": extracted_wm,
+                "message": "No matching license found for this watermark in your execution records."
+            }
+
+        # Gather distinct accounts & IPs that executed this license
+        c2 = await conn.execute("""
+            SELECT DISTINCT roblox_username, roblox_user_id
+            FROM execution_logs
+            WHERE license_id = ? AND roblox_user_id > 0
+            LIMIT 50
+        """, (found["id"],))
+        accounts = [dict(r) for r in await c2.fetchall()]
+
+        c3 = await conn.execute("""
+            SELECT DISTINCT ip_address FROM execution_logs WHERE license_id = ? LIMIT 50
+        """, (found["id"],))
+        ips = [r["ip_address"] for r in await c3.fetchall() if r["ip_address"]]
+
+        return {
+            "success": True,
+            "found": True,
+            "searched_watermark": extracted_wm,
+            "license": {
+                "id": found["id"],
+                "license_key": found["license_key"],
+                "discord_id": found["discord_id"],
+                "note": found["note"],
+                "is_banned": bool(found["is_banned"]),
+                "ban_reason": found["ban_reason"],
+                "hwid": found["hwid"],
+                "execution_count": found["execution_count"],
+                "created_at": found["created_at"],
+                "last_executed_at": found["last_executed_at"]
+            },
+            "script": {
+                "name": found["script_name"],
+                "slug": found["script_slug"]
+            },
+            "attribution": {
+                "roblox_accounts": accounts,
+                "ip_addresses": ips,
+                "delivery_timestamp": found["first_delivered"]
+            }
+        }
+
+
+@app.get("/api/audit/anomalies")
+async def get_active_anomalies(user: Dict = Depends(get_current_user)):
+    """
+    Returns keys showing elevated multi-account sharing (>1 Roblox user)
+    or multi-IP sprawl in the past 48 hours for developer investigation.
+    """
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT l.id, l.license_key, l.note, l.is_banned, l.ban_reason, l.created_at,
+                   s.name as script_name, s.slug as script_slug,
+                   COUNT(DISTINCT e.roblox_user_id) as distinct_users,
+                   GROUP_CONCAT(DISTINCT e.roblox_username) as user_list,
+                   COUNT(DISTINCT e.ip_address) as distinct_ips,
+                   MAX(e.timestamp) as last_seen
+            FROM execution_logs e
+            JOIN licenses l ON e.license_id = l.id
+            JOIN scripts s ON l.script_id = s.id
+            WHERE s.user_id = ?
+              AND e.timestamp >= datetime('now', '-48 hours')
+            GROUP BY l.id
+            HAVING distinct_users > 1 OR distinct_ips > 2
+            ORDER BY distinct_users DESC, distinct_ips DESC
+            LIMIT 50
+        """, (user["id"],))
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+
+@app.post("/api/audit/ban-leaker")
+async def ban_leaker(req: BanLeakerRequest, user: Dict = Depends(get_current_user)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT l.id, l.license_key, s.name as script_name, s.discord_webhook
+            FROM licenses l
+            JOIN scripts s ON l.script_id = s.id
+            WHERE l.id = ? AND s.user_id = ?
+        """, (req.license_id, user["id"]))
+        license_row = await cursor.fetchone()
+        if not license_row:
+            raise HTTPException(status_code=404, detail="License not found")
+
+        ban_reason = req.reason or "Banned via Forensic Watermark Trace"
+        await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE id = ?", (ban_reason, req.license_id))
+        await conn.execute("""
+            INSERT INTO execution_logs (script_id, license_id, license_key, status, details, timestamp)
+            VALUES ((SELECT script_id FROM licenses WHERE id = ?), ?, ?, 'BANNED', ?, ?)
+        """, (req.license_id, req.license_id, license_row["license_key"], ban_reason, now_iso))
+        await conn.commit()
+
+        if license_row["discord_webhook"]:
+            fields = [
+                {"name": "License Key", "value": f"`{license_row['license_key']}`", "inline": True},
+                {"name": "Script", "value": license_row["script_name"], "inline": True},
+                {"name": "Reason", "value": ban_reason, "inline": False},
+                {"name": "Action Taken", "value": "🚨 **Manually Banned via Developer Console**", "inline": False}
+            ]
+            await send_discord_security_alert(license_row["discord_webhook"], "License Banned (Forensic Trace)", f"License `{license_row['license_key']}` was revoked.", fields, 0xEF4444)
+
+    return {"success": True, "message": f"License {license_row['license_key']} banned successfully."}
+
 
 

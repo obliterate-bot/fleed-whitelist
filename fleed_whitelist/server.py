@@ -663,7 +663,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         if not license_row:
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, status, details, timestamp)
-                VALUES (?, ?, ?, ?, 'INVALID_KEY', 'Key does not exist for this script', ?)
+                VALUES (?, ?, ?, ?, ?, 'INVALID_KEY', 'Key does not exist for this script', ?)
             """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Invalid license key"})

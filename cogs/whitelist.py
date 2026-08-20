@@ -236,6 +236,36 @@ class WhitelistControlPanelView(discord.ui.View):
                         VALUES (?, ?, ?, 'Auto-whitelisted via Buyer Role', ?)
                     """, (script["id"], key, user_id_str, now_iso))
                     await conn.commit()
+
+                # Sync to Railway cloud
+                pub_url = loader_generator.get_public_url()
+                if pub_url and pub_url.startswith("http"):
+                    # Look up the developer's API key for this script
+                    async with db.get_db() as conn:
+                        cursor = await conn.execute("""
+                            SELECT u.api_key FROM users u
+                            JOIN scripts s ON s.user_id = u.id
+                            WHERE s.slug = ? AND u.api_key IS NOT NULL
+                        """, (slug,))
+                        dev_row = await cursor.fetchone()
+                    if dev_row and dev_row["api_key"]:
+                        try:
+                            async with aiohttp.ClientSession() as session:
+                                await session.post(
+                                    f"{pub_url}/api/licenses/create",
+                                    headers={"X-API-Key": dev_row["api_key"]},
+                                    json={
+                                        "slug": slug,
+                                        "license_key": key,
+                                        "discord_id": user_id_str,
+                                        "note": "Auto-whitelisted via Buyer Role",
+                                        "expires_at": None
+                                    },
+                                    timeout=aiohttp.ClientTimeout(total=5)
+                                )
+                        except Exception:
+                            pass
+
                 license_row = {"script_name": script["name"], "license_key": key, "execution_count": 0}
             else:
                 return await interaction.response.send_message(
@@ -1032,6 +1062,35 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                             VALUES (?, ?, ?, 'Auto-whitelisted via Buyer Role', ?)
                         """, (script["id"], key, user_id_str, now_iso))
                         await conn.commit()
+
+                    # Sync to Railway cloud
+                    pub_url = loader_generator.get_public_url()
+                    if pub_url and pub_url.startswith("http"):
+                        async with db.get_db() as conn:
+                            cursor = await conn.execute("""
+                                SELECT u.api_key FROM users u
+                                JOIN scripts s ON s.user_id = u.id
+                                WHERE s.slug = ? AND u.api_key IS NOT NULL
+                            """, (clean_slug,))
+                            dev_row = await cursor.fetchone()
+                        if dev_row and dev_row["api_key"]:
+                            try:
+                                async with aiohttp.ClientSession() as session:
+                                    await session.post(
+                                        f"{pub_url}/api/licenses/create",
+                                        headers={"X-API-Key": dev_row["api_key"]},
+                                        json={
+                                            "slug": clean_slug,
+                                            "license_key": key,
+                                            "discord_id": user_id_str,
+                                            "note": "Auto-whitelisted via Buyer Role",
+                                            "expires_at": None
+                                        },
+                                        timeout=aiohttp.ClientTimeout(total=5)
+                                    )
+                            except Exception:
+                                pass
+
                     rows = [{"script_name": script["name"], "script_slug": script["slug"], "license_key": key}]
 
         if not rows:

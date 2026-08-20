@@ -2109,7 +2109,7 @@ async function loadActiveSessions() {
       let presenceBadge = "";
       if (s.is_kicked) {
         presenceBadge = `
-          <span class="badge badge-danger" style="display:inline-flex; align-items:center; gap:5px; font-size:10px;">
+          <span class="badge badge-danger" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:700;">
             <i class="fa-solid fa-bolt"></i> KICKED
           </span>
         `;
@@ -2117,19 +2117,6 @@ async function loadActiveSessions() {
         presenceBadge = `
           <span class="badge badge-success" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:700; background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.4); color:#4ade80;">
             <span class="live-radar-dot" style="width:7px; height:7px; background:#22c55e; border-radius:50%; box-shadow:0 0 8px #22c55e; display:inline-block;"></span>
-            LIVE (${s.seconds_ago}s ago)
-          </span>
-        `;
-      if (s.is_kicked) {
-        presenceBadge = `
-          <span class="badge badge-danger" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:700;">
-            <i class="fa-solid fa-bolt"></i> KICKED
-          </span>
-        `;
-      } else if (s.presence_state === "online") {
-        presenceBadge = `
-          <span class="badge badge-success" style="display:inline-flex; align-items:center; gap:5px; font-size:10px;">
-            <span class="live-radar-dot" style="width:6px; height:6px; border-radius:50%; background:#22c55e; display:inline-block;"></span>
             LIVE (${s.seconds_ago}s ago)
           </span>
         `;

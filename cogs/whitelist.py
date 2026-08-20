@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
 import datetime
 import secrets
 from typing import Optional, Union
@@ -71,15 +70,15 @@ class RedeemKeyModal(discord.ui.Modal, title="Redeem License Key"):
             if role and interaction.guild.me.guild_permissions.manage_roles and interaction.guild.me.top_role > role:
                 try:
                     await interaction.user.add_roles(role, reason=f"FleedGuard Whitelist Key Redemption ({self.slug})")
-                    role_assigned_text = f"\n🎉 Granted you the **{role.name}** role!"
+                    role_assigned_text = f"\nGranted you the **{role.name}** role."
                 except Exception:
                     pass
 
         embed = success_embed(
-            f"Successfully redeemed license for **{self.script_name}**!\n"
-            f"🔑 **Key:** `{clean_key}`\n"
-            f"👤 **Linked to:** {interaction.user.mention}{role_assigned_text}\n\n"
-            f"You can now click **Get Script** to receive your loadstring.",
+            f"Successfully redeemed license for **{self.script_name}**.\n"
+            f"Key: `{clean_key}`\n"
+            f"Linked to: {interaction.user.mention}{role_assigned_text}\n\n"
+            f"You can now click Get Script to receive your loadstring.",
             interaction.user
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -97,7 +96,7 @@ class WhitelistControlPanelView(discord.ui.View):
             self.unlink_btn.custom_id = f"fg_panel_unlink:{slug}"
             self.stats_btn.custom_id = f"fg_panel_stats:{slug}"
 
-    @discord.ui.button(label="Redeem Key", emoji="🔑", style=discord.ButtonStyle.success, row=0, custom_id="fg_panel_redeem:default")
+    @discord.ui.button(label="Redeem Key", style=discord.ButtonStyle.success, row=0, custom_id="fg_panel_redeem:default")
     async def redeem_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         async with db.get_db() as conn:
@@ -114,7 +113,7 @@ class WhitelistControlPanelView(discord.ui.View):
         )
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Get Script", emoji="📜", style=discord.ButtonStyle.primary, row=0, custom_id="fg_panel_script:default")
+    @discord.ui.button(label="Get Script", style=discord.ButtonStyle.primary, row=0, custom_id="fg_panel_script:default")
     async def script_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         user_id_str = str(interaction.user.id)
@@ -130,7 +129,7 @@ class WhitelistControlPanelView(discord.ui.View):
 
         if not license_row:
             return await interaction.response.send_message(
-                embed=error_embed(f"You have not redeemed a valid license for `{slug}` yet!\nClick **Redeem Key** above to link your key.", interaction.user),
+                embed=error_embed(f"You have not redeemed a valid license for `{slug}` yet.\nClick Redeem Key above to link your key.", interaction.user),
                 ephemeral=True
             )
 
@@ -138,16 +137,16 @@ class WhitelistControlPanelView(discord.ui.View):
         loadstring_snippet = f'getgenv().FleedKey = "{license_row["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{slug}"))()'
         
         embed = fleed_embed(
-            title=f"📜 {license_row['script_name']} — Loadstring",
+            title=f"{license_row['script_name']} — Loadstring",
             description=f"Here is your personalized execution script with your linked key:\n\n"
                         f"```lua\n{loadstring_snippet}\n```\n"
-                        f"🔒 **License Key:** `{license_row['license_key']}`\n"
-                        f"⚡ **Status:** Active | **Executions:** {license_row['execution_count']}",
+                        f"License Key: `{license_row['license_key']}`\n"
+                        f"Status: Active | Executions: {license_row['execution_count']}",
             author=interaction.user
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Get Role", emoji="👤", style=discord.ButtonStyle.primary, row=0, custom_id="fg_panel_role:default")
+    @discord.ui.button(label="Get Role", style=discord.ButtonStyle.primary, row=0, custom_id="fg_panel_role:default")
     async def role_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         user_id_str = str(interaction.user.id)
@@ -183,23 +182,23 @@ class WhitelistControlPanelView(discord.ui.View):
 
         if role in interaction.user.roles:
             return await interaction.response.send_message(
-                embed=fleed_embed(title="Role Already Assigned", description=f"You already have the {role.mention} role!", author=interaction.user),
+                embed=fleed_embed(title="Role Already Assigned", description=f"You already have the {role.mention} role.", author=interaction.user),
                 ephemeral=True
             )
 
         try:
             await interaction.user.add_roles(role, reason=f"FleedGuard Claim Role: {slug}")
             await interaction.response.send_message(
-                embed=success_embed(f"Successfully granted you the {role.mention} role!", interaction.user),
+                embed=success_embed(f"Successfully granted you the {role.mention} role.", interaction.user),
                 ephemeral=True
             )
         except discord.Forbidden:
             await interaction.response.send_message(
-                embed=error_embed("I don't have permission to assign that role. Please ensure my role is placed higher than the buyer role.", interaction.user),
+                embed=error_embed("I do not have permission to assign that role. Please ensure my role is placed higher than the buyer role.", interaction.user),
                 ephemeral=True
             )
 
-    @discord.ui.button(label="Reset HWID", emoji="⚙️", style=discord.ButtonStyle.success, row=1, custom_id="fg_panel_resethwid:default")
+    @discord.ui.button(label="Reset HWID", style=discord.ButtonStyle.success, row=1, custom_id="fg_panel_resethwid:default")
     async def resethwid_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         user_id_str = str(interaction.user.id)
@@ -220,21 +219,20 @@ class WhitelistControlPanelView(discord.ui.View):
                     ephemeral=True
                 )
 
-            # Reset HWID in DB
             await conn.execute("""
                 UPDATE licenses SET hwid = NULL, ip_address = NULL, last_reset_at = ? WHERE id = ?
             """, (now_iso, license_row["id"]))
             await conn.commit()
 
         embed = success_embed(
-            f"Successfully reset your Hardware ID for **{license_row['script_name']}**!\n"
-            f"🔑 **Key:** `{license_row['license_key']}`\n\n"
-            f"You can now execute the script on a new device or PC.",
+            f"Successfully reset your Hardware ID for **{license_row['script_name']}**.\n"
+            f"Key: `{license_row['license_key']}`\n\n"
+            f"You can now execute the script on a new device.",
             interaction.user
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Unlink Key", emoji="🔓", style=discord.ButtonStyle.danger, row=1, custom_id="fg_panel_unlink:default")
+    @discord.ui.button(label="Unlink Key", style=discord.ButtonStyle.danger, row=1, custom_id="fg_panel_unlink:default")
     async def unlink_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         user_id_str = str(interaction.user.id)
@@ -254,11 +252,9 @@ class WhitelistControlPanelView(discord.ui.View):
                     ephemeral=True
                 )
 
-            # Unlink Discord ID
             await conn.execute("UPDATE licenses SET discord_id = NULL WHERE id = ?", (license_row["id"],))
             await conn.commit()
 
-        # Remove Buyer Role
         if license_row["buyer_role_id"] and interaction.guild:
             role = interaction.guild.get_role(license_row["buyer_role_id"])
             if role and role in interaction.user.roles:
@@ -274,7 +270,7 @@ class WhitelistControlPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Get Stats", emoji="📊", style=discord.ButtonStyle.success, row=1, custom_id="fg_panel_stats:default")
+    @discord.ui.button(label="Get Stats", style=discord.ButtonStyle.success, row=1, custom_id="fg_panel_stats:default")
     async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
 
@@ -293,13 +289,13 @@ class WhitelistControlPanelView(discord.ui.View):
             c2 = await conn.execute("SELECT COUNT(*) as execs FROM execution_logs WHERE script_id = ?", (script["id"],))
             exec_data = await c2.fetchone()
 
-        status_str = "🔴 Inactive (Killswitch)" if script["killswitch_active"] else "🟢 Active & Running"
+        status_str = "Inactive (Killswitch)" if script["killswitch_active"] else "Active"
         embed = fleed_embed(
-            title=f"📊 {script['name']} — Live Statistics",
-            description=f"**Status:** {status_str}\n"
-                        f"**Version:** v{script['version']}\n"
-                        f"**Total Buyers / Keys:** {lic_data['active'] or 0} active ({lic_data['total'] or 0} total)\n"
-                        f"**Total Executions:** {exec_data['execs'] or 0}",
+            title=f"{script['name']} — Statistics",
+            description=f"Status: {status_str}\n"
+                        f"Version: v{script['version']}\n"
+                        f"Active Buyers: {lic_data['active'] or 0} / {lic_data['total'] or 0}\n"
+                        f"Total Executions: {exec_data['execs'] or 0}",
             author=interaction.user
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -307,18 +303,16 @@ class WhitelistControlPanelView(discord.ui.View):
 class WhitelistCog(commands.Cog, name="whitelist"):
     """
     FleedGuard Roblox Whitelist & License Security Cog
-    Full parity with Luarmor / PandAuth Discord bot functionality.
+    Full parity with Luarmor / PandAuth Discord bot functionality without emojis.
     """
     def __init__(self, bot):
         self.bot = bot
 
     async def cog_load(self):
-        # Register persistent dynamic listener for control panels across restarts
         self.bot.add_view(WhitelistControlPanelView())
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
-        # Handle persistent button routing for dynamic custom_ids
         if not interaction.data or "custom_id" not in interaction.data:
             return
         custom_id = interaction.data["custom_id"]
@@ -349,25 +343,25 @@ class WhitelistCog(commands.Cog, name="whitelist"):
     async def whitelist_group(self, ctx):
         """Displays help menu for Whitelist management commands."""
         embed = fleed_embed(
-            title="🛡️ FleedGuard Whitelist Management (Luarmor Parity)",
-            description="Manage script whitelists, buyers, HWID resets, and control panels.\n\n"
-                        "**Manager Commands:**\n"
-                        f"• `{ctx.prefix}whitelist add <@user/id> <slug> [days] [note]` — Whitelist a buyer directly\n"
-                        f"• `{ctx.prefix}whitelist remove <@user/id> <slug>` — Remove buyer access\n"
-                        f"• `{ctx.prefix}whitelist check <@user/id> [slug]` — Check buyer status & HWID\n"
-                        f"• `{ctx.prefix}whitelist force-resethwid <@user/id> [slug]` — Force reset user HWID\n"
-                        f"• `{ctx.prefix}whitelist transfer <@old_user> <@new_user> <slug>` — Transfer key ownership\n"
-                        f"• `{ctx.prefix}whitelist setrole <slug> <@role>` — Configure buyer role\n"
-                        f"• `{ctx.prefix}whitelist genkey <slug> [days] [note]` — Create unlinked license key\n"
-                        f"• `{ctx.prefix}whitelist ban <key/@user> [reason]` — Ban a key or user\n"
-                        f"• `{ctx.prefix}whitelist unban <key/@user>` — Unban a key or user\n"
-                        f"• `{ctx.prefix}whitelist killswitch <slug>` — Toggle script killswitch\n"
-                        f"• `{ctx.prefix}whitelist panel <slug> [role]` — Spawn interactive buyer control panel\n\n"
-                        "**Buyer Self-Service Commands:**\n"
-                        f"• `{ctx.prefix}redeem <key>` — Redeem a license key\n"
-                        f"• `{ctx.prefix}getscript [slug]` — Receive your loadstring with key\n"
-                        f"• `{ctx.prefix}getrole [slug]` — Claim your Discord buyer role\n"
-                        f"• `{ctx.prefix}resethwid [slug]` — Reset your HWID for new device",
+            title="fleed whitelist management",
+            description="manage script whitelists, buyers, hwid resets, and control panels.\n\n"
+                        "**manager commands:**\n"
+                        f"• `{ctx.prefix}whitelist add <@user/id> <slug> [days] [note]` — whitelist a buyer directly\n"
+                        f"• `{ctx.prefix}whitelist remove <@user/id> <slug>` — remove buyer access\n"
+                        f"• `{ctx.prefix}whitelist check <@user/id> [slug]` — check buyer status and hwid\n"
+                        f"• `{ctx.prefix}whitelist force-resethwid <@user/id> [slug]` — force reset user hwid\n"
+                        f"• `{ctx.prefix}whitelist transfer <@old_user> <@new_user> <slug>` — transfer key ownership\n"
+                        f"• `{ctx.prefix}whitelist setrole <slug> <@role>` — configure buyer role\n"
+                        f"• `{ctx.prefix}whitelist genkey <slug> [days] [note]` — create unlinked license key\n"
+                        f"• `{ctx.prefix}whitelist ban <key/@user> [reason]` — ban a key or user\n"
+                        f"• `{ctx.prefix}whitelist unban <key/@user>` — unban a key or user\n"
+                        f"• `{ctx.prefix}whitelist killswitch <slug>` — toggle script killswitch\n"
+                        f"• `{ctx.prefix}whitelist panel <slug> [role]` — spawn buyer control panel\n\n"
+                        "**buyer commands:**\n"
+                        f"• `{ctx.prefix}redeem <key>` — redeem a license key\n"
+                        f"• `{ctx.prefix}getscript [slug]` — receive loadstring with key\n"
+                        f"• `{ctx.prefix}getrole [slug]` — claim buyer role\n"
+                        f"• `{ctx.prefix}resethwid [slug]` — reset hwid for new device",
             author=ctx.author
         )
         await ctx.send(embed=embed)
@@ -375,8 +369,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
     @whitelist_group.command(name="add", aliases=["user", "create"])
     async def add_whitelist_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str, duration_days: int = 0, *, note: str = ""):
         """
-        Whitelists a user directly by @mention or Discord ID (Luarmor /whitelist command).
-        Generates a key, binds it directly to their Discord ID, and grants the buyer role!
+        Whitelists a user directly by @mention or Discord ID.
         """
         clean_slug = slug.strip().lower()
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
@@ -385,9 +378,8 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
             if not script:
-                return await ctx.send(embed=error_embed(f"Script hub `{clean_slug}` not found.", ctx.author))
+                return await ctx.send(embed=error_embed(f"Script `{clean_slug}` not found.", ctx.author))
 
-            # Generate unique key
             key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
             now_utc = datetime.datetime.now(datetime.timezone.utc)
             now_iso = now_utc.isoformat()
@@ -395,22 +387,21 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             if duration_days > 0:
                 expires_at = (now_utc + datetime.timedelta(days=duration_days)).isoformat()
 
-            user_note = note or f"Whitelisted via Discord by {ctx.author.name}"
+            user_note = note or f"whitelisted by {ctx.author.name}"
             await conn.execute("""
                 INSERT INTO licenses (script_id, license_key, discord_id, note, expires_at, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (script["id"], key, discord_id, user_note, expires_at, now_iso))
             await conn.commit()
 
-        # Handle Role Assignment if member is in guild
         role_text = ""
         if script["buyer_role_id"] and ctx.guild:
             role = ctx.guild.get_role(script["buyer_role_id"])
             target_member = ctx.guild.get_member(int(discord_id)) if discord_id.isdigit() else None
             if role and target_member and ctx.guild.me.guild_permissions.manage_roles and ctx.guild.me.top_role > role:
                 try:
-                    await target_member.add_roles(role, reason=f"FleedGuard Direct Whitelist: {script['name']}")
-                    role_text = f"\n🎉 Assigned role {role.mention} to user."
+                    await target_member.add_roles(role, reason=f"whitelist: {script['name']}")
+                    role_text = f"\nassigned role {role.mention}."
                 except Exception:
                     pass
 
@@ -418,11 +409,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         loadstring_snippet = f'getgenv().FleedKey = "{key}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{clean_slug}"))()'
 
         embed = success_embed(
-            f"Successfully whitelisted <@{discord_id}> for **{script['name']}**!\n\n"
-            f"🔑 **Key:** `{key}`\n"
-            f"⏳ **Duration:** {f'{duration_days} Days' if duration_days > 0 else 'Lifetime'}\n"
-            f"📝 **Note:** {user_note}{role_text}\n\n"
-            f"**Execution Loadstring:**\n```lua\n{loadstring_snippet}\n```",
+            f"whitelisted <@{discord_id}> for **{script['name']}**.\n\n"
+            f"key: `{key}`\n"
+            f"duration: {f'{duration_days} days' if duration_days > 0 else 'lifetime'}\n"
+            f"note: {user_note}{role_text}\n\n"
+            f"loadstring:\n```lua\n{loadstring_snippet}\n```",
             ctx.author
         )
         await ctx.send(embed=embed)
@@ -445,23 +436,21 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             license_row = await cursor.fetchone()
 
             if not license_row:
-                return await ctx.send(embed=error_embed(f"No active whitelist found for <@{discord_id}> on `{clean_slug}`.", ctx.author))
+                return await ctx.send(embed=error_embed(f"no active whitelist found for <@{discord_id}> on `{clean_slug}`.", ctx.author))
 
-            # Delete license
             await conn.execute("DELETE FROM licenses WHERE id = ?", (license_row["id"],))
             await conn.commit()
 
-        # Remove Role if in guild
         if license_row["buyer_role_id"] and ctx.guild:
             role = ctx.guild.get_role(license_row["buyer_role_id"])
             target_member = ctx.guild.get_member(int(discord_id)) if discord_id.isdigit() else None
             if role and target_member and role in target_member.roles:
                 try:
-                    await target_member.remove_roles(role, reason=f"FleedGuard Unwhitelist: {license_row['script_name']}")
+                    await target_member.remove_roles(role, reason=f"unwhitelist: {license_row['script_name']}")
                 except Exception:
                     pass
 
-        embed = success_embed(f"Removed whitelist access for <@{discord_id}> on **{license_row['script_name']}**.", ctx.author)
+        embed = success_embed(f"removed whitelist access for <@{discord_id}> on **{license_row['script_name']}**.", ctx.author)
         await ctx.send(embed=embed)
 
     @whitelist_group.command(name="check", aliases=["userinfo", "lookup"])
@@ -487,19 +476,19 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             rows = await cursor.fetchall()
 
         if not rows:
-            return await ctx.send(embed=warn_embed(f"No whitelisted keys found for <@{discord_id}>.", ctx.author))
+            return await ctx.send(embed=warn_embed(f"no whitelisted keys found for <@{discord_id}>.", ctx.author))
 
-        embed = fleed_embed(title=f"👤 Whitelist Profile — <@{discord_id}>", author=ctx.author)
+        embed = fleed_embed(title=f"whitelist profile — <@{discord_id}>", author=ctx.author)
         for r in rows:
-            status = "🔴 Banned" if r["is_banned"] else "🟢 Active"
-            hwid_val = f"`{r['hwid'][:16]}...`" if r["hwid"] else "❌ *Unbound*"
-            expires = r["expires_at"][:10] if r["expires_at"] else "⭐ *Lifetime*"
+            status = "banned" if r["is_banned"] else "active"
+            hwid_val = f"`{r['hwid'][:16]}...`" if r["hwid"] else "unbound"
+            expires = r["expires_at"][:10] if r["expires_at"] else "lifetime"
             embed.add_field(
                 name=f"{r['script_name']} (`{r['script_slug']}`)",
-                value=f"🔑 **Key:** `{r['license_key']}`\n"
-                      f"⚡ **Status:** {status} | **HWID:** {hwid_val}\n"
-                      f"📈 **Executions:** {r['execution_count']}\n"
-                      f"⏳ **Expires:** {expires}",
+                value=f"key: `{r['license_key']}`\n"
+                      f"status: {status} | hwid: {hwid_val}\n"
+                      f"executions: {r['execution_count']}\n"
+                      f"expires: {expires}",
                 inline=False
             )
         await ctx.send(embed=embed)
@@ -507,7 +496,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
     @whitelist_group.command(name="force-resethwid", aliases=["freset", "adminreset"])
     async def force_resethwid_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str):
         """
-        Manager command to force reset a user's HWID (Luarmor /force-resethwid).
+        Manager command to force reset a user's HWID.
         """
         clean_slug = slug.strip().lower()
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
@@ -523,12 +512,12 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             license_row = await cursor.fetchone()
 
             if not license_row:
-                return await ctx.send(embed=error_embed(f"No license found for <@{discord_id}> on `{clean_slug}`.", ctx.author))
+                return await ctx.send(embed=error_embed(f"no license found for <@{discord_id}> on `{clean_slug}`.", ctx.author))
 
             await conn.execute("UPDATE licenses SET hwid = NULL, ip_address = NULL, last_reset_at = ? WHERE id = ?", (now_iso, license_row["id"]))
             await conn.commit()
 
-        embed = success_embed(f"Forcefully reset HWID for <@{discord_id}> on **{license_row['script_name']}**.", ctx.author)
+        embed = success_embed(f"force reset hwid for <@{discord_id}> on **{license_row['script_name']}**.", ctx.author)
         await ctx.send(embed=embed)
 
     @whitelist_group.command(name="transfer", aliases=["transferkey"])
@@ -550,13 +539,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             license_row = await cursor.fetchone()
 
             if not license_row:
-                return await ctx.send(embed=error_embed(f"No license found for <@{old_id}> on `{clean_slug}`.", ctx.author))
+                return await ctx.send(embed=error_embed(f"no license found for <@{old_id}> on `{clean_slug}`.", ctx.author))
 
-            # Update owner and wipe HWID
             await conn.execute("UPDATE licenses SET discord_id = ?, hwid = NULL WHERE id = ?", (new_id, license_row["id"]))
             await conn.commit()
 
-        # Update Roles
         if license_row["buyer_role_id"] and ctx.guild:
             role = ctx.guild.get_role(license_row["buyer_role_id"])
             if role:
@@ -564,15 +551,15 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                 new_mem = ctx.guild.get_member(int(new_id)) if new_id.isdigit() else None
                 try:
                     if old_mem and role in old_mem.roles:
-                        await old_mem.remove_roles(role, reason="License transferred")
+                        await old_mem.remove_roles(role, reason="license transferred")
                     if new_mem:
-                        await new_mem.add_roles(role, reason="License transferred")
+                        await new_mem.add_roles(role, reason="license transferred")
                 except Exception:
                     pass
 
         embed = success_embed(
-            f"Successfully transferred **{license_row['script_name']}** key from <@{old_id}> to <@{new_id}>!\n"
-            f"HWID has been automatically reset for the new user.",
+            f"transferred **{license_row['script_name']}** key from <@{old_id}> to <@{new_id}>.\n"
+            f"hwid has been reset for the new user.",
             ctx.author
         )
         await ctx.send(embed=embed)
@@ -587,19 +574,19 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             cursor = await conn.execute("SELECT id, name FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
             if not script:
-                return await ctx.send(embed=error_embed(f"Script `{clean_slug}` not found.", ctx.author))
+                return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
 
             await conn.execute("UPDATE scripts SET buyer_role_id = ?, guild_id = ? WHERE id = ?", (role.id, ctx.guild.id, script["id"]))
             await conn.commit()
 
-        await ctx.send(embed=success_embed(f"Set buyer role for **{script['name']}** to {role.mention}.", ctx.author))
+        await ctx.send(embed=success_embed(f"set buyer role for **{script['name']}** to {role.mention}.", ctx.author))
 
     # ------------------- End-User Self-Service Commands -------------------
 
     @commands.command(name="redeem", aliases=["claimkey"])
     async def redeem_cmd(self, ctx, key: str):
         """
-        Redeems a license key directly in chat (Luarmor /redeem).
+        Redeems a license key directly in chat.
         """
         clean_key = key.strip().upper()
         user_id_str = str(ctx.author.id)
@@ -614,31 +601,30 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             row = await cursor.fetchone()
 
             if not row:
-                return await ctx.send(embed=error_embed("Invalid license key.", ctx.author))
+                return await ctx.send(embed=error_embed("invalid license key.", ctx.author))
 
             if row["is_banned"]:
-                return await ctx.send(embed=error_embed("This license key is banned.", ctx.author))
+                return await ctx.send(embed=error_embed("this license key is banned.", ctx.author))
 
             if row["discord_id"] and row["discord_id"] != user_id_str:
-                return await ctx.send(embed=error_embed("This key is already redeemed by another user!", ctx.author))
+                return await ctx.send(embed=error_embed("this key is already redeemed by another user.", ctx.author))
 
             await conn.execute("UPDATE licenses SET discord_id = ? WHERE id = ?", (user_id_str, row["id"]))
             await conn.commit()
 
-        # Grant Role
         role_text = ""
         if row["buyer_role_id"] and ctx.guild:
             role = ctx.guild.get_role(row["buyer_role_id"])
             if role and ctx.guild.me.guild_permissions.manage_roles and ctx.guild.me.top_role > role:
                 try:
-                    await ctx.author.add_roles(role, reason=f"Redeemed key for {row['script_name']}")
-                    role_text = f"\n🎉 Granted you the {role.mention} role!"
+                    await ctx.author.add_roles(role, reason=f"redeemed key for {row['script_name']}")
+                    role_text = f"\ngranted role {role.mention}."
                 except Exception:
                     pass
 
         embed = success_embed(
-            f"Successfully redeemed key for **{row['script_name']}**!{role_text}\n"
-            f"Use `{ctx.prefix}script {row['script_slug']}` to get your loadstring.",
+            f"redeemed key for **{row['script_name']}**.{role_text}\n"
+            f"use `{ctx.prefix}script {row['script_slug']}` to get your loadstring.",
             ctx.author
         )
         await ctx.send(embed=embed)
@@ -646,7 +632,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
     @commands.command(name="getscript", aliases=["script", "loadstring"])
     async def get_script_cmd(self, ctx, slug: Optional[str] = None):
         """
-        Retrieves the personalized loadstring for a buyer (Luarmor /script).
+        Retrieves the personalized loadstring for a buyer.
         """
         user_id_str = str(ctx.author.id)
         query = """
@@ -665,27 +651,26 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             rows = await cursor.fetchall()
 
         if not rows:
-            return await ctx.send(embed=warn_embed(f"You don't have any redeemed keys{' for `' + slug + '`' if slug else ''}.", ctx.author))
+            return await ctx.send(embed=warn_embed(f"no redeemed keys found{' for `' + slug + '`' if slug else ''}.", ctx.author))
 
         pub_url = loader_generator.get_public_url()
         for r in rows:
             loadstr = f'getgenv().FleedKey = "{r["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{r["script_slug"]}"))()'
             embed = fleed_embed(
-                title=f"📜 {r['script_name']} — Loadstring",
-                description=f"```lua\n{loadstr}\n```\n🔑 **Key:** `{r['license_key']}`",
+                title=f"{r['script_name']} — loadstring",
+                description=f"```lua\n{loadstr}\n```\nkey: `{r['license_key']}`",
                 author=ctx.author
             )
-            # Try DMing the script for privacy
             try:
                 await ctx.author.send(embed=embed)
-                await ctx.send(embed=success_embed(f"Sent your **{r['script_name']}** loadstring to your DMs! 📩", ctx.author))
+                await ctx.send(embed=success_embed(f"sent **{r['script_name']}** loadstring to your dms.", ctx.author))
             except discord.Forbidden:
                 await ctx.send(embed=embed)
 
     @commands.command(name="getrole", aliases=["claimrole"])
     async def get_role_cmd(self, ctx, slug: str):
         """
-        Claims your configured buyer role if you have a redeemed key (Luarmor /getrole).
+        Claims your configured buyer role if you have a redeemed key.
         """
         clean_slug = slug.strip().lower()
         user_id_str = str(ctx.author.id)
@@ -700,25 +685,25 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             row = await cursor.fetchone()
 
         if not row:
-            return await ctx.send(embed=error_embed(f"You don't have an active redeemed key for `{clean_slug}`.", ctx.author))
+            return await ctx.send(embed=error_embed(f"no active redeemed key found for `{clean_slug}`.", ctx.author))
 
         if not row["buyer_role_id"] or not ctx.guild:
-            return await ctx.send(embed=warn_embed("No buyer role has been configured for this script.", ctx.author))
+            return await ctx.send(embed=warn_embed("no buyer role configured for this script.", ctx.author))
 
         role = ctx.guild.get_role(row["buyer_role_id"])
         if not role:
-            return await ctx.send(embed=error_embed("Configured buyer role was not found.", ctx.author))
+            return await ctx.send(embed=error_embed("buyer role not found.", ctx.author))
 
         try:
-            await ctx.author.add_roles(role, reason=f"Claimed buyer role for {row['script_name']}")
-            await ctx.send(embed=success_embed(f"Granted you the {role.mention} role!", ctx.author))
+            await ctx.author.add_roles(role, reason=f"claimed role: {row['script_name']}")
+            await ctx.send(embed=success_embed(f"granted role {role.mention}.", ctx.author))
         except discord.Forbidden:
-            await ctx.send(embed=error_embed("I don't have permission to assign that role.", ctx.author))
+            await ctx.send(embed=error_embed("i do not have permission to assign that role.", ctx.author))
 
     @commands.command(name="resethwid", aliases=["userresethwid"])
     async def user_resethwid_cmd(self, ctx, slug: Optional[str] = None):
         """
-        Resets your own HWID binding so you can play on a new PC (Luarmor /resethwid).
+        Resets your own HWID binding so you can play on a new PC.
         """
         user_id_str = str(ctx.author.id)
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -739,20 +724,20 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             rows = await cursor.fetchall()
 
             if not rows:
-                return await ctx.send(embed=error_embed(f"No active license found on your account{' for ' + slug if slug else ''}.", ctx.author))
+                return await ctx.send(embed=error_embed(f"no active license found on your account{' for ' + slug if slug else ''}.", ctx.author))
 
             for r in rows:
                 await conn.execute("UPDATE licenses SET hwid = NULL, ip_address = NULL, last_reset_at = ? WHERE id = ?", (now_iso, r["id"]))
             await conn.commit()
 
-        await ctx.send(embed=success_embed(f"Successfully reset HWID for **{len(rows)}** script(s). You can now execute on your new device!", ctx.author))
+        await ctx.send(embed=success_embed(f"reset hwid for **{len(rows)}** script(s). you can now execute on your new device.", ctx.author))
 
     # ------------------- Additional Admin Utilities -------------------
 
     @whitelist_group.command(name="panel", aliases=["setup", "controlpanel"])
     async def panel_cmd(self, ctx, slug: str, *, role: str = None):
         """
-        Spawns the exact buyer control panel with interactive buttons.
+        Spawns the buyer control panel.
         """
         clean_slug = slug.strip().lower()
 
@@ -760,7 +745,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
             if not script:
-                return await ctx.send(embed=error_embed(f"Script `{clean_slug}` not found in FleedGuard!", ctx.author))
+                return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
 
             buyer_role_id = script["buyer_role_id"] or 0
             if role:
@@ -774,9 +759,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         
         embed = discord.Embed(
             title=f"{script['name']} script hub",
-            description=f"This control panel is for the project: **{script['name']}**\n"
-                        f"If you're a buyer, click on the buttons below to redeem your key, get the script or get your role\n\n"
-                        f"Sent by {ctx.author.name} • {now_str}",
+            description=f"this control panel is for the project: **{script['name']}**\n"
+                        f"if you're a buyer, click on the buttons below to redeem your key, get the script or get your role\n\n"
+                        f"sent by {ctx.author.name} • {now_str}",
             color=0x2B2D31
         )
 
@@ -798,17 +783,17 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             rows = await cursor.fetchall()
 
         if not rows:
-            return await ctx.send(embed=warn_embed("No scripts found. Create one on the FleedGuard web dashboard!", ctx.author))
+            return await ctx.send(embed=warn_embed("no scripts found.", ctx.author))
 
-        embed = fleed_embed(title="📜 FleedGuard Managed Scripts", author=ctx.author)
+        embed = fleed_embed(title="fleed managed scripts", author=ctx.author)
         for s in rows:
-            mode = "🔒 VM Protected" if s["is_obfuscated_mode"] else "📄 Unobfuscated"
-            status = "🔴 KILLSWITCH ACTIVE" if s["killswitch_active"] else "🟢 Operational"
+            mode = "vm protected" if s["is_obfuscated_mode"] else "unobfuscated"
+            status = "killswitch active" if s["killswitch_active"] else "operational"
             embed.add_field(
                 name=f"{s['name']} (`{s['slug']}`)",
-                value=f"**Status:** {status} | **Mode:** {mode}\n"
-                      f"**Active Keys:** {s['active_keys'] or 0} / {s['total_keys'] or 0}\n"
-                      f"**Version:** v{s['version']}",
+                value=f"status: {status} | mode: {mode}\n"
+                      f"active keys: {s['active_keys'] or 0} / {s['total_keys'] or 0}\n"
+                      f"version: v{s['version']}",
                 inline=False
             )
         await ctx.send(embed=embed)
@@ -820,7 +805,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             cursor = await conn.execute("SELECT id, name FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
             if not script:
-                return await ctx.send(embed=error_embed(f"Script `{clean_slug}` not found.", ctx.author))
+                return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
 
             key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
             now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -832,35 +817,35 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             await conn.execute("""
                 INSERT INTO licenses (script_id, license_key, note, expires_at, created_at)
                 VALUES (?, ?, ?, ?, ?)
-            """, (script["id"], key, note or f"Generated via Discord by {ctx.author.name}", expires_at, now_iso))
+            """, (script["id"], key, note or f"generated by {ctx.author.name}", expires_at, now_iso))
             await conn.commit()
 
         embed = success_embed(
-            f"Successfully generated new license for **{script['name']}**!\n\n"
-            f"🔑 **Key:** `{key}`\n"
-            f"⏳ **Duration:** {f'{duration_days} Days' if duration_days > 0 else 'Lifetime'}\n"
-            f"📝 **Note:** {note or 'None'}",
+            f"generated license for **{script['name']}**.\n\n"
+            f"key: `{key}`\n"
+            f"duration: {f'{duration_days} days' if duration_days > 0 else 'lifetime'}\n"
+            f"note: {note or 'none'}",
             ctx.author
         )
         await ctx.send(embed=embed)
 
     @whitelist_group.command(name="ban")
-    async def ban_key_cmd(self, ctx, target: str, *, reason: str = "Banned by administrator"):
+    async def ban_key_cmd(self, ctx, target: str, *, reason: str = "banned by administrator"):
         clean_target = target.strip().strip("<@!>")
         async with db.get_db() as conn:
             if clean_target.startswith("FLEED-"):
                 cursor = await conn.execute("SELECT id FROM licenses WHERE license_key = ?", (clean_target.upper(),))
                 if not await cursor.fetchone():
-                    return await ctx.send(embed=error_embed("License key not found.", ctx.author))
+                    return await ctx.send(embed=error_embed("license key not found.", ctx.author))
                 await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE license_key = ?", (reason, clean_target.upper()))
             else:
                 cursor = await conn.execute("SELECT id FROM licenses WHERE discord_id = ?", (clean_target,))
                 if not await cursor.fetchone():
-                    return await ctx.send(embed=error_embed(f"No licenses found for user <@{clean_target}>.", ctx.author))
+                    return await ctx.send(embed=error_embed(f"no licenses found for <@{clean_target}>.", ctx.author))
                 await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE discord_id = ?", (reason, clean_target))
             await conn.commit()
 
-        await ctx.send(embed=success_embed(f"Banned `{clean_target}`. Reason: *{reason}*", ctx.author))
+        await ctx.send(embed=success_embed(f"banned `{clean_target}`. reason: *{reason}*", ctx.author))
 
     @whitelist_group.command(name="unban")
     async def unban_key_cmd(self, ctx, target: str):
@@ -872,7 +857,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                 await conn.execute("UPDATE licenses SET is_banned = 0, ban_reason = NULL WHERE discord_id = ?", (clean_target,))
             await conn.commit()
 
-        await ctx.send(embed=success_embed(f"Unbanned `{clean_target}`.", ctx.author))
+        await ctx.send(embed=success_embed(f"unbanned `{clean_target}`.", ctx.author))
 
     @whitelist_group.command(name="killswitch", aliases=["ks"])
     async def killswitch_cmd(self, ctx, slug: str):
@@ -881,14 +866,14 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             cursor = await conn.execute("SELECT id, name, killswitch_active FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
             if not script:
-                return await ctx.send(embed=error_embed(f"Script `{clean_slug}` not found.", ctx.author))
+                return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
 
             new_status = 0 if script["killswitch_active"] else 1
             await conn.execute("UPDATE scripts SET killswitch_active = ? WHERE id = ?", (new_status, script["id"]))
             await conn.commit()
 
-        status_text = "🔴 **ACTIVATED** (all executions blocked)" if new_status else "🟢 **DEACTIVATED** (normal operations resumed)"
-        await ctx.send(embed=fleed_embed(title="⚡ Killswitch Toggled", description=f"Killswitch for **{script['name']}** is now {status_text}.", author=ctx.author))
+        status_text = "activated (executions blocked)" if new_status else "deactivated (operational)"
+        await ctx.send(embed=fleed_embed(title="killswitch toggled", description=f"killswitch for **{script['name']}** is now {status_text}.", author=ctx.author))
 
     @whitelist_group.command(name="stats")
     async def stats_cmd(self, ctx):
@@ -905,11 +890,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             blocked_execs = log_row["blocked"] or 0
 
         embed = fleed_embed(
-            title="📊 FleedGuard Global Security Stats",
-            description=f"**Scripts Managed:** `{total_scripts}`\n"
-                        f"**Active Licenses:** `{active_licenses}`\n"
-                        f"**Total Handshakes:** `{total_execs}`\n"
-                        f"**Blocked Tamper/Crack Attempts:** `{blocked_execs}`",
+            title="fleed security stats",
+            description=f"scripts: `{total_scripts}`\n"
+                        f"active licenses: `{active_licenses}`\n"
+                        f"total handshakes: `{total_execs}`\n"
+                        f"blocked attacks: `{blocked_execs}`",
             author=ctx.author
         )
         await ctx.send(embed=embed)

@@ -76,8 +76,8 @@ class CryptoEngine:
 
     # ---------------- Auth Tokens (Sessions) ----------------
     @staticmethod
-    def create_session_token(user_id: int, username: str, role: str, expires_in_sec: int = 86400 * 7) -> str:
-        """Creates a signed, tamper-proof session JWT-like token."""
+    def create_session_token(user_id: int, username: str, role: str, expires_in_sec: int = 86400 * 30) -> str:
+        """Creates a signed, tamper-proof session JWT-like token (valid for 30 days)."""
         header = {"alg": "HS256", "typ": "JWT"}
         payload = {
             "sub": user_id,

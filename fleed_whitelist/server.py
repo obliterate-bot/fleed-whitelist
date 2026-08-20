@@ -201,7 +201,7 @@ async def register(req: RegisterRequest):
 
     token = crypto_engine.create_session_token(user_id, req.username, "developer")
     response = JSONResponse(content={"success": True, "token": token, "user": {"id": user_id, "username": req.username}})
-    response.set_cookie(key="fleed_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax")
+    response.set_cookie(key="fleed_token", value=token, httponly=True, max_age=86400 * 30, samesite="lax")
     return response
 
 @app.post("/api/auth/login")
@@ -251,7 +251,7 @@ async def login(req: LoginRequest):
             "api_key": user["api_key"]
         }
     })
-    response.set_cookie(key="fleed_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax")
+    response.set_cookie(key="fleed_token", value=token, httponly=True, max_age=86400 * 30, samesite="lax")
     return response
 
 @app.post("/api/auth/logout")

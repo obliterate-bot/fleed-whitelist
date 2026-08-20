@@ -3,9 +3,26 @@ from discord.ext import commands
 import datetime
 import secrets
 from typing import Optional, Union
+import config
 from utils import fleed_embed, success_embed, error_embed, warn_embed, find_role, send_group_help
 from fleed_whitelist.database import db
 from fleed_whitelist.loader_generator import loader_generator
+
+def is_whitelist_manager(ctx) -> bool:
+    """Ensures only bot owners, guild owners, and server administrators can manage whitelists."""
+    if not ctx or not ctx.author:
+        return False
+    if ctx.author.id == 539594512981295106 or ctx.author.id in getattr(config, "OWNER_IDS", []):
+        return True
+    bot_owners = getattr(ctx.bot, "owner_ids", set()) or set()
+    if ctx.author.id in bot_owners or str(ctx.author.id) in bot_owners:
+        return True
+    if ctx.guild:
+        if ctx.author.id == getattr(ctx.guild, "owner_id", None):
+            return True
+        if getattr(ctx.author.guild_permissions, "administrator", False):
+            return True
+    return False
 
 class RedeemKeyModal(discord.ui.Modal, title="Redeem License Key"):
     def __init__(self, slug: str, script_name: str, script_id: int, buyer_role_id: int = 0):
@@ -303,7 +320,7 @@ class WhitelistControlPanelView(discord.ui.View):
 class WhitelistCog(commands.Cog, name="whitelist"):
     """
     FleedGuard Roblox Whitelist & License Security Cog
-    Full parity with Luarmor / PandAuth Discord bot functionality without emojis.
+    Full parity with Luarmor / PandAuth Discord bot functionality.
     """
     def __init__(self, bot):
         self.bot = bot
@@ -349,6 +366,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Whitelists a user directly by @mention or Discord ID.
         """
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to whitelist members.", ctx.author))
+
         clean_slug = slug.strip().lower()
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
         
@@ -401,6 +421,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Removes a user's whitelist access for a script and revokes buyer role.
         """
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to remove whitelists.", ctx.author))
+
         clean_slug = slug.strip().lower()
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
 
@@ -436,6 +459,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Checks whitelist details, keys, HWIDs, and executions for a Discord user.
         """
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to lookup whitelists.", ctx.author))
+
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
 
         query = """
@@ -476,6 +502,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Manager command to force reset a user's HWID.
         """
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to force reset hwids.", ctx.author))
+
         clean_slug = slug.strip().lower()
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -503,6 +532,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Transfers a license key from one Discord account to another.
         """
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to transfer keys.", ctx.author))
+
         clean_slug = slug.strip().lower()
         old_id = str(old_target.id) if hasattr(old_target, "id") else str(old_target).strip("<@!>")
         new_id = str(new_target.id) if hasattr(new_target, "id") else str(new_target).strip("<@!>")
@@ -547,6 +579,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Sets the Discord Buyer role for a project.
         """
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to configure buyer roles.", ctx.author))
+
         clean_slug = slug.strip().lower()
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT id, name FROM scripts WHERE slug = ?", (clean_slug,))
@@ -717,6 +752,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Spawns the buyer control panel.
         """
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to spawn control panels.", ctx.author))
+
         clean_slug = slug.strip().lower()
 
         async with db.get_db() as conn:
@@ -748,6 +786,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="scripts")
     async def list_scripts_cmd(self, ctx):
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to list scripts.", ctx.author))
+
         async with db.get_db() as conn:
             cursor = await conn.execute("""
                 SELECT s.*, 
@@ -778,6 +819,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="genkey", aliases=["createkey", "gen"])
     async def gen_key_cmd(self, ctx, slug: str, duration_days: int = 0, *, note: str = ""):
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to generate keys.", ctx.author))
+
         clean_slug = slug.strip().lower()
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT id, name FROM scripts WHERE slug = ?", (clean_slug,))
@@ -809,6 +853,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="ban")
     async def ban_key_cmd(self, ctx, target: str, *, reason: str = "banned by administrator"):
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to ban keys.", ctx.author))
+
         clean_target = target.strip().strip("<@!>")
         async with db.get_db() as conn:
             if clean_target.startswith("FLEED-"):
@@ -819,7 +866,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             else:
                 cursor = await conn.execute("SELECT id FROM licenses WHERE discord_id = ?", (clean_target,))
                 if not await cursor.fetchone():
-                    return await ctx.send(embed=error_embed(f"no licenses found for <@{clean_target}>.", ctx.author))
+                    return await ctx.send(embed=error_embed(f"no licenses found for user <@{clean_target}>.", ctx.author))
                 await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE discord_id = ?", (reason, clean_target))
             await conn.commit()
 
@@ -827,6 +874,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="unban")
     async def unban_key_cmd(self, ctx, target: str):
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to unban keys.", ctx.author))
+
         clean_target = target.strip().strip("<@!>")
         async with db.get_db() as conn:
             if clean_target.startswith("FLEED-"):
@@ -839,6 +889,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="killswitch", aliases=["ks"])
     async def killswitch_cmd(self, ctx, slug: str):
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to toggle killswitch.", ctx.author))
+
         clean_slug = slug.strip().lower()
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT id, name, killswitch_active FROM scripts WHERE slug = ?", (clean_slug,))
@@ -855,6 +908,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="stats")
     async def stats_cmd(self, ctx):
+        if not is_whitelist_manager(ctx):
+            return await ctx.send(embed=error_embed("you must have administrator permissions to view security stats.", ctx.author))
+
         async with db.get_db() as conn:
             c1 = await conn.execute("SELECT COUNT(*) as cnt FROM scripts")
             total_scripts = (await c1.fetchone())["cnt"]

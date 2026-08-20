@@ -304,3 +304,61 @@ def test_control_panel_view_and_redemption():
 
     asyncio.run(_run())
 
+def test_luarmor_parity_commands():
+    async def _run():
+        await db.init()
+        slug = f"luarmor_test_{int(time.time())}_{secrets.token_hex(3)}"
+        now_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        user_a = "111111111111111111"
+        user_b = "222222222222222222"
+
+        async with db.get_db() as conn:
+            # 1. Create Script
+            cursor = await conn.execute("""
+                INSERT INTO scripts (user_id, name, slug, raw_source, created_at, updated_at)
+                VALUES (1, 'Luarmor Test Hub', ?, 'print("Hello Luarmor")', ?, ?)
+            """, (slug, now_iso, now_iso))
+            await conn.commit()
+            script_id = cursor.lastrowid
+
+            # 2. Add Whitelist directly for User A
+            key_a = f"FLEED-DIRECT-{int(time.time())}-{secrets.token_hex(4)}"
+            await conn.execute("""
+                INSERT INTO licenses (script_id, license_key, discord_id, note, created_at)
+                VALUES (?, ?, ?, 'Direct Whitelist Test', ?)
+            """, (script_id, key_a, user_a, now_iso))
+            await conn.commit()
+
+            # Verify Whitelist lookup for User A
+            c = await conn.execute("SELECT * FROM licenses WHERE discord_id = ? AND script_id = ?", (user_a, script_id))
+            row = await c.fetchone()
+            assert row is not None
+            assert row["license_key"] == key_a
+
+            # 3. Simulate Force HWID Reset
+            hwid_mock = hashlib.sha256(b"user_a_device").hexdigest()
+            await conn.execute("UPDATE licenses SET hwid = ? WHERE id = ?", (hwid_mock, row["id"]))
+            await conn.commit()
+
+            await conn.execute("UPDATE licenses SET hwid = NULL WHERE id = ?", (row["id"],))
+            await conn.commit()
+            c2 = await conn.execute("SELECT hwid FROM licenses WHERE id = ?", (row["id"],))
+            assert (await c2.fetchone())["hwid"] is None
+
+            # 4. Transfer key from User A to User B
+            await conn.execute("UPDATE licenses SET discord_id = ? WHERE id = ?", (user_b, row["id"]))
+            await conn.commit()
+
+            c3 = await conn.execute("SELECT discord_id FROM licenses WHERE id = ?", (row["id"],))
+            assert (await c3.fetchone())["discord_id"] == user_b
+
+            # 5. Remove Whitelist (Unwhitelist User B)
+            await conn.execute("DELETE FROM licenses WHERE id = ?", (row["id"],))
+            await conn.commit()
+
+            c4 = await conn.execute("SELECT * FROM licenses WHERE id = ?", (row["id"],))
+            assert await c4.fetchone() is None
+
+    asyncio.run(_run())
+
+

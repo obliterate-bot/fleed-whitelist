@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Enterprise Security Console — FleedGuard</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=2.2.1">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23FACC15'><path d='M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z'/></svg>">
 </head>
 <body>
@@ -170,7 +170,7 @@
       </div>
 
       <!-- 24-Hour Telemetry Volume Chart & Quick Launch -->
-      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom:24px;">
+      <div class="telemetry-row">
         <div class="card">
           <div class="card-header">
             <h3 class="card-title"><i class="fa-solid fa-chart-column" style="color:var(--gold-primary);"></i> 24-Hour Execution & Threat Telemetry</h3>
@@ -214,7 +214,7 @@
       </div>
 
       <!-- Top Roblox Experiences & Top Executors Distribution -->
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+      <div class="rankings-row">
         <div class="card">
           <div class="card-header">
             <h3 class="card-title"><i class="fa-solid fa-gamepad" style="color:var(--gold-primary);"></i> Top Roblox Experiences</h3>
@@ -1001,6 +1001,6 @@ async function createLicense(slug, key, discordId, note) {
   <!-- Dynamic Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2.2.1"></script>
 </body>
 </html>

@@ -257,7 +257,6 @@ function renderOverviewChart(hourlyData) {
   if (!container) return;
 
   if (!hourlyData || hourlyData.length === 0) {
-    // Generate dummy hourly labels for zero-state
     hourlyData = [];
     const now = new Date();
     for (let i = 23; i >= 0; i--) {
@@ -271,55 +270,64 @@ function renderOverviewChart(hourlyData) {
     }
   }
 
-  const maxVal = Math.max(...hourlyData.map(d => d.total || 0), 5);
-  const chartHeight = 160;
-  const barWidth = 100 / hourlyData.length;
+  const svgWidth = 1000;
+  const chartHeight = 150;
+  const maxVal = Math.max(...hourlyData.map(d => (d.success || 0) + (d.blocked || 0)), 5);
+  const slotWidth = svgWidth / hourlyData.length;
+  const barWidth = slotWidth * 0.62;
 
   let barsSvg = "";
   hourlyData.forEach((d, idx) => {
-    const total = d.total || 0;
     const succ = d.success || 0;
     const block = d.blocked || 0;
-    
-    const succHeight = (succ / maxVal) * chartHeight;
-    const blockHeight = (block / maxVal) * chartHeight;
-    const totalHeight = succHeight + blockHeight;
-    
-    const xPos = idx * barWidth + barWidth * 0.15;
-    const widthPct = barWidth * 0.7;
+    const total = succ + block;
 
-    // Success bar
-    const ySucc = chartHeight - succHeight;
+    const x = idx * slotWidth + (slotWidth - barWidth) / 2;
+
+    // Subtle baseline indicator slot (always visible even when 0)
     barsSvg += `
-      <rect class="chart-bar-success" x="${xPos}%" y="${ySucc}" width="${widthPct}%" height="${succHeight}" title="${d.hour}: ${succ} Deliveries, ${block} Blocked">
-        <title>${d.hour}: ${succ} Deliveries, ${block} Blocked</title>
+      <rect x="${x}" y="${chartHeight - 4}" width="${barWidth}" height="4" rx="2" fill="rgba(255,255,255,0.06)">
+        <title>${d.hour}: 0 Handshakes</title>
       </rect>
     `;
 
-    // Blocked bar (stacked on top)
-    if (block > 0) {
-      const yBlock = ySucc - blockHeight;
-      barsSvg += `
-        <rect class="chart-bar-blocked" x="${xPos}%" y="${yBlock}" width="${widthPct}%" height="${blockHeight}">
-          <title>${d.hour}: ${block} Blocked Threats</title>
-        </rect>
-      `;
+    if (total > 0) {
+      const succH = Math.max((succ / maxVal) * chartHeight, succ > 0 ? 5 : 0);
+      const blockH = Math.max((block / maxVal) * chartHeight, block > 0 ? 5 : 0);
+
+      const ySucc = chartHeight - succH;
+      if (succ > 0) {
+        barsSvg += `
+          <rect class="chart-bar-success" x="${x}" y="${ySucc}" width="${barWidth}" height="${succH}" rx="3">
+            <title>${d.hour}: ${succ} Deliveries</title>
+          </rect>
+        `;
+      }
+
+      if (block > 0) {
+        const yBlock = ySucc - blockH;
+        barsSvg += `
+          <rect class="chart-bar-blocked" x="${x}" y="${yBlock}" width="${barWidth}" height="${blockH}" rx="3">
+            <title>${d.hour}: ${block} Blocked Threats</title>
+          </rect>
+        `;
+      }
     }
 
-    // Hour label on X-axis (every 4th hour)
+    // Hour label on X-axis (every 4th hour and last)
     if (idx % 4 === 0 || idx === hourlyData.length - 1) {
       barsSvg += `
-        <text class="chart-axis-label" x="${xPos + widthPct / 2}%" y="${chartHeight + 20}" text-anchor="middle">${d.hour}</text>
+        <text class="chart-axis-label" x="${x + barWidth / 2}" y="${chartHeight + 24}" text-anchor="middle">${d.hour}</text>
       `;
     }
   });
 
   container.innerHTML = `
-    <svg class="chart-svg" viewBox="0 0 1000 ${chartHeight + 30}" preserveAspectRatio="none">
+    <svg class="chart-svg" viewBox="0 0 ${svgWidth} ${chartHeight + 32}" style="width:100%; height:100%;">
       <!-- Grid lines -->
-      <line x1="0" y1="0" x2="1000" y2="0" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
-      <line x1="0" y1="${chartHeight / 2}" x2="1000" y2="${chartHeight / 2}" stroke="rgba(255,255,255,0.05)" stroke-width="1" />
-      <line x1="0" y1="${chartHeight}" x2="1000" y2="${chartHeight}" stroke="rgba(255,255,255,0.1)" stroke-width="1" />
+      <line x1="0" y1="10" x2="${svgWidth}" y2="10" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="4" />
+      <line x1="0" y1="${chartHeight / 2}" x2="${svgWidth}" y2="${chartHeight / 2}" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="4" />
+      <line x1="0" y1="${chartHeight}" x2="${svgWidth}" y2="${chartHeight}" stroke="rgba(255,255,255,0.12)" stroke-width="1" />
       ${barsSvg}
     </svg>
   `;

@@ -265,7 +265,7 @@ async def check_and_enforce_anomalies(conn, script: Dict, license_row: Dict, rob
             await conn.commit()
             
             # Send Discord Alert Webhook
-            webhook_url = script.get("discord_webhook")
+            webhook_url = script["discord_webhook"] if "discord_webhook" in script.keys() else None
             if webhook_url:
                 fields = [
                     {"name": "License Key", "value": f"`{clean_key}`", "inline": True},
@@ -300,7 +300,7 @@ async def check_and_enforce_anomalies(conn, script: Dict, license_row: Dict, rob
         """, (script["id"], license_row["id"], clean_key, license_row["hwid"], client_ip, executor, roblox_username, uid, place_id, job_id, game_name, ban_reason, now_iso))
         await conn.commit()
 
-        webhook_url = script.get("discord_webhook")
+        webhook_url = script["discord_webhook"] if "discord_webhook" in script.keys() else None
         if webhook_url:
             fields = [
                 {"name": "License Key", "value": f"`{clean_key}`", "inline": True},
@@ -1927,6 +1927,7 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
                     ip_address = excluded.ip_address,
                     is_kicked = 0
             """, (row["script_id"], row["license_key"], bound_hwid, rbx_user, rbx_uid, game_name, place_id, job_id, exec_name, client_ip, now_iso, now_iso))
+            await conn.commit()
         except Exception:
             pass
 
@@ -2395,12 +2396,15 @@ async def kick_player_session(req: KickPlayerRequest, user: Dict = Depends(get_c
 
 
 @app.get("/api/sessions/active")
-async def get_active_sessions(user: Dict = Depends(get_current_user)):
+async def get_active_sessions(show_all: bool = False, user: Dict = Depends(get_current_user)):
     """
-    Returns live and recent in-game sessions with real-time heartbeat pulse and presence status.
+    Returns strictly live and idle in-game sessions with real-time heartbeat pulse.
+    Filters out players who have disconnected / left the game.
     """
     now = datetime.now(timezone.utc)
     is_admin = user.get("role") == "admin"
+    # Heartbeat threshold: 2.5 minutes maximum for active/idle in-game presence
+    cutoff = (now - timedelta(seconds=150)).isoformat()
 
     async with db.get_db() as conn:
         if is_admin:
@@ -2410,9 +2414,10 @@ async def get_active_sessions(user: Dict = Depends(get_current_user)):
                        s.name as script_name, s.slug as script_slug
                 FROM live_sessions l
                 LEFT JOIN scripts s ON l.script_id = s.id
+                WHERE l.last_heartbeat >= ? OR l.is_kicked = 1
                 ORDER BY l.last_heartbeat DESC
                 LIMIT 50
-            """)
+            """, (cutoff,))
         else:
             cursor = await conn.execute("""
                 SELECT l.id, l.license_key, l.hwid, l.roblox_username, l.roblox_user_id, l.game_name, l.place_id, 
@@ -2420,41 +2425,11 @@ async def get_active_sessions(user: Dict = Depends(get_current_user)):
                        s.name as script_name, s.slug as script_slug
                 FROM live_sessions l
                 JOIN scripts s ON l.script_id = s.id
-                WHERE s.user_id = ?
+                WHERE s.user_id = ? AND (l.last_heartbeat >= ? OR l.is_kicked = 1)
                 ORDER BY l.last_heartbeat DESC
                 LIMIT 50
-            """, (user["id"],))
+            """, (user["id"], cutoff))
         rows = await cursor.fetchall()
-
-        # If live_sessions is currently empty, fallback to recent execution logs
-        if not rows:
-            if is_admin:
-                cursor_logs = await conn.execute("""
-                    SELECT e.id, e.license_key, e.hwid, e.roblox_username, e.roblox_user_id, e.game_name, e.place_id,
-                           e.job_id, e.executor_name, e.ip_address, e.timestamp as started_at, e.timestamp as last_heartbeat,
-                           (CASE WHEN e.status = 'SESSION_KICKED' THEN 1 ELSE 0 END) as is_kicked,
-                           e.details as kick_reason,
-                           s.name as script_name, s.slug as script_slug
-                    FROM execution_logs e
-                    LEFT JOIN scripts s ON e.script_id = s.id
-                    WHERE e.status = 'SUCCESS' OR e.status = 'SESSION_KICKED'
-                    ORDER BY e.id DESC
-                    LIMIT 50
-                """)
-            else:
-                cursor_logs = await conn.execute("""
-                    SELECT e.id, e.license_key, e.hwid, e.roblox_username, e.roblox_user_id, e.game_name, e.place_id,
-                           e.job_id, e.executor_name, e.ip_address, e.timestamp as started_at, e.timestamp as last_heartbeat,
-                           (CASE WHEN e.status = 'SESSION_KICKED' THEN 1 ELSE 0 END) as is_kicked,
-                           e.details as kick_reason,
-                           s.name as script_name, s.slug as script_slug
-                    FROM execution_logs e
-                    JOIN scripts s ON e.script_id = s.id
-                    WHERE s.user_id = ? AND (e.status = 'SUCCESS' OR e.status = 'SESSION_KICKED')
-                    ORDER BY e.id DESC
-                    LIMIT 50
-                """, (user["id"],))
-            rows = await cursor_logs.fetchall()
 
     results = []
     for r in rows:
@@ -2474,12 +2449,13 @@ async def get_active_sessions(user: Dict = Depends(get_current_user)):
         elif secs_ago <= 120:
             presence_state = "idle"
             presence_label = "IDLE / IN-GAME"
-        elif secs_ago <= 86400:
-            presence_state = "recent"
-            presence_label = "RECENT"
         else:
             presence_state = "offline"
             presence_label = "LEFT GAME"
+
+        # Strictly exclude players who have left the game unless show_all is requested
+        if not show_all and presence_state == "offline":
+            continue
 
         d["seconds_ago"] = secs_ago
         d["presence_state"] = presence_state

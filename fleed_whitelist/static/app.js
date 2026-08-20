@@ -2094,12 +2094,14 @@ async function loadActiveSessions() {
 
   try {
     const sessions = await apiCall("/api/sessions/active");
-    if (!sessions || sessions.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 20px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-check" style="color:var(--success-color); margin-right:6px;"></i>No active in-game sessions in the last 15 minutes.</td></tr>`;
+    const activeList = (sessions || []).filter(s => s.presence_state === "online" || s.presence_state === "idle" || s.is_kicked);
+
+    if (!activeList || activeList.length === 0) {
+      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color:var(--text-zinc-500);"><i class="fa-solid fa-signal" style="color:var(--gold-primary); margin-right:6px;"></i> No players currently in-game (Online or Idle). Scanning every 5s...</td></tr>`;
       return;
     }
 
-    tableBody.innerHTML = sessions.map(s => {
+    tableBody.innerHTML = activeList.map(s => {
       const avatarUrl = (s.roblox_user_id && s.roblox_user_id > 0)
         ? `/api/roblox/avatar/${s.roblox_user_id}`
         : `/api/roblox/avatar/1`;
@@ -2120,16 +2122,10 @@ async function loadActiveSessions() {
             LIVE (${s.seconds_ago}s ago)
           </span>
         `;
-      } else if (s.presence_state === "idle") {
-        presenceBadge = `
-          <span class="badge badge-zinc" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#facc15; border-color:rgba(250,204,21,0.3);">
-            <i class="fa-solid fa-clock" style="font-size:8px;"></i> IDLE (${s.seconds_ago}s ago)
-          </span>
-        `;
       } else {
         presenceBadge = `
-          <span class="badge badge-zinc" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:var(--text-zinc-500);">
-            <i class="fa-solid fa-power-off" style="font-size:8px;"></i> LEFT GAME
+          <span class="badge badge-zinc" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#facc15; border-color:rgba(250,204,21,0.3); font-weight:600;">
+            <i class="fa-solid fa-clock" style="font-size:8px;"></i> IDLE (${s.seconds_ago}s ago)
           </span>
         `;
       }

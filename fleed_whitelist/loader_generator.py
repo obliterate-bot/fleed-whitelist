@@ -80,6 +80,21 @@ if not FLEED_KEY or _type(FLEED_KEY) ~= "string" or #FLEED_KEY < 4 then
     return warn("[FleedGuard] ERROR: No license key provided! Please set `getgenv().FleedKey = 'YOUR_KEY'` before executing.")
 end
 
+-- 1. Security Kick Enforcer
+local function securityKick(reason)
+    if game and game.Players and game.Players.LocalPlayer then
+        _pcall(function()
+            game.Players.LocalPlayer:Kick("[FleedGuard Security] " .. _tostring(reason))
+        end)
+    end
+end
+
+-- Check 0: Environment Dumper & Global Interception Trap
+if getgenv and (_type(getgenv().Bypass) ~= "nil" or _type(getgenv().FleedFetcher) ~= "nil" or _type(getgenv().Decoded) ~= "nil") then
+    securityKick("Extractor / dumper environment detected.")
+    return
+end
+
 -- 1. Deep Anti-Hook & Native Closure Integrity Guard
 local function isNative(fn)
     if not fn or _type(fn) ~= "function" then return false end
@@ -134,9 +149,7 @@ end
 
 -- Validate core primitive integrity
 if not isNative(_string_byte) or not isNative(_string_char) or not isNative(_pcall) or not isNative(_tostring) or detectMetatableTamper() then
-    if game and game.Players and game.Players.LocalPlayer then
-        game.Players.LocalPlayer:Kick("[FleedGuard Security] Critical runtime environment tampering detected.")
-    end
+    securityKick("Critical runtime environment tampering detected.")
     return
 end
 
@@ -147,7 +160,8 @@ local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
 local custom_req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
 if not custom_req or not isNative(custom_req) then
-    return warn("[FleedGuard] CRITICAL: Your executor does not support secure, unhooked HTTP requests.")
+    securityKick("Unsupported or hooked HTTP executor environment.")
+    return
 end
 
 -- 3. Multi-Metric Hardware Fingerprint Acquisition
@@ -244,12 +258,14 @@ local init_resp = custom_req({{
 if init_resp.StatusCode ~= 200 then
     local err_data = _pcall(function() return HttpService:JSONDecode(init_resp.Body) end)
     local msg = (_type(err_data) == "table" and err_data.message) or init_resp.Body or "Connection error"
-    return warn("[FleedGuard] Authentication Failed: " .. _tostring(msg))
+    securityKick("Authentication Failed: " .. _tostring(msg))
+    return
 end
 
 local init_data = HttpService:JSONDecode(init_resp.Body)
 if not init_data.success then
-    return warn("[FleedGuard] Access Denied: " .. _tostring(init_data.message))
+    securityKick("Access Denied: " .. _tostring(init_data.message))
+    return
 end
 
 -- 6. Step 2: Proof Signature Computation & Handshake Verification
@@ -280,13 +296,16 @@ if verify_resp.StatusCode ~= 200 then
             err_msg = _tostring(decoded.message)
         end
     end)
-    return warn("[FleedGuard] Payload Delivery Error: " .. _tostring(err_msg))
+    securityKick("Security Payload Rejection: " .. _tostring(err_msg))
+    return
 end
 
 local verify_data = HttpService:JSONDecode(verify_resp.Body)
 if not verify_data.success then
-    return warn("[FleedGuard] Execution Error: " .. _tostring(verify_data.message))
+    securityKick("Execution Error: " .. _tostring(verify_data.message))
+    return
 end
+
 
 -- 7. Zero-Transmission Local Session Key Derivation
 local session_key = sha256_hex(client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. FLEED_KEY .. ":" .. HWID)

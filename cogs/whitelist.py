@@ -3,11 +3,56 @@ from discord.ext import commands
 import datetime
 import secrets
 import aiohttp
+import re
 from typing import Optional, Union
 import config
 from utils import fleed_embed, success_embed, error_embed, warn_embed, find_role, send_group_help
 from fleed_whitelist.database import db
 from fleed_whitelist.loader_generator import loader_generator
+
+def parse_whitelist_duration(time_str: Optional[str]) -> tuple[Optional[str], str]:
+    """
+    Parses flexible duration inputs:
+    '10m', '2h', '7d', '30d', '1w', '1mo', '365d', 'lifetime', '0', 'permanent', 'none', None
+    Returns: (expires_at_iso, human_label)
+    """
+    if not time_str:
+        return None, "lifetime"
+    s = str(time_str).strip().lower()
+    if s in ["0", "lifetime", "perm", "permanent", "infinite", "none", "-1", "forever", "null"]:
+        return None, "lifetime"
+
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+    # If it's a plain integer, treat as days
+    if s.isdigit():
+        days = int(s)
+        if days <= 0:
+            return None, "lifetime"
+        exp = now_utc + datetime.timedelta(days=days)
+        return exp.isoformat(), f"{days} days"
+
+    # Parse units (m=minutes, h=hours, d=days, w=weeks, mo=months, y=years)
+    units = {
+        's': 1, 'sec': 1, 'secs': 1, 'second': 1, 'seconds': 1,
+        'm': 60, 'min': 60, 'mins': 60, 'minute': 60, 'minutes': 60,
+        'h': 3600, 'hr': 3600, 'hrs': 3600, 'hour': 3600, 'hours': 3600,
+        'd': 86400, 'day': 86400, 'days': 86400,
+        'w': 604800, 'week': 604800, 'weeks': 604800,
+        'mo': 2592000, 'month': 2592000, 'months': 2592000,
+        'y': 31536000, 'yr': 31536000, 'year': 31536000, 'years': 31536000
+    }
+    matches = re.findall(r'(\d+)\s*([a-zA-Z]+)', s)
+    if matches:
+        total_seconds = 0
+        for val, unit in matches:
+            if unit in units:
+                total_seconds += int(val) * units[unit]
+        if total_seconds > 0:
+            exp = now_utc + datetime.timedelta(seconds=total_seconds)
+            return exp.isoformat(), s
+
+    return None, "lifetime"
 
 async def check_script_permission(ctx, slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
     """
@@ -542,9 +587,10 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         await ctx.send(embed=embed)
 
     @whitelist_group.command(name="add", aliases=["user", "create"])
-    async def add_whitelist_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str, duration_days: int = 0, *, note: str = ""):
+    async def add_whitelist_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str, duration: str = "0", *, note: str = ""):
         """
         Whitelists a user directly by @mention or Discord ID.
+        Duration supports '10m', '1h', '7d', '30d', 'lifetime', etc.
         """
         clean_slug = slug.strip().lower()
         ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
@@ -552,7 +598,8 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
-        
+        expires_at, duration_label = parse_whitelist_duration(duration)
+
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
@@ -560,13 +607,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                 return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
 
             key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
-            now_utc = datetime.datetime.now(datetime.timezone.utc)
-            now_iso = now_utc.isoformat()
-            expires_at = None
-            if duration_days > 0:
-                expires_at = (now_utc + datetime.timedelta(days=duration_days)).isoformat()
-
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
             user_note = note or f"whitelisted by {ctx.author.name}"
+            
             await conn.execute("""
                 INSERT INTO licenses (script_id, license_key, discord_id, note, expires_at, created_at)
                 VALUES (?, ?, ?, ?, ?, ?)
@@ -590,9 +633,48 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         embed = success_embed(
             f"whitelisted <@{discord_id}> for **{script['name']}**.\n\n"
             f"key: `{key}`\n"
-            f"duration: {f'{duration_days} days' if duration_days > 0 else 'lifetime'}\n"
+            f"duration: {duration_label}\n"
             f"note: {user_note}{role_text}\n\n"
             f"loadstring:\n```lua\n{loadstring_snippet}\n```",
+            ctx.author
+        )
+        await ctx.send(embed=embed)
+
+    @whitelist_group.command(name="genkey", aliases=["gen", "generate", "createkey"])
+    async def gen_key_cmd(self, ctx, slug: str, duration: str = "0", *, note: str = ""):
+        """
+        Generates an unlinked license key for buyers to redeem.
+        Duration supports '10m', '1h', '7d', '30d', 'lifetime', etc.
+        """
+        clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
+        expires_at, duration_label = parse_whitelist_duration(duration)
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+            script = await cursor.fetchone()
+            if not script:
+                return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
+
+            key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            user_note = note or f"generated by {ctx.author.name}"
+            
+            await conn.execute("""
+                INSERT INTO licenses (script_id, license_key, discord_id, note, expires_at, created_at)
+                VALUES (?, ?, NULL, ?, ?, ?)
+            """, (script["id"], key, user_note, expires_at, now_iso))
+            await conn.commit()
+
+        embed = success_embed(
+            f"generated license key for **{script['name']}**.\n\n"
+            f"key: `{key}`\n"
+            f"duration: {duration_label}\n"
+            f"note: {user_note}\n\n"
+            f"buyers can redeem this key via `{ctx.prefix}redeem {key}` or the control panel.",
             ctx.author
         )
         await ctx.send(embed=embed)

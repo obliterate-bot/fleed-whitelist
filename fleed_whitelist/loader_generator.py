@@ -68,32 +68,45 @@ end
 local function isNative(fn)
     if not fn or _type(fn) ~= "function" then return false end
     
-    -- Check 1: debug.info source verification
-    if debug and debug.info then
-        local src = debug.info(fn, "s")
-        if src and src ~= "[C]" and not _string_find(src, "builtin") then
-            return false
-        end
-        -- Check upvalues count for native C closures (should typically be 0 or C-level)
-        local nups = debug.info(fn, "u")
-        if islclosure and islclosure(fn) then
+    -- Check 1: islclosure check (instant detection of Lua function hooks)
+    if islclosure then
+        local is_l = false
+        local ok = _pcall(function() is_l = islclosure(fn) end)
+        if ok and is_l then
             return false
         end
     end
-    
-    -- Check 2: iscclosure detection if supported by executor
-    if iscclosure and not iscclosure(fn) then
-        return false
+
+    -- Check 2: iscclosure detection if supported
+    if iscclosure then
+        local is_c = true
+        local ok = _pcall(function() is_c = iscclosure(fn) end)
+        if ok and not is_c then
+            return false
+        end
+    end
+
+    -- Check 3: Safe debug.info check (handling standard Luau debug.info signature)
+    if debug and debug.info then
+        local src = nil
+        local ok = _pcall(function()
+            src = debug.info(fn, "s")
+        end)
+        if ok and src then
+            if src ~= "[C]" and not _string_find(src, "builtin") and not _string_find(src, "native") then
+                return false
+            end
+        end
     end
     
     return true
 end
 
--- Check 3: Metamethod & Namecall Hook Detection
+-- Check 4: Metamethod & Namecall Hook Detection
 local function detectMetatableTamper()
     if getrawmetatable and checkcaller then
-        local mt = getrawmetatable(game)
-        if mt and _type(mt) == "table" then
+        local ok, mt = _pcall(getrawmetatable, game)
+        if ok and mt and _type(mt) == "table" then
             local nc = _rawget(mt, "__namecall")
             local idx = _rawget(mt, "__index")
             if nc and not isNative(nc) then return true end

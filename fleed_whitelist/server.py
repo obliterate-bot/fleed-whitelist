@@ -902,8 +902,10 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
         raw_code = row["raw_source"]
         
-        # If O_bfuscate 1.1 mode is selected (mode 2), virtualize the payload with O_bfuscate
-        if row["is_obfuscated_mode"] == 2:
+        # If script is in protected mode (mode 1 or 2), apply O_bfuscate 1.1 VM virtualization
+        # This guarantees that even if an attacker writes a custom fetcher with a valid key,
+        # they will only ever decrypt heavily virtualized VM bytecode instead of raw source code.
+        if row["is_obfuscated_mode"] in (1, 2):
             raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense")
 
         effective_hwid = matching_hwid or req.hwid or bound_hwid

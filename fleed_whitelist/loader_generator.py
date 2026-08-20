@@ -157,19 +157,12 @@ end
 local HWID = getHardwareID()
 local EXECUTOR = (identifyexecutor and identifyexecutor()) or (syn and "Synapse") or "Universal"
 
--- Telemetry metrics
+-- Telemetry metrics (instant resolution without yielding web requests)
 local rbx_username = (LocalPlayer and LocalPlayer.Name) or "Unknown"
 local rbx_user_id = (LocalPlayer and LocalPlayer.UserId) or 0
 local rbx_place_id = game.PlaceId or 0
 local rbx_job_id = _tostring(game.JobId or "")
 local rbx_game_name = "Roblox Game"
-_pcall(function()
-    local Market = game:GetService("MarketplaceService")
-    local info = Market:GetProductInfo(game.PlaceId)
-    if info and info.Name then
-        rbx_game_name = _tostring(info.Name)
-    end
-end)
 
 -- 4. Cryptographic Hashing & In-Memory Stream Decryption
 local function sha256_hex(str)
@@ -187,17 +180,20 @@ local function sha256_hex(str)
     return _string_format("%08x", h)
 end
 
+-- Optimized RC4 stream decrypt using chunked string conversion to prevent GC pauses
 local function stream_decrypt(cipher_bytes, key_bytes)
-    local S = {{}}
+    local S = table.create(256)
     for i = 0, 255 do S[i] = i end
     local j = 0
+    local key_len = #key_bytes
     for i = 0, 255 do
-        j = (j + S[i] + _string_byte(key_bytes, (i % #key_bytes) + 1)) % 256
+        j = (j + S[i] + _string_byte(key_bytes, (i % key_len) + 1)) % 256
         S[i], S[j] = S[j], S[i]
     end
     local i, j2 = 0, 0
-    local out = {{}}
-    for idx = 1, #cipher_bytes do
+    local len = #cipher_bytes
+    local out = table.create(len)
+    for idx = 1, len do
         i = (i + 1) % 256
         j2 = (j2 + S[i]) % 256
         S[i], S[j2] = S[j2], S[i]
@@ -280,7 +276,6 @@ local session_key = sha256_hex(client_challenge .. ":" .. server_challenge .. ":
 
 -- 8. In-Memory Decryption, AEAD Tag Verification & Stream Parsing
 local raw_b64 = verify_data.payload
-local auth_tag = verify_data.auth_tag
 local decode_func = (crypt and crypt.base64decode and isNative(crypt.base64decode) and crypt.base64decode)
     or (syn and syn.crypt and syn.crypt.base64_decode and isNative(syn.crypt.base64_decode) and syn.crypt.base64_decode)
 local decoded_str = ""
@@ -300,8 +295,9 @@ else
     end))
 end
 
-local cipher_bytes = {{}}
-for i = 1, #decoded_str do
+local decoded_len = #decoded_str
+local cipher_bytes = table.create(decoded_len)
+for i = 1, decoded_len do
     cipher_bytes[i] = _string_byte(decoded_str, i)
 end
 

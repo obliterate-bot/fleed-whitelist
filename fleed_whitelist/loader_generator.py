@@ -513,8 +513,6 @@ task.spawn(exec_fn)
 
 '''
 
-        if obfuscate:
-            return LoaderGenerator.obfuscate_lua_payload(raw_loader)
         return raw_loader
 
     _custom_runtime_url = None

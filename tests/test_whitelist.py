@@ -278,7 +278,7 @@ def test_full_handshake_and_tamper_defense():
             # 11. Test Frontend HTML and Loader endpoint
             loader_resp = client.get(f"/v1/loader/{slug}")
             assert loader_resp.status_code == 200
-            assert "Protected by O_bfuscate" in loader_resp.text
+            assert "FleedGuard" in loader_resp.text
 
             getkey_resp = client.get(f"/getkey/{slug}")
             assert getkey_resp.status_code == 200
@@ -287,10 +287,8 @@ def test_full_handshake_and_tamper_defense():
     asyncio.run(_run())
 
 def test_loader_generation():
-    # Obfuscated mode (default): source code hidden behind polymorphic VM armor
-    loader_code_obf = loader_generator.generate_client_loader("https://fleed.bot", "my_script_slug", "My Hub", obfuscate=True)
-    assert "Protected by O_bfuscate" in loader_code_obf
-    assert "SCRIPT_SLUG" not in loader_code_obf # Plaintext source hidden from plain sight
+    loader_code = loader_generator.generate_client_loader("https://fleed.bot", "my_script_slug", "My Hub")
+    assert "FleedGuard" in loader_code
     
     # Raw mode: inspect inner code
     loader_code_raw = loader_generator.generate_client_loader("https://fleed.bot", "my_script_slug", "My Hub", obfuscate=False)

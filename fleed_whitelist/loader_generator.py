@@ -12,8 +12,16 @@ class LoaderGenerator:
         If an attacker attempts to regex-match `{...}` or XOR keys, the decoded honeypot
         payload executes an immediate, uncatchable player kick.
         """
-        from .crypto_engine import crypto_engine
+        try:
+            from .crypto_engine import crypto_engine
+        except Exception:
+            try:
+                from fleed_whitelist.crypto_engine import crypto_engine
+            except Exception:
+                from crypto_engine import crypto_engine
+
         import random
+
 
         # 1. Compile the real loader into O_bfuscate 1.1 Virtual Machine
         try:
@@ -23,7 +31,7 @@ class LoaderGenerator:
 
         # 2. Poison Canary / Honeypot: If any scraper tries to extract byte arrays or XOR keys,
         # executing the scraped result instantly kicks the player from the game
-        canary_kick_code = 'if game and game.Players and game.Players.LocalPlayer then pcall(function() game.Players.LocalPlayer:Kick("[FleedGuard Security] Automated scraper / bypass attempt detected.") end) end;'
+        canary_kick_code = 'local Plrs=game:GetService("Players"); local p=Plrs.LocalPlayer or Plrs.PlayerAdded:Wait(); if p then p:Kick("[FleedGuard Security] Automated scraper / bypass attempt detected.") end;'
         fake_xor = random.randint(100, 250)
         poison_bytes = ",".join(str(ord(c) ^ fake_xor) for c in canary_kick_code)
 

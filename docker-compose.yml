@@ -11,7 +11,7 @@ services:
       - "8000:8000"
     environment:
       - PORT=8000
-      - FLEED_MASTER_SECRET=${FLEED_MASTER_SECRET:-fleed_guard_super_secret_master_key_2026_x89a!}
+      - FLEED_MASTER_SECRET=${FLEED_MASTER_SECRET:?FLEED_MASTER_SECRET must be set}
       - FLEED_WHITELIST_DB=/app/data/fleed_whitelist.db
     volumes:
       - ./data:/app/data

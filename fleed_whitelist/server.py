@@ -29,12 +29,13 @@ os.makedirs(TEMPLATES_DIR, exist_ok=True)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.init()
-    # Create default demo/admin account if empty
+    # Create default demo/admin account if empty with a cryptographically secure random one-time password
     async with db.get_db() as conn:
         cursor = await conn.execute("SELECT COUNT(*) as cnt FROM users")
         row = await cursor.fetchone()
         if row and row["cnt"] == 0:
-            pw_hash, salt = crypto_engine.hash_password("FleedAdmin2026!")
+            initial_password = os.getenv("FLEED_INITIAL_ADMIN_PASSWORD") or secrets.token_urlsafe(16)
+            pw_hash, salt = crypto_engine.hash_password(initial_password)
             api_key = f"fg_live_{secrets.token_hex(20)}"
             now_iso = datetime.now(timezone.utc).isoformat()
             await conn.execute("""
@@ -42,6 +43,11 @@ async def lifespan(app: FastAPI):
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, ("admin", "admin@fleed.bot", pw_hash, salt, api_key, "admin", now_iso))
             await conn.commit()
+            if not os.getenv("FLEED_INITIAL_ADMIN_PASSWORD"):
+                import logging
+                logging.getLogger("fleedguard").warning(
+                    f"[FLEEDGUARD SETUP] One-Time Generated Admin Credentials -> Username: admin | Password: {initial_password}"
+                )
     yield
 
 app = FastAPI(
@@ -52,10 +58,11 @@ app = FastAPI(
 )
 
 # CORS middleware for developer integrations & web UI
+# Note: Wildcard origins ('*') cannot be paired with allow_credentials=True per CORS spec
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -364,11 +371,17 @@ async def disable_2fa(req: Enable2FARequest, user: Dict = Depends(get_current_us
     return {"success": True, "message": "2FA disabled"}
 
 # ----------------- Script Management API -----------------
+SCRIPT_METADATA_COLUMNS = """
+    s.id, s.user_id, s.name, s.slug, s.description, s.version,
+    s.is_obfuscated_mode, s.killswitch_active, s.killswitch_reason,
+    s.discord_webhook, s.buyer_role_id, s.guild_id, s.created_at, s.updated_at
+"""
+
 @app.get("/api/scripts")
 async def list_scripts(user: Dict = Depends(get_current_user)):
     async with db.get_db() as conn:
-        cursor = await conn.execute("""
-            SELECT s.*, 
+        cursor = await conn.execute(f"""
+            SELECT {SCRIPT_METADATA_COLUMNS}, 
                    COUNT(l.id) as total_licenses,
                    SUM(CASE WHEN l.is_banned = 0 THEN 1 ELSE 0 END) as active_licenses
             FROM scripts s
@@ -402,7 +415,7 @@ async def create_script(req: ScriptCreateRequest, user: Dict = Depends(get_curre
 @app.get("/api/scripts/{script_id}")
 async def get_script(script_id: int, user: Dict = Depends(get_current_user)):
     async with db.get_db() as conn:
-        cursor = await conn.execute("SELECT * FROM scripts WHERE id = ? AND user_id = ?", (script_id, user["id"]))
+        cursor = await conn.execute(f"SELECT {SCRIPT_METADATA_COLUMNS} FROM scripts s WHERE s.id = ? AND s.user_id = ?", (script_id, user["id"]))
         row = await cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Script not found")
@@ -870,23 +883,17 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
 
 
         # 3. Generate Handshake Challenge & Nonce with zero-transmission session key
-        challenge = crypto_engine.create_handshake_challenge(
-            script_id=script["id"],
-            license_key=resolved_license_key,
-            client_challenge=req.client_challenge,
-            hwid=req.hwid
-        )
+        challenge = crypto_engine.create_handshake_challenge()
         
         await conn.execute("""
-            INSERT OR REPLACE INTO active_nonces (nonce, script_id, license_key, client_challenge, server_challenge, session_key, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, expires_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO active_nonces (nonce, script_id, license_key, client_challenge, server_challenge, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             challenge["nonce"],
             script["id"],
             resolved_license_key,
             req.client_challenge,
             challenge["server_challenge"],
-            challenge["session_key"],
             req.executor,
             req.roblox_username,
             req.roblox_user_id,
@@ -993,10 +1000,15 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         )
 
         # If script is in protected mode (mode 1 or 2), apply O_bfuscate 1.1 VM virtualization
-        # This guarantees that even if an attacker writes a custom fetcher with a valid key,
-        # they will only ever decrypt heavily virtualized VM bytecode instead of raw source code.
+        # Under fail-closed security policy, if obfuscation fails, fail closed rather than leaking plaintext
         if row["is_obfuscated_mode"] in (1, 2):
-            raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense")
+            try:
+                raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense", fail_closed=True)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Security policy violation: Protected script virtualization failed and fail-closed is active."
+                )
 
         effective_hwid = matching_hwid or req.hwid or bound_hwid
         

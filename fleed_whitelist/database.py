@@ -152,7 +152,8 @@ class WhitelistDB:
                 except Exception:
                     pass
 
-            # 5. Handshake Nonces Table (Time-based Anti-Replay)
+            # 5. Handshake Nonces Table (Ephemeral Time-based Anti-Replay)
+            await conn.execute("DROP TABLE IF EXISTS active_nonces;")
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS active_nonces (
                     nonce TEXT PRIMARY KEY,
@@ -160,7 +161,6 @@ class WhitelistDB:
                     license_key TEXT NOT NULL,
                     client_challenge TEXT NOT NULL,
                     server_challenge TEXT NOT NULL,
-                    session_key TEXT NOT NULL,
                     executor_name TEXT,
                     roblox_username TEXT,
                     roblox_user_id INTEGER,

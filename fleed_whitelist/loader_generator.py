@@ -23,11 +23,8 @@ class LoaderGenerator:
         import random
 
 
-        # 1. Compile the real loader into O_bfuscate 1.1 Virtual Machine
-        try:
-            real_vm_loader = crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense")
-        except Exception:
-            real_vm_loader = lua_code
+        # 1. Compile the real loader into O_bfuscate 1.1 Virtual Machine (fail-closed)
+        real_vm_loader = crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense", fail_closed=True)
 
         # 2. Poison Canary / Honeypot: If any scraper tries to extract byte arrays or XOR keys,
         # executing the scraped result instantly kicks the player from the game
@@ -237,7 +234,7 @@ local rbx_place_id = game.PlaceId or 0
 local rbx_job_id = _tostring(game.JobId or "")
 local rbx_game_name = "Roblox Game"
 
--- 4. Cryptographic Hashing & In-Memory Stream Decryption
+-- 4. Cryptographic Hashing, HMAC & In-Memory Stream Decryption
 local function sha256_hex(str)
     if crypt and crypt.hash and isNative(crypt.hash) then
         return crypt.hash(str, "sha256")
@@ -251,6 +248,45 @@ local function sha256_hex(str)
         h = _band(h * 0x01000193, 0xFFFFFFFF)
     end
     return _string_format("%08x", h)
+end
+
+local function hmac_sha256_hex(key, msg)
+    if crypt and crypt.custom and crypt.custom.hmac and isNative(crypt.custom.hmac) then
+        local ok, res = _pcall(crypt.custom.hmac, "sha256", msg, key)
+        if ok and res then return res end
+    end
+    if crypt and crypt.hmac and isNative(crypt.hmac) then
+        local ok, res = _pcall(crypt.hmac, msg, key)
+        if ok and res then return res end
+    end
+    if syn and syn.crypt and syn.crypt.custom and syn.crypt.custom.hmac and isNative(syn.crypt.custom.hmac) then
+        local ok, res = _pcall(syn.crypt.custom.hmac, "sha256", msg, key)
+        if ok and res then return res end
+    end
+    
+    -- RFC 2104 compliant HMAC-SHA256 fallback
+    local block_size = 64
+    local k = key
+    if #k > block_size then
+        k = sha256_hex(k)
+    end
+    local k_bytes = table.create(block_size, 0)
+    for i = 1, #k do
+        k_bytes[i] = _string_byte(k, i)
+    end
+    local k_ipad = table.create(block_size)
+    local k_opad = table.create(block_size)
+    for i = 1, block_size do
+        k_ipad[i] = _string_char(_bxor(k_bytes[i], 0x36))
+        k_opad[i] = _string_char(_bxor(k_bytes[i], 0x5c))
+    end
+    local inner_hash = sha256_hex(_table_concat(k_ipad) .. msg)
+    local inner_bin = ""
+    for i = 1, #inner_hash, 2 do
+        local hex_b = _string_sub(inner_hash, i, i + 1)
+        inner_bin = inner_bin .. _string_char(_tonumber(hex_b, 16) or 0)
+    end
+    return sha256_hex(_table_concat(k_opad) .. inner_bin)
 end
 
 -- Optimized RC4 stream decrypt using chunked string conversion to prevent GC pauses
@@ -411,12 +447,10 @@ for i = 1, decoded_len do
     cipher_bytes[i] = _string_byte(decoded_str, i)
 end
 
--- 8.5 Strict Ciphertext Authentication Tag Verification
--- Verifies secret-prefix SHA-256 tag over (session_key .. nonce .. decoded_str)
+-- 8.5 Strict Ciphertext Authentication Tag Verification (HMAC-SHA256)
 local expected_tag = verify_data.auth_tag
 if expected_tag and #expected_tag > 0 then
-    local tag_seed = session_key .. nonce .. decoded_str
-    local computed_tag = sha256_hex(tag_seed)
+    local computed_tag = hmac_sha256_hex(session_key, nonce .. decoded_str)
     if computed_tag ~= expected_tag then
         securityKick("Payload integrity verification failed (tampered ciphertext).")
         return

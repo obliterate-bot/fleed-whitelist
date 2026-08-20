@@ -236,9 +236,35 @@ class WhitelistDB:
                     started_at TEXT NOT NULL,
                     last_heartbeat TEXT NOT NULL,
                     is_kicked INTEGER DEFAULT 0,
+                    kick_reason TEXT,
+                    kicked_at TEXT,
+                    kicked_by TEXT,
                     UNIQUE(license_key, hwid) ON CONFLICT REPLACE
                 )
             """)
+
+            # Migrations for live_sessions & session_kicks
+            for col, col_type in [
+                ("kick_reason", "TEXT"),
+                ("kicked_at", "TEXT"),
+                ("kicked_by", "TEXT")
+            ]:
+                try:
+                    await conn.execute(f"ALTER TABLE live_sessions ADD COLUMN {col} {col_type};")
+                except Exception:
+                    pass
+
+            for col, col_type in [
+                ("script_id", "INTEGER"),
+                ("roblox_username", "TEXT"),
+                ("roblox_user_id", "INTEGER"),
+                ("place_id", "INTEGER"),
+                ("game_name", "TEXT")
+            ]:
+                try:
+                    await conn.execute(f"ALTER TABLE session_kicks ADD COLUMN {col} {col_type};")
+                except Exception:
+                    pass
 
             # Indices for ultra-fast lookup
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);")

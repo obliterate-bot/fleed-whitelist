@@ -536,8 +536,9 @@ async function loadOverviewStats() {
     renderTopGames(stats.top_games || []);
     renderTopExecutors(stats.top_executors || []);
 
-    // Load active in-game sessions
+    // Load active in-game sessions and recent kicks
     loadActiveSessions();
+    loadRecentKicks();
 
     // Fetch system health to detect public tunnel
     loadSystemHealth();
@@ -2119,6 +2120,19 @@ async function loadActiveSessions() {
             LIVE (${s.seconds_ago}s ago)
           </span>
         `;
+      if (s.is_kicked) {
+        presenceBadge = `
+          <span class="badge badge-danger" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:700;">
+            <i class="fa-solid fa-bolt"></i> KICKED
+          </span>
+        `;
+      } else if (s.presence_state === "online") {
+        presenceBadge = `
+          <span class="badge badge-success" style="display:inline-flex; align-items:center; gap:5px; font-size:10px;">
+            <span class="live-radar-dot" style="width:6px; height:6px; border-radius:50%; background:#22c55e; display:inline-block;"></span>
+            LIVE (${s.seconds_ago}s ago)
+          </span>
+        `;
       } else if (s.presence_state === "idle") {
         presenceBadge = `
           <span class="badge badge-zinc" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#facc15; border-color:rgba(250,204,21,0.3);">
@@ -2167,6 +2181,86 @@ async function loadActiveSessions() {
       `;
     }).join("");
   } catch (e) {}
+}
+
+async function loadRecentKicks() {
+  const tbody = document.getElementById("recentKicksTableBody");
+  const badge = document.getElementById("badgeKickCount");
+  if (!tbody) return;
+
+  try {
+    const kicks = await apiCall("/api/kicks?limit=30");
+    if (badge) {
+      badge.innerText = `${kicks.length} Kick${kicks.length === 1 ? '' : 's'} Logged`;
+      badge.style.display = kicks.length > 0 ? "inline-block" : "none";
+    }
+
+    if (kicks.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:6px;"></i> No in-game kicks or security disconnects logged yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = kicks.map(k => {
+      const avatarSrc = k.avatar_url || (k.roblox_user_id > 0 ? `/api/roblox/avatar/${k.roblox_user_id}` : `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=1&size=150x150&format=Png&isCircular=true`);
+      const placeLink = k.place_id > 0 ? `https://www.roblox.com/games/${k.place_id}` : '#';
+      const timeStr = formatTimeAgo(k.timestamp);
+
+      return `
+        <tr>
+          <td>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <img src="${avatarSrc}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle); flex-shrink:0;">
+              <div>
+                <strong style="color:var(--text-white); font-size:12px;">${escapeHtml(k.roblox_username || 'Unknown')}</strong>
+                <div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">${k.roblox_user_id > 0 ? `ID: ${k.roblox_user_id}` : 'ID: —'}</div>
+              </div>
+            </div>
+          </td>
+          <td>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span class="badge ${k.badge_class || 'badge-danger'}" style="font-weight:700; font-size:11px; white-space:normal; text-align:left; line-height:1.3;">
+                <i class="fa-solid ${k.icon || 'fa-bolt'}"></i> ${escapeHtml(k.kick_reason || 'Session Terminated')}
+              </span>
+            </div>
+          </td>
+          <td>
+            <span style="font-size:12px; color:var(--text-zinc-300); font-weight:600;">
+              ${escapeHtml(k.source || 'FleedGuard Engine')}
+            </span>
+          </td>
+          <td>
+            <a href="${placeLink}" target="_blank" style="color:var(--text-zinc-300); font-size:12px; text-decoration:none; display:flex; align-items:center; gap:4px;">
+              <i class="fa-solid fa-gamepad" style="color:var(--gold-primary); font-size:10px;"></i>
+              ${escapeHtml(k.game_name || 'Roblox Experience')}
+              ${k.place_id > 0 ? `<i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>` : ''}
+            </a>
+          </td>
+          <td>
+            <span class="badge badge-zinc" style="font-size:10px;">${escapeHtml(k.script_name || k.script_slug || 'Hub')}</span>
+          </td>
+          <td>
+            <span style="font-size:11px; color:var(--text-zinc-400);">${timeStr}</span>
+          </td>
+          <td>
+            <div style="display:flex; gap:6px;">
+              ${k.license_key && k.license_key !== 'N/A' ? `
+                <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:10px;" onclick="copyText('${escapeHtml(k.license_key)}')">
+                  <i class="fa-solid fa-copy"></i>
+                </button>
+              ` : ''}
+              ${k.hwid ? `
+                <button class="btn btn-danger btn-sm" style="padding:4px 8px; font-size:10px;" onclick="openBlacklistModal({ target: '${escapeHtml(k.hwid)}', type: 'HWID', reason: 'Repeated unauthorized activity / kicked session' })">
+                  <i class="fa-solid fa-ban"></i>
+                </button>
+              ` : ''}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--danger-light);">Error loading kicks: ${err.message}</td></tr>`;
+  }
 }
 
 function openKickModal(opts) {

@@ -2248,6 +2248,19 @@ async def kick_player_session(req: KickPlayerRequest, user: Dict = Depends(get_c
                 license_id = l_row["id"]
                 script_id = l_row["script_id"]
 
+        # Also update live_sessions to mark as kicked immediately
+        try:
+            if req.license_key:
+                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE UPPER(license_key) = UPPER(?)", (reason, now_iso, user["username"], req.license_key.strip()))
+            if req.hwid:
+                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE hwid = ?", (reason, now_iso, user["username"], req.hwid.strip()))
+            if req.roblox_user_id:
+                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE roblox_user_id = ?", (reason, now_iso, user["username"], req.roblox_user_id))
+            if req.roblox_username:
+                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE LOWER(roblox_username) = LOWER(?)", (reason, now_iso, user["username"], req.roblox_username.strip()))
+        except Exception:
+            pass
+
         # Also log to execution_logs as SESSION_KICKED
         await conn.execute("""
             INSERT INTO execution_logs (script_id, license_id, license_key, roblox_username, roblox_user_id, status, details, hwid, timestamp)
@@ -2308,6 +2321,87 @@ async def get_active_sessions(user: Dict = Depends(get_current_user)):
                 d["game_name"] = game_name_cache[pid]
             else:
                 d["game_name"] = f"Place #{pid}"
+
+        results.append(d)
+
+    return results
+
+
+@app.get("/api/kicks")
+async def get_kicked_sessions(limit: int = 50, user: Dict = Depends(get_current_user)):
+    """
+    Returns all detected in-game kick events, disconnect reasons, and enforcement actions.
+    """
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT l.id, l.script_id, l.license_id, l.license_key, l.hwid, l.ip_address,
+                   l.executor_name, l.roblox_username, l.roblox_user_id, l.place_id, l.job_id,
+                   l.game_name, l.status, l.details, l.timestamp,
+                   s.name as script_name, s.slug as script_slug
+            FROM execution_logs l
+            LEFT JOIN scripts s ON l.script_id = s.id
+            WHERE (l.status IN ('SESSION_KICKED', 'BANNED', 'BLACKLISTED', 'KILLSWITCH', 'BYPASS_ATTEMPT') 
+                   OR l.details LIKE '%Kick%' 
+                   OR l.details LIKE '%banned%' 
+                   OR l.details LIKE '%revoked%'
+                   OR l.details LIKE '%validation failed%')
+              AND (s.user_id = ? OR s.user_id IS NULL)
+            ORDER BY l.id DESC
+            LIMIT ?
+        """, (user["id"], limit))
+        rows = await cursor.fetchall()
+
+    results = []
+    for r in rows:
+        d = dict(r)
+        details = d.get("details") or ""
+        status = d.get("status") or "SESSION_KICKED"
+        
+        if "Remote Kick:" in details:
+            kick_reason = details.replace("Remote Kick:", "").strip()
+            source = "Admin Web Dashboard"
+            icon = "fa-bolt"
+            badge_class = "badge-danger"
+        elif status == "BANNED" or "banned" in details.lower():
+            kick_reason = details or "License key has been banned by developer"
+            source = "License Revocation"
+            icon = "fa-ban"
+            badge_class = "badge-danger"
+        elif status == "BLACKLISTED":
+            kick_reason = details or "HWID / IP Blacklist Enforcement"
+            source = "Global Blacklist"
+            icon = "fa-shield-halved"
+            badge_class = "badge-danger"
+        elif status == "BYPASS_ATTEMPT":
+            kick_reason = details or "Bypass / Memory Tamper Trap"
+            source = "Anti-Tamper Shield"
+            icon = "fa-triangle-exclamation"
+            badge_class = "badge-gold"
+        elif status == "KILLSWITCH":
+            kick_reason = details or "Global Emergency Killswitch"
+            source = "Developer Killswitch"
+            icon = "fa-power-off"
+            badge_class = "badge-danger"
+        else:
+            kick_reason = details or "Session validation failed"
+            source = "Heartbeat & Fused Security Guard"
+            icon = "fa-circle-xmark"
+            badge_class = "badge-danger"
+
+        pid = d.get("place_id") or 0
+        if (not d.get("game_name") or d.get("game_name") in ("Roblox Game", "Unknown", "Roblox Experience")) and pid > 0:
+            if pid in game_name_cache:
+                d["game_name"] = game_name_cache[pid]
+            else:
+                d["game_name"] = f"Place #{pid}"
+
+        d["kick_reason"] = kick_reason
+        d["source"] = source
+        d["icon"] = icon
+        d["badge_class"] = badge_class
+        
+        uid = d.get("roblox_user_id") or 0
+        d["avatar_url"] = f"/api/roblox/avatar/{uid}" if uid > 0 else None
 
         results.append(d)
 

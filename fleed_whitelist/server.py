@@ -69,6 +69,17 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+# ----------------- Health Probe Endpoint (Railway / Status) -----------------
+@app.get("/health")
+@app.get("/api/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "service": "FleedGuard Whitelist API",
+        "version": "2.0.1",
+        "timestamp": int(time.time())
+    }
+
 # ----------------- Dependency: Auth Verification -----------------
 async def get_current_user(request: Request) -> Dict:
     auth_header = request.headers.get("Authorization")

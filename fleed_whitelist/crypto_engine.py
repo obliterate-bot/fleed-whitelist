@@ -391,61 +391,62 @@ class CryptoEngine:
 
     @staticmethod
     def build_fused_guard(server_url: str, exec_token: str, watermark: str) -> str:
-        """Lua prelude prepended to the script BEFORE virtualization, so the
-        whitelist check is fused into the same obfuscated blob as the code. It
-        re-validates the session at runtime against /v1/session/heartbeat using
-        the embedded execution token + the device HWID the loader stashed in
-        getgenv().__FG_HWID. A dumped/redistributed copy fails this check.
-        Lua 5.1 compatible (no goto/continue) for the O_bfuscate parser."""
+        """Fused runtime whitelist guard, prepended to the script BEFORE virtualization so it lands in the same obfuscated blob and cannot be stripped. Fast, single-shot gate (no blocking retry loop) to keep load quick, then a NON-BLOCKING background thread re-validates against /v1/session/heartbeat using rolling short-lived tokens + the loader HWID stashed in getgenv().__FG_HWID. A dumped/redistributed copy fails the check. Lua 5.1 safe (no goto/continue)."""
         srv = (server_url or "").rstrip("/")
-        template = (
-            'do\n'
-            'local _FGWM="__WM__"\n'
-            'local _FGTOK="__TOK__"\n'
-            'local _FGSRV="__SRV__"\n'
-            'local _hs=game:GetService("HttpService")\n'
-            'local _req=(syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)\n'
-            'local function _sleep(t) local ok=pcall(function() task.wait(t) end); if not ok then pcall(wait,t) end end\n'
-            'local function _kick(m)\n'
-            'local plr=nil\n'
-            'pcall(function() plr=game:GetService("Players").LocalPlayer end)\n'
-            'if plr then pcall(function() plr:Kick(m) end) end\n'
-            'error(m,0)\n'
-            'end\n'
-            'local _hwid=""\n'
-            'pcall(function()\n'
-            'local g=getgenv and getgenv()\n'
-            'if g and g.__FG_HWID then _hwid=tostring(g.__FG_HWID); g.__FG_HWID=nil end\n'
-            'end)\n'
-            'local _ok=false\n'
-            'if _req then\n'
-            'local _n=0\n'
-            'while _n<3 do\n'
-            '_n=_n+1\n'
-            'local sent,resp=pcall(function()\n'
-            'return _req({Url=_FGSRV.."/v1/session/heartbeat",Method="POST",Headers={["Content-Type"]="application/json"},Body=_hs:JSONEncode({exec_token=_FGTOK,hwid=_hwid,wm=_FGWM})})\n'
-            'end)\n'
-            'if sent and resp then\n'
-            'local code=resp.StatusCode or resp.Status or 0\n'
-            'if code==200 then\n'
-            'local okd,data=pcall(function() return _hs:JSONDecode(resp.Body) end)\n'
-            'if okd and data and data.success then _ok=true break else _kick("FleedGuard: session rejected") end\n'
-            'elseif code==401 or code==403 then\n'
-            '_kick("FleedGuard: unauthorized device/session")\n'
-            'end\n'
-            'end\n'
-            '_sleep(0.5)\n'
-            'end\n'
-            'end\n'
-            'if not _ok then _kick("FleedGuard: session validation failed") end\n'
-            'end\n'
-        )
-        return (
-            template
+        template = """do
+local _FGWM="__WM__"
+local _FGTOK="__TOK__"
+local _FGSRV="__SRV__"
+local _hs=game:GetService("HttpService")
+local _req=(syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+local function _sleep(t) local ok=pcall(function() task.wait(t) end); if not ok then pcall(wait,t) end end
+local function _spawn(fn) if task and task.spawn then task.spawn(fn) elseif spawn then spawn(fn) else pcall(fn) end end
+local function _kick(m)
+local plr=nil
+pcall(function() plr=game:GetService("Players").LocalPlayer end)
+if plr then pcall(function() plr:Kick(m) end) end
+error(m,0)
+end
+local _hwid=""
+pcall(function()
+local g=getgenv and getgenv()
+if g and g.__FG_HWID then _hwid=tostring(g.__FG_HWID); g.__FG_HWID=nil end
+end)
+local function _beat(tok)
+if not _req then return false,nil,0 end
+local sent,resp=pcall(function()
+return _req({Url=_FGSRV.."/v1/session/heartbeat",Method="POST",Headers={["Content-Type"]="application/json"},Body=_hs:JSONEncode({exec_token=tok,hwid=_hwid,wm=_FGWM})})
+end)
+if not sent or type(resp)~="table" then return false,nil,-1 end
+local code=resp.StatusCode or resp.Status or 0
+if code==200 then
+local okd,data=pcall(function() return _hs:JSONDecode(resp.Body) end)
+if okd and type(data)=="table" and data.success then return true,data.token,200 end
+return false,nil,200
+end
+return false,nil,code
+end
+local _ok,_next,_code=_beat(_FGTOK)
+if (not _ok) and _code==-1 then _sleep(0.15); _ok,_next,_code=_beat(_FGTOK) end
+if not _ok then _kick("FleedGuard: session validation failed") end
+if _next then _FGTOK=_next end
+_spawn(function()
+while true do
+_sleep(30)
+local rok,rnext,rcode=_beat(_FGTOK)
+if rok then
+if rnext then _FGTOK=rnext end
+elseif rcode==401 or rcode==403 then
+_kick("FleedGuard: session revoked")
+end
+end
+end)
+end
+"""
+        return (template
             .replace("__WM__", watermark)
             .replace("__TOK__", exec_token)
-            .replace("__SRV__", srv)
-        )
+            .replace("__SRV__", srv))
 
 crypto_engine = CryptoEngine()
 

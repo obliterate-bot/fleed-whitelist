@@ -517,13 +517,15 @@ task.spawn(exec_fn)
             return LoaderGenerator.obfuscate_lua_payload(raw_loader)
         return raw_loader
 
+    _custom_runtime_url = None
+
     @staticmethod
     def get_public_url(fallback: str = "http://localhost:8000") -> str:
-        """Retrieves the live public HTTPS Cloudflare or Railway URL."""
+        """Retrieves the live public HTTPS Cloudflare or custom backend URL."""
         import os
-        env_url = os.getenv("FLEED_SERVER_URL")
-        if env_url and env_url.startswith("http"):
-            return env_url.rstrip("/")
+        if LoaderGenerator._custom_runtime_url and str(LoaderGenerator._custom_runtime_url).startswith("http"):
+            return str(LoaderGenerator._custom_runtime_url).rstrip("/")
+
         url_file = os.path.join(os.path.dirname(__file__), "public_url.txt")
         if os.path.exists(url_file):
             try:
@@ -533,16 +535,25 @@ task.spawn(exec_fn)
                         return url.rstrip("/")
             except Exception:
                 pass
+
+        env_url = os.getenv("FLEED_SERVER_URL")
+        if env_url and env_url.startswith("http"):
+            return env_url.rstrip("/")
+
         return fallback
 
     @staticmethod
     def set_public_url(url: str):
-        """Saves a custom server URL to public_url.txt."""
+        """Saves a custom server URL to memory and public_url.txt."""
         import os
         clean_url = str(url).strip().rstrip("/")
+        LoaderGenerator._custom_runtime_url = clean_url
         url_file = os.path.join(os.path.dirname(__file__), "public_url.txt")
-        with open(url_file, "w", encoding="utf-8") as f:
-            f.write(clean_url)
+        try:
+            with open(url_file, "w", encoding="utf-8") as f:
+                f.write(clean_url)
+        except Exception:
+            pass
 
     @staticmethod
     def generate_one_liner(server_url: str = None, script_slug: str = "") -> str:

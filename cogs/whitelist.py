@@ -84,64 +84,6 @@ async def get_cloud_api_key(slug: str = None) -> Optional[str]:
         row = await cursor.fetchone()
         return row["api_key"] if row else None
 
-async def ensure_script_synced(slug: str, user_row: Optional[dict] = None) -> Optional[dict]:
-    """
-    Ensures script data is available locally, fetching and syncing from remote web backend if needed.
-    """
-    clean_slug = slug.strip().lower()
-    async with db.get_db() as conn:
-        cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
-        row = await cursor.fetchone()
-        if row:
-            return dict(row)
-
-    pub_url = loader_generator.get_public_url()
-    api_key = (user_row and user_row.get("api_key")) or await get_cloud_api_key(clean_slug)
-
-    if pub_url and pub_url.startswith("http") and api_key:
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{pub_url}/api/scripts",
-                    headers={"X-API-Key": api_key},
-                    timeout=aiohttp.ClientTimeout(total=5)
-                ) as resp:
-                    if resp.status == 200:
-                        scripts = await resp.json()
-                        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                        matched = None
-                        async with db.get_db() as conn:
-                            for s in scripts:
-                                s_slug = s["slug"].strip().lower()
-                                await conn.execute("""
-                                    INSERT INTO scripts (id, user_id, name, slug, description, version, raw_source, is_obfuscated_mode, buyer_role_id, guild_id, killswitch_active, created_at, updated_at)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                    ON CONFLICT(id) DO UPDATE SET name = excluded.name, slug = excluded.slug, version = excluded.version, raw_source = excluded.raw_source, is_obfuscated_mode = excluded.is_obfuscated_mode
-                                """, (
-                                    s["id"],
-                                    s.get("user_id", 1),
-                                    s["name"],
-                                    s_slug,
-                                    s.get("description", ""),
-                                    s.get("version", "1.0.0"),
-                                    s.get("raw_source", "-- synced source"),
-                                    s.get("is_obfuscated_mode", 1),
-                                    s.get("buyer_role_id"),
-                                    s.get("guild_id"),
-                                    s.get("killswitch_active", 0),
-                                    s.get("created_at", now_iso),
-                                    s.get("updated_at", now_iso)
-                                ))
-                                if s_slug == clean_slug:
-                                    matched = s
-                            await conn.commit()
-                        if matched:
-                            return matched
-        except Exception:
-            pass
-
-    return None
-
 async def check_script_permission(ctx, slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
     """
     Verifies that the Discord user is authorized to manage a specific script or platform.
@@ -160,37 +102,35 @@ async def check_script_permission(ctx, slug: str = None) -> tuple[bool, Optional
     if ctx.author.id in bot_owners or author_id_str in bot_owners:
         is_owner = True
 
-    user_row = None
-    async with db.get_db() as conn:
-        cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (author_id_str,))
-        u = await cursor.fetchone()
-        if u:
-            user_row = dict(u)
-
     if is_owner:
-        if slug:
-            await ensure_script_synced(slug, user_row)
-        return True, None, user_row
+        # Try to find their linked account so cloud sync has their API key
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (author_id_str,))
+            user_row = await cursor.fetchone()
+        return True, None, dict(user_row) if user_row else None
 
     # 2. Lookup Website Linked Developer Account
-    if not user_row:
-        return False, f"you are not linked to a website developer account. run `{ctx.prefix}whitelist link <api_key>` to link your website login.", None
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (author_id_str,))
+        user_row = await cursor.fetchone()
 
-    if user_row["role"] == "admin":
+        if not user_row:
+            return False, f"you are not linked to a website developer account. run `{ctx.prefix}whitelist link <api_key>` to link your website login.", None
+
+        if user_row["role"] == "admin":
+            return True, None, dict(user_row)
+
         if slug:
-            await ensure_script_synced(slug, user_row)
-        return True, None, user_row
+            clean_slug = slug.strip().lower()
+            cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+            script_row = await cursor.fetchone()
+            if not script_row:
+                return False, f"script `{clean_slug}` does not exist.", dict(user_row)
 
-    if slug:
-        clean_slug = slug.strip().lower()
-        script_row = await ensure_script_synced(clean_slug, user_row)
-        if not script_row:
-            return False, f"script `{clean_slug}` does not exist.", user_row
+            if script_row["user_id"] != user_row["id"]:
+                return False, f"you do not own the script `{clean_slug}` on the website.", dict(user_row)
 
-        if script_row.get("user_id") and script_row.get("user_id") != user_row["id"]:
-            return False, f"you do not own the script `{clean_slug}` on the website.", user_row
-
-    return True, None, user_row
+        return True, None, dict(user_row)
 
 class RedeemKeyModal(discord.ui.Modal, title="Redeem License Key"):
     def __init__(self, slug: str, script_name: str, script_id: int, buyer_role_id: int = 0):
@@ -1478,41 +1418,6 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         ok, err_msg, user_row = await check_script_permission(ctx, None)
         if not ok:
             return await ctx.send(embed=error_embed(err_msg, ctx.author))
-
-        pub_url = loader_generator.get_public_url()
-        api_key = (user_row and user_row.get("api_key")) or await get_cloud_api_key()
-        if pub_url and pub_url.startswith("http") and api_key:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(f"{pub_url}/api/scripts", headers={"X-API-Key": api_key}, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                        if resp.status == 200:
-                            scripts_data = await resp.json()
-                            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                            async with db.get_db() as conn:
-                                for s in scripts_data:
-                                    s_slug = s["slug"].strip().lower()
-                                    await conn.execute("""
-                                        INSERT INTO scripts (id, user_id, name, slug, description, version, raw_source, is_obfuscated_mode, buyer_role_id, guild_id, killswitch_active, created_at, updated_at)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                        ON CONFLICT(id) DO UPDATE SET name = excluded.name, slug = excluded.slug, version = excluded.version, raw_source = excluded.raw_source, is_obfuscated_mode = excluded.is_obfuscated_mode
-                                    """, (
-                                        s["id"],
-                                        s.get("user_id", 1),
-                                        s["name"],
-                                        s_slug,
-                                        s.get("description", ""),
-                                        s.get("version", "1.0.0"),
-                                        s.get("raw_source", "-- synced source"),
-                                        s.get("is_obfuscated_mode", 1),
-                                        s.get("buyer_role_id"),
-                                        s.get("guild_id"),
-                                        s.get("killswitch_active", 0),
-                                        s.get("created_at", now_iso),
-                                        s.get("updated_at", now_iso)
-                                    ))
-                                await conn.commit()
-            except Exception:
-                pass
 
         async with db.get_db() as conn:
             if user_row and user_row.get("role") != "admin":

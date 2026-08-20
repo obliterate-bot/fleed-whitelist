@@ -1067,6 +1067,11 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
         except Exception:
             return JSONResponse(status_code=403, content={"success": False, "message": "License expiry invalid"})
 
-    return {"success": True}
+    # Roll the execution token so the fused guard's background re-check keeps
+    # validating without needing a long-lived token. Short TTL + rolling means a
+    # stolen token is useless within seconds while legit sessions refresh
+    # seamlessly in the background (never blocking the game).
+    new_token = crypto_engine.generate_exec_token(claims["key"], claims["hwid"])
+    return {"success": True, "token": new_token}
 
 

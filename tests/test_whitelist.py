@@ -412,6 +412,12 @@ def test_luarmor_parity_commands():
             c4 = await conn.execute("SELECT * FROM licenses WHERE id = ?", (row["id"],))
             assert await c4.fetchone() is None
 
+            # Clean up all test fixtures, preserving real production scripts like goldeneagle
+            await conn.execute("DELETE FROM licenses WHERE script_id NOT IN (SELECT id FROM scripts WHERE slug = 'goldeneagle')")
+            await conn.execute("DELETE FROM execution_logs WHERE script_id NOT IN (SELECT id FROM scripts WHERE slug = 'goldeneagle')")
+            await conn.execute("DELETE FROM scripts WHERE slug != 'goldeneagle'")
+            await conn.commit()
+
     asyncio.run(_run())
 
 

@@ -28,5 +28,5 @@ COPY . .
 # Expose API/Dashboard port
 EXPOSE 8000
 
-# Start both the Whitelist API and SWISHBOT or Whitelist server
-CMD ["uvicorn", "fleed_whitelist.server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start the Whitelist server on Railway's assigned PORT
+CMD ["sh", "-c", "uvicorn fleed_whitelist.server:app --host 0.0.0.0 --port ${PORT:-8000}"]

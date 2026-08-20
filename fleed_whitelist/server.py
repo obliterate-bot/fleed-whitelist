@@ -269,6 +269,7 @@ async def get_me(user: Dict = Depends(get_current_user)):
         "role": user["role"],
         "two_factor_enabled": bool(user["two_factor_enabled"]),
         "api_key": user["api_key"],
+        "discord_id": user["discord_id"] if "discord_id" in user.keys() else None,
         "created_at": user["created_at"]
     }
 

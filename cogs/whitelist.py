@@ -8,21 +8,45 @@ from utils import fleed_embed, success_embed, error_embed, warn_embed, find_role
 from fleed_whitelist.database import db
 from fleed_whitelist.loader_generator import loader_generator
 
-def is_whitelist_manager(ctx) -> bool:
-    """Ensures only bot owners, guild owners, and server administrators can manage whitelists."""
-    if not ctx or not ctx.author:
-        return False
+async def check_script_permission(ctx, slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
+    """
+    Verifies that the Discord user is authorized to manage a specific script or platform.
+    Checks:
+    1. Bot Owners (universal bypass)
+    2. Website Developer Account linked via `discord_id` (owns the script or is platform admin)
+    3. Server Administrator if guild configured on script
+    """
+    author_id_str = str(ctx.author.id)
+
+    # 1. Bot Owners
     if ctx.author.id == 539594512981295106 or ctx.author.id in getattr(config, "OWNER_IDS", []):
-        return True
+        return True, None, None
     bot_owners = getattr(ctx.bot, "owner_ids", set()) or set()
-    if ctx.author.id in bot_owners or str(ctx.author.id) in bot_owners:
-        return True
-    if ctx.guild:
-        if ctx.author.id == getattr(ctx.guild, "owner_id", None):
-            return True
-        if getattr(ctx.author.guild_permissions, "administrator", False):
-            return True
-    return False
+    if ctx.author.id in bot_owners or author_id_str in bot_owners:
+        return True, None, None
+
+    # 2. Lookup Website Linked Developer Account
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (author_id_str,))
+        user_row = await cursor.fetchone()
+
+        if not user_row:
+            return False, f"you are not linked to a website developer account. run `{ctx.prefix}whitelist link <api_key>` to link your website login.", None
+
+        if user_row["role"] == "admin":
+            return True, None, dict(user_row)
+
+        if slug:
+            clean_slug = slug.strip().lower()
+            cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+            script_row = await cursor.fetchone()
+            if not script_row:
+                return False, f"script `{clean_slug}` does not exist.", dict(user_row)
+
+            if script_row["user_id"] != user_row["id"]:
+                return False, f"you do not own the script `{clean_slug}` on the website.", dict(user_row)
+
+        return True, None, dict(user_row)
 
 class RedeemKeyModal(discord.ui.Modal, title="Redeem License Key"):
     def __init__(self, slug: str, script_name: str, script_id: int, buyer_role_id: int = 0):
@@ -320,7 +344,7 @@ class WhitelistControlPanelView(discord.ui.View):
 class WhitelistCog(commands.Cog, name="whitelist"):
     """
     FleedGuard Roblox Whitelist & License Security Cog
-    Full parity with Luarmor / PandAuth Discord bot functionality.
+    Integrated directly with website developer accounts.
     """
     def __init__(self, bot):
         self.bot = bot
@@ -361,22 +385,106 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """Displays interactive paginated help menu for whitelist commands."""
         await send_group_help(ctx, ctx.command, "whitelist")
 
+    @whitelist_group.command(name="link", aliases=["bind", "connect"])
+    async def link_account_cmd(self, ctx, api_key: str):
+        """
+        Links your Discord account to your website developer login using your API key.
+        """
+        try:
+            if ctx.guild:
+                await ctx.message.delete()
+        except Exception:
+            pass
+
+        clean_key = api_key.strip()
+        author_id_str = str(ctx.author.id)
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM users WHERE api_key = ? AND is_active = 1", (clean_key,))
+            user_row = await cursor.fetchone()
+
+            if not user_row:
+                return await ctx.send(embed=error_embed("invalid developer api key. find your api key on the website dashboard.", ctx.author))
+
+            # Bind discord_id
+            await conn.execute("UPDATE users SET discord_id = ? WHERE id = ?", (author_id_str, user_row["id"]))
+            await conn.commit()
+
+        embed = success_embed(
+            f"successfully linked discord to website developer **{user_row['username']}**.\n"
+            f"you can now manage your script whitelists directly in discord.",
+            ctx.author
+        )
+        await ctx.send(embed=embed)
+
+    @whitelist_group.command(name="unlink", aliases=["disconnect"])
+    async def unlink_account_cmd(self, ctx):
+        """
+        Unlinks your Discord account from the website login.
+        """
+        author_id_str = str(ctx.author.id)
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ?", (author_id_str,))
+            user_row = await cursor.fetchone()
+
+            if not user_row:
+                return await ctx.send(embed=error_embed("you do not have a linked website account.", ctx.author))
+
+            await conn.execute("UPDATE users SET discord_id = NULL WHERE id = ?", (user_row["id"],))
+            await conn.commit()
+
+        await ctx.send(embed=success_embed(f"unlinked discord from website developer **{user_row['username']}**.", ctx.author))
+
+    @whitelist_group.command(name="me", aliases=["profile", "dev"])
+    async def dev_profile_cmd(self, ctx):
+        """
+        Displays your linked website developer account and owned scripts.
+        """
+        author_id_str = str(ctx.author.id)
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ?", (author_id_str,))
+            user_row = await cursor.fetchone()
+
+            if not user_row:
+                return await ctx.send(embed=warn_embed(f"you are not linked to a website account. run `{ctx.prefix}whitelist link <api_key>`.", ctx.author))
+
+            c_scripts = await conn.execute("SELECT * FROM scripts WHERE user_id = ?", (user_row["id"],))
+            scripts = await c_scripts.fetchall()
+
+            c_keys = await conn.execute("""
+                SELECT COUNT(l.id) as total_keys
+                FROM licenses l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE s.user_id = ? AND l.is_banned = 0
+            """, (user_row["id"],))
+            key_data = await c_keys.fetchone()
+
+        embed = fleed_embed(title=f"developer profile — {user_row['username']}", author=ctx.author)
+        script_list = ", ".join([f"`{s['slug']}`" for s in scripts]) if scripts else "none"
+        embed.add_field(name="Website User", value=f"**{user_row['username']}** (`{user_row['role']}`)", inline=True)
+        embed.add_field(name="Active Keys", value=str(key_data["total_keys"] or 0), inline=True)
+        embed.add_field(name="Managed Scripts", value=script_list, inline=False)
+        await ctx.send(embed=embed)
+
     @whitelist_group.command(name="add", aliases=["user", "create"])
     async def add_whitelist_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str, duration_days: int = 0, *, note: str = ""):
         """
         Whitelists a user directly by @mention or Discord ID.
         """
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to whitelist members.", ctx.author))
-
         clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
         
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
             if not script:
-                return await ctx.send(embed=error_embed(f"Script `{clean_slug}` not found.", ctx.author))
+                return await ctx.send(embed=error_embed(f"script `{clean_slug}` not found.", ctx.author))
 
             key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
             now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -421,10 +529,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Removes a user's whitelist access for a script and revokes buyer role.
         """
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to remove whitelists.", ctx.author))
-
         clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
 
         async with db.get_db() as conn:
@@ -459,8 +568,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Checks whitelist details, keys, HWIDs, and executions for a Discord user.
         """
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to lookup whitelists.", ctx.author))
+        ok, err_msg, _ = await check_script_permission(ctx, slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
 
@@ -502,10 +612,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Manager command to force reset a user's HWID.
         """
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to force reset hwids.", ctx.author))
-
         clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
         discord_id = str(target.id) if hasattr(target, "id") else str(target).strip("<@!>")
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -532,10 +643,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Transfers a license key from one Discord account to another.
         """
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to transfer keys.", ctx.author))
-
         clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
         old_id = str(old_target.id) if hasattr(old_target, "id") else str(old_target).strip("<@!>")
         new_id = str(new_target.id) if hasattr(new_target, "id") else str(new_target).strip("<@!>")
 
@@ -579,10 +691,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Sets the Discord Buyer role for a project.
         """
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to configure buyer roles.", ctx.author))
-
         clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT id, name FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
@@ -752,10 +865,10 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         """
         Spawns the buyer control panel.
         """
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to spawn control panels.", ctx.author))
-
         clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
@@ -786,19 +899,34 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="scripts")
     async def list_scripts_cmd(self, ctx):
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to list scripts.", ctx.author))
+        ok, err_msg, user_row = await check_script_permission(ctx, None)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
         async with db.get_db() as conn:
-            cursor = await conn.execute("""
-                SELECT s.*, 
-                       COUNT(l.id) as total_keys,
-                       SUM(CASE WHEN l.is_banned = 0 THEN 1 ELSE 0 END) as active_keys
-                FROM scripts s
-                LEFT JOIN licenses l ON s.id = l.script_id
-                GROUP BY s.id
-                ORDER BY s.id DESC
-            """)
+            if user_row and user_row.get("role") != "admin":
+                query = """
+                    SELECT s.*, 
+                           COUNT(l.id) as total_keys,
+                           SUM(CASE WHEN l.is_banned = 0 THEN 1 ELSE 0 END) as active_keys
+                    FROM scripts s
+                    LEFT JOIN licenses l ON s.id = l.script_id
+                    WHERE s.user_id = ?
+                    GROUP BY s.id
+                    ORDER BY s.id DESC
+                """
+                cursor = await conn.execute(query, (user_row["id"],))
+            else:
+                query = """
+                    SELECT s.*, 
+                           COUNT(l.id) as total_keys,
+                           SUM(CASE WHEN l.is_banned = 0 THEN 1 ELSE 0 END) as active_keys
+                    FROM scripts s
+                    LEFT JOIN licenses l ON s.id = l.script_id
+                    GROUP BY s.id
+                    ORDER BY s.id DESC
+                """
+                cursor = await conn.execute(query)
             rows = await cursor.fetchall()
 
         if not rows:
@@ -819,10 +947,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="genkey", aliases=["createkey", "gen"])
     async def gen_key_cmd(self, ctx, slug: str, duration_days: int = 0, *, note: str = ""):
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to generate keys.", ctx.author))
-
         clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT id, name FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
@@ -853,15 +982,25 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="ban")
     async def ban_key_cmd(self, ctx, target: str, *, reason: str = "banned by administrator"):
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to ban keys.", ctx.author))
+        ok, err_msg, user_row = await check_script_permission(ctx, None)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
         clean_target = target.strip().strip("<@!>")
         async with db.get_db() as conn:
             if clean_target.startswith("FLEED-"):
-                cursor = await conn.execute("SELECT id FROM licenses WHERE license_key = ?", (clean_target.upper(),))
-                if not await cursor.fetchone():
+                cursor = await conn.execute("SELECT id, script_id FROM licenses WHERE license_key = ?", (clean_target.upper(),))
+                lic_row = await cursor.fetchone()
+                if not lic_row:
                     return await ctx.send(embed=error_embed("license key not found.", ctx.author))
+                
+                # Verify script ownership if developer
+                if user_row and user_row.get("role") != "admin":
+                    cursor = await conn.execute("SELECT user_id FROM scripts WHERE id = ?", (lic_row["script_id"],))
+                    s_row = await cursor.fetchone()
+                    if not s_row or s_row["user_id"] != user_row["id"]:
+                        return await ctx.send(embed=error_embed("you do not own the script associated with this key.", ctx.author))
+
                 await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE license_key = ?", (reason, clean_target.upper()))
             else:
                 cursor = await conn.execute("SELECT id FROM licenses WHERE discord_id = ?", (clean_target,))
@@ -874,8 +1013,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="unban")
     async def unban_key_cmd(self, ctx, target: str):
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to unban keys.", ctx.author))
+        ok, err_msg, _ = await check_script_permission(ctx, None)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
         clean_target = target.strip().strip("<@!>")
         async with db.get_db() as conn:
@@ -889,10 +1029,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="killswitch", aliases=["ks"])
     async def killswitch_cmd(self, ctx, slug: str):
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to toggle killswitch.", ctx.author))
-
         clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT id, name, killswitch_active FROM scripts WHERE slug = ?", (clean_slug,))
             script = await cursor.fetchone()
@@ -908,18 +1049,40 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @whitelist_group.command(name="stats")
     async def stats_cmd(self, ctx):
-        if not is_whitelist_manager(ctx):
-            return await ctx.send(embed=error_embed("you must have administrator permissions to view security stats.", ctx.author))
+        ok, err_msg, user_row = await check_script_permission(ctx, None)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
         async with db.get_db() as conn:
-            c1 = await conn.execute("SELECT COUNT(*) as cnt FROM scripts")
-            total_scripts = (await c1.fetchone())["cnt"]
+            if user_row and user_row.get("role") != "admin":
+                c1 = await conn.execute("SELECT COUNT(*) as cnt FROM scripts WHERE user_id = ?", (user_row["id"],))
+                total_scripts = (await c1.fetchone())["cnt"]
 
-            c2 = await conn.execute("SELECT COUNT(*) as cnt FROM licenses WHERE is_banned = 0")
-            active_licenses = (await c2.fetchone())["cnt"]
+                c2 = await conn.execute("""
+                    SELECT COUNT(l.id) as cnt 
+                    FROM licenses l
+                    JOIN scripts s ON l.script_id = s.id
+                    WHERE s.user_id = ? AND l.is_banned = 0
+                """, (user_row["id"],))
+                active_licenses = (await c2.fetchone())["cnt"]
 
-            c3 = await conn.execute("SELECT COUNT(*) as total, SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked FROM execution_logs")
-            log_row = await c3.fetchone()
+                c3 = await conn.execute("""
+                    SELECT COUNT(e.id) as total, SUM(CASE WHEN e.status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked
+                    FROM execution_logs e
+                    JOIN scripts s ON e.script_id = s.id
+                    WHERE s.user_id = ?
+                """, (user_row["id"],))
+                log_row = await c3.fetchone()
+            else:
+                c1 = await conn.execute("SELECT COUNT(*) as cnt FROM scripts")
+                total_scripts = (await c1.fetchone())["cnt"]
+
+                c2 = await conn.execute("SELECT COUNT(*) as cnt FROM licenses WHERE is_banned = 0")
+                active_licenses = (await c2.fetchone())["cnt"]
+
+                c3 = await conn.execute("SELECT COUNT(*) as total, SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked FROM execution_logs")
+                log_row = await c3.fetchone()
+
             total_execs = log_row["total"] or 0
             blocked_execs = log_row["blocked"] or 0
 

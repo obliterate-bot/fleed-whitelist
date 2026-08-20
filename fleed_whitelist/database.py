@@ -48,10 +48,17 @@ class WhitelistDB:
                     api_key TEXT UNIQUE NOT NULL,
                     role TEXT DEFAULT 'developer',
                     is_active INTEGER DEFAULT 1,
+                    discord_id TEXT,
                     created_at TEXT NOT NULL,
                     last_login TEXT
                 )
             """)
+
+            # Migrations for users table
+            try:
+                await conn.execute("ALTER TABLE users ADD COLUMN discord_id TEXT;")
+            except Exception:
+                pass
 
             # 2. Scripts / Hubs Table
             await conn.execute("""

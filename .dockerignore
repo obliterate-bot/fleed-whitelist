@@ -1,0 +1,16 @@
+.git
+.github
+.pytest_cache
+.qodo
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.zip
+.env
+tests
+O_bfuscate-1.1.0/temp

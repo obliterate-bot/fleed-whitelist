@@ -126,6 +126,11 @@ class WhitelistDB:
                     hwid TEXT,
                     ip_address TEXT,
                     executor_name TEXT,
+                    roblox_username TEXT,
+                    roblox_user_id INTEGER,
+                    place_id INTEGER,
+                    job_id TEXT,
+                    game_name TEXT,
                     status TEXT NOT NULL, -- 'SUCCESS', 'HWID_MISMATCH', 'EXPIRED', 'BANNED', 'TAMPER_DETECTED', 'KILLSWITCH'
                     details TEXT,
                     timestamp TEXT NOT NULL,
@@ -133,6 +138,19 @@ class WhitelistDB:
                     FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE SET NULL
                 )
             """)
+
+            # Migrations for execution_logs table
+            for col, col_type in [
+                ("roblox_username", "TEXT"),
+                ("roblox_user_id", "INTEGER"),
+                ("place_id", "INTEGER"),
+                ("job_id", "TEXT"),
+                ("game_name", "TEXT")
+            ]:
+                try:
+                    await conn.execute(f"ALTER TABLE execution_logs ADD COLUMN {col} {col_type};")
+                except Exception:
+                    pass
 
             # 5. Handshake Nonces Table (Time-based Anti-Replay)
             await conn.execute("""
@@ -143,10 +161,29 @@ class WhitelistDB:
                     client_challenge TEXT NOT NULL,
                     server_challenge TEXT NOT NULL,
                     session_key TEXT NOT NULL,
+                    executor_name TEXT,
+                    roblox_username TEXT,
+                    roblox_user_id INTEGER,
+                    place_id INTEGER,
+                    job_id TEXT,
+                    game_name TEXT,
                     expires_at INTEGER NOT NULL,
                     created_at INTEGER NOT NULL
                 )
             """)
+
+            for col, col_type in [
+                ("executor_name", "TEXT"),
+                ("roblox_username", "TEXT"),
+                ("roblox_user_id", "INTEGER"),
+                ("place_id", "INTEGER"),
+                ("job_id", "TEXT"),
+                ("game_name", "TEXT")
+            ]:
+                try:
+                    await conn.execute(f"ALTER TABLE active_nonces ADD COLUMN {col} {col_type};")
+                except Exception:
+                    pass
 
             # Indices for ultra-fast lookup
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);")

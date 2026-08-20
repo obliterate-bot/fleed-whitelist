@@ -462,24 +462,87 @@ async function loadLiveLogs() {
     if (!tableBody) return;
 
     if (logs.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 30px; color:var(--text-zinc-500);">No execution logs recorded yet.</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 30px; color:var(--text-zinc-500);">No execution logs recorded yet.</td></tr>`;
       return;
     }
 
-    tableBody.innerHTML = logs.map(log => `
-      <tr>
-        <td>${new Date(log.timestamp).toLocaleTimeString()}</td>
-        <td><strong>${escapeHtml(log.script_name || "Unknown")}</strong></td>
-        <td><code>${log.license_key ? log.license_key.substring(0, 15) + '...' : 'N/A'}</code></td>
-        <td>
-          <span class="badge ${log.status === 'SUCCESS' ? 'badge-success' : 'badge-danger'}">
-            ${log.status}
-          </span>
-        </td>
-        <td><code style="font-size:11px;">${log.hwid ? log.hwid.substring(0, 12) + '...' : '—'}</code></td>
-        <td style="color:var(--text-zinc-400); font-size:12px;">${escapeHtml(log.details || log.executor_name || "—")}</td>
-      </tr>
-    `).join("");
+    tableBody.innerHTML = logs.map(log => {
+      // Roblox Player Display with direct profile link
+      let rbxPlayerHtml = `<span style="color:var(--text-zinc-500);">—</span>`;
+      if (log.roblox_username && log.roblox_username !== "Unknown") {
+        const profileUrl = log.roblox_user_id ? `https://www.roblox.com/users/${log.roblox_user_id}/profile` : `https://www.roblox.com/search/users?keyword=${encodeURIComponent(log.roblox_username)}`;
+        rbxPlayerHtml = `
+          <div style="display:flex; align-items:center; gap:8px;">
+            <div style="width:28px; height:28px; border-radius:50%; background:var(--bg-card); border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:center; font-size:12px;">👤</div>
+            <div>
+              <a href="${profileUrl}" target="_blank" style="color:var(--gold-light); font-weight:600; text-decoration:none; display:block; font-size:13px;">
+                ${escapeHtml(log.roblox_username)} ↗
+              </a>
+              <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${log.roblox_user_id || '—'}</span>
+            </div>
+          </div>
+        `;
+      }
+
+      // Game / Place Display with link to Roblox Place
+      let gamePlaceHtml = `<span style="color:var(--text-zinc-500);">—</span>`;
+      if (log.place_id && log.place_id > 0) {
+        const placeUrl = `https://www.roblox.com/games/${log.place_id}`;
+        gamePlaceHtml = `
+          <div>
+            <a href="${placeUrl}" target="_blank" style="color:var(--text-white); font-weight:500; font-size:13px; text-decoration:none; display:block;">
+              ${escapeHtml(log.game_name || "Roblox Game")} ↗
+            </a>
+            <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${log.place_id}</span>
+          </div>
+        `;
+      } else if (log.game_name) {
+        gamePlaceHtml = `<span style="color:var(--text-zinc-300); font-size:13px;">${escapeHtml(log.game_name)}</span>`;
+      }
+
+      // Status Badge Style
+      let statusBadge = `<span class="badge badge-danger">${log.status}</span>`;
+      if (log.status === 'SUCCESS') {
+        statusBadge = `<span class="badge badge-success">✓ SUCCESS</span>`;
+      } else if (log.status === 'HWID_MISMATCH') {
+        statusBadge = `<span class="badge badge-danger">⚠️ HWID MISMATCH</span>`;
+      } else if (log.status === 'TAMPER_DETECTED') {
+        statusBadge = `<span class="badge badge-danger">🛡️ TAMPER DETECTED</span>`;
+      } else if (log.status === 'INVALID_KEY') {
+        statusBadge = `<span class="badge badge-danger">✕ INVALID KEY</span>`;
+      } else if (log.status === 'EXPIRED') {
+        statusBadge = `<span class="badge badge-zinc">⏱️ EXPIRED</span>`;
+      } else if (log.status === 'BANNED') {
+        statusBadge = `<span class="badge badge-danger">🚫 BANNED</span>`;
+      }
+
+      return `
+        <tr>
+          <td style="white-space:nowrap; font-size:12px; color:var(--text-zinc-400);">${new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
+          <td><strong style="color:var(--text-white);">${escapeHtml(log.script_name || "Unknown")}</strong></td>
+          <td>${rbxPlayerHtml}</td>
+          <td>${gamePlaceHtml}</td>
+          <td>
+            ${log.license_key ? `<span class="key-badge" style="font-size:11px;" onclick="copyText('${log.license_key}')">${log.license_key.substring(0, 14)}... 📋</span>` : '<span style="color:var(--text-zinc-500);">N/A</span>'}
+          </td>
+          <td>${statusBadge}</td>
+          <td>
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
+              <span class="badge badge-gold" style="font-size:11px;">${escapeHtml(log.executor_name || "Universal")}</span>
+            </div>
+            <span style="color:var(--text-zinc-400); font-size:12px;">${escapeHtml(log.details || "—")}</span>
+          </td>
+          <td>
+            <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-300);">
+              ${log.hwid ? log.hwid.substring(0, 10) + '...' : '—'}
+            </div>
+            <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-500);">
+              ${log.ip_address ? escapeHtml(log.ip_address) : '—'}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
   } catch (err) {}
 }
 

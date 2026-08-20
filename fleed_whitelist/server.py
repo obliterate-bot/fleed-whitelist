@@ -145,6 +145,11 @@ class HandshakeInitRequest(BaseModel):
     hwid: str
     client_challenge: str
     executor: Optional[str] = "Universal"
+    roblox_username: Optional[str] = None
+    roblox_user_id: Optional[int] = None
+    place_id: Optional[int] = None
+    job_id: Optional[str] = None
+    game_name: Optional[str] = None
 
 class HandshakeVerifyRequest(BaseModel):
     nonce: str
@@ -650,9 +655,9 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         if script["killswitch_active"]:
             reason = script["killswitch_reason"] or "Script temporarily disabled by developer."
             await conn.execute("""
-                INSERT INTO execution_logs (script_id, hwid, ip_address, executor_name, status, details, timestamp)
-                VALUES (?, ?, ?, ?, 'KILLSWITCH', ?, ?)
-            """, (script["id"], norm_hwid, client_ip, req.executor, reason, now_iso))
+                INSERT INTO execution_logs (script_id, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'KILLSWITCH', ?, ?)
+            """, (script["id"], norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, reason, now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": f"KILLSWITCH ACTIVE: {reason}"})
 
@@ -662,9 +667,9 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         license_row = await cursor.fetchone()
         if not license_row:
             await conn.execute("""
-                INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, status, details, timestamp)
-                VALUES (?, ?, ?, ?, ?, 'INVALID_KEY', 'Key does not exist for this script', ?)
-            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, now_iso))
+                INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'INVALID_KEY', 'Key does not exist for this script', ?)
+            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Invalid license key"})
 
@@ -672,9 +677,9 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         if license_row["is_banned"]:
             ban_msg = license_row["ban_reason"] or "License key has been banned."
             await conn.execute("""
-                INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, status, details, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, 'BANNED', ?, ?)
-            """, (script["id"], license_row["id"], req.key, norm_hwid, client_ip, req.executor, ban_msg, now_iso))
+                INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BANNED', ?, ?)
+            """, (script["id"], license_row["id"], req.key, norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, ban_msg, now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": f"BANNED: {ban_msg}"})
 
@@ -683,9 +688,9 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             exp_dt = datetime.fromisoformat(license_row["expires_at"])
             if datetime.now(timezone.utc) > exp_dt:
                 await conn.execute("""
-                    INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, status, details, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, 'EXPIRED', 'License expired', ?)
-                """, (script["id"], license_row["id"], req.key, norm_hwid, client_ip, req.executor, now_iso))
+                    INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EXPIRED', 'License expired', ?)
+                """, (script["id"], license_row["id"], req.key, norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, now_iso))
                 await conn.commit()
                 return JSONResponse(status_code=403, content={"success": False, "message": "License key has expired"})
 
@@ -701,9 +706,9 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             """, (norm_hwid, client_ip, license_row["id"]))
         elif license_row["hwid"] != norm_hwid:
             await conn.execute("""
-                INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, status, details, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, 'HWID_MISMATCH', 'HWID does not match bound device', ?)
-            """, (script["id"], license_row["id"], req.key, norm_hwid, client_ip, req.executor, now_iso))
+                INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'HWID_MISMATCH', 'HWID does not match bound device', ?)
+            """, (script["id"], license_row["id"], req.key, norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "HWID Mismatch! Please reset your HWID via dashboard or Discord bot."})
 
@@ -711,8 +716,8 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         challenge = crypto_engine.create_handshake_challenge(script["id"], req.key, req.client_challenge)
         
         await conn.execute("""
-            INSERT OR REPLACE INTO active_nonces (nonce, script_id, license_key, client_challenge, server_challenge, session_key, expires_at, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO active_nonces (nonce, script_id, license_key, client_challenge, server_challenge, session_key, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, expires_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             challenge["nonce"],
             script["id"],
@@ -720,6 +725,12 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             req.client_challenge,
             challenge["server_challenge"],
             challenge["session_key"],
+            req.executor,
+            req.roblox_username,
+            req.roblox_user_id,
+            req.place_id,
+            req.job_id,
+            req.game_name,
             challenge["expires_at"],
             now_ts
         ))
@@ -775,11 +786,18 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
             raw_hwid=req.hwid
         )
 
+        exec_name = nonce_row["executor_name"] or "Universal"
+        rbx_user = nonce_row["roblox_username"]
+        rbx_uid = nonce_row["roblox_user_id"]
+        place_id = nonce_row["place_id"]
+        job_id = nonce_row["job_id"]
+        game_name = nonce_row["game_name"]
+
         if not is_valid_sig:
             await conn.execute("""
-                INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, status, details, timestamp)
-                VALUES (?, ?, ?, ?, ?, 'TAMPER_DETECTED', 'Cryptographic signature mismatch / MITM attempt', ?)
-            """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, now_iso))
+                INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'TAMPER_DETECTED', 'Cryptographic signature mismatch / MITM attempt', ?)
+            """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
             await conn.execute("DELETE FROM active_nonces WHERE nonce = ?", (req.nonce,))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Security Verification Failed: Tampered handshake"})
@@ -793,9 +811,9 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         """, (now_iso, row["id"]))
 
         await conn.execute("""
-            INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, status, details, timestamp)
-            VALUES (?, ?, ?, ?, ?, 'SUCCESS', 'Script decrypted and executed in-memory', ?)
-        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, now_iso))
+            INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', 'Script decrypted and executed in-memory', ?)
+        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
         await conn.commit()
 
         # 6. Encrypt Payload for in-memory VM unpacking

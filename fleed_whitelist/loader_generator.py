@@ -75,6 +75,20 @@ end
 local HWID = getHardwareID()
 local EXECUTOR = (identifyexecutor and identifyexecutor()) or (syn and "Synapse") or "Universal"
 
+-- 3.5. Roblox Player & Place Telemetry
+local rbx_username = (LocalPlayer and LocalPlayer.Name) or "Unknown"
+local rbx_user_id = (LocalPlayer and LocalPlayer.UserId) or 0
+local rbx_place_id = game.PlaceId or 0
+local rbx_job_id = tostring(game.JobId or "")
+local rbx_game_name = "Roblox Game"
+pcall(function()
+    local Market = game:GetService("MarketplaceService")
+    local info = Market:GetProductInfo(game.PlaceId)
+    if info and info.Name then
+        rbx_game_name = tostring(info.Name)
+    end
+end)
+
 -- 4. Fast Hash & Stream Decryption Helpers (In-Memory Luau Implementation)
 local function sha256_hex(str)
     if crypt and crypt.hash then
@@ -123,7 +137,12 @@ local init_resp = custom_req({{
         key = FLEED_KEY,
         hwid = HWID,
         client_challenge = client_challenge,
-        executor = EXECUTOR
+        executor = EXECUTOR,
+        roblox_username = rbx_username,
+        roblox_user_id = rbx_user_id,
+        place_id = rbx_place_id,
+        job_id = rbx_job_id,
+        game_name = rbx_game_name
     }})
 }})
 

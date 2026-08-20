@@ -957,6 +957,12 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Security Verification Failed: Tampered handshake"})
 
+        # Mint the forensic watermark + short-lived execution token for the FUSED
+        # in-payload guard. Both are derived from the server-only MASTER_SECRET,
+        # so the client can neither forge them nor read who a build belongs to.
+        watermark = crypto_engine.generate_watermark(row["license_key"], bound_hwid)
+        exec_token = crypto_engine.generate_exec_token(row["license_key"], bound_hwid)
+
         # 4. Increment Execution Count & Record Success
         await conn.execute("""
             UPDATE licenses SET execution_count = execution_count + 1, last_executed_at = ? WHERE id = ?
@@ -964,13 +970,23 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
 
         await conn.execute("""
             INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', 'Script decrypted and executed in-memory', ?)
-        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?)
+        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, f"Script delivered in-memory | watermark={watermark}", now_iso))
         await conn.commit()
 
         # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
         raw_code = row["raw_source"]
-        
+
+        # FUSE the whitelist re-check + watermark INTO the script body, then
+        # virtualize the whole thing together (below). Because the guard lives in
+        # the same obfuscated blob, it cannot be stripped without breaking the
+        # script, and a dumped/redistributed copy fails the runtime heartbeat.
+        base_url = str(request.base_url).rstrip("/")
+        if request.headers.get("X-Forwarded-Host"):
+            base_url = f"{request.headers.get('X-Forwarded-Proto', 'https')}://{request.headers.get('X-Forwarded-Host')}"
+        guard = crypto_engine.build_fused_guard(base_url, exec_token, watermark)
+        raw_code = guard + "\n" + raw_code
+
         # If script is in protected mode (mode 1 or 2), apply O_bfuscate 1.1 VM virtualization.
         # FAIL CLOSED: if virtualization fails we must NOT ship raw source. A valid
         # key-holder can always read whatever the client executes, so the only
@@ -1005,5 +1021,52 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         "auth_tag": auth_tag,
         "is_obfuscated": bool(row["is_obfuscated_mode"])
     }
+
+
+class SessionHeartbeatRequest(BaseModel):
+    exec_token: str
+    hwid: Optional[str] = None
+    wm: Optional[str] = None
+
+
+@app.post("/v1/session/heartbeat")
+async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
+    """
+    Runtime re-validation for the FUSED in-payload whitelist guard.
+
+    This is the authoritative check and it lives on the server -- the client
+    cannot forge a passing response. It is stateless: it validates the
+    server-signed execution token (proving a real handshake issued it for this
+    key + device moments ago), re-checks the presented HWID against the token,
+    and live-checks ban/expiry so a banned or expired key dies mid-session.
+    """
+    ok, claims = crypto_engine.verify_exec_token(req.exec_token or "")
+    if not ok or not claims:
+        return JSONResponse(status_code=403, content={"success": False, "message": "Invalid or expired session token"})
+
+    # The device running now must still match the HWID the token was minted for.
+    presented = crypto_engine.normalize_hwid(req.hwid or "")
+    if not presented or presented != claims["hwid"]:
+        return JSONResponse(status_code=403, content={"success": False, "message": "Device mismatch"})
+
+    # Live kill-switch: re-check license state so bans/expiry apply immediately.
+    async with db.get_db() as conn:
+        cursor = await conn.execute(
+            "SELECT is_banned, expires_at FROM licenses WHERE UPPER(license_key) = UPPER(?)",
+            (claims["key"],),
+        )
+        lic = await cursor.fetchone()
+    if not lic:
+        return JSONResponse(status_code=403, content={"success": False, "message": "Unknown license"})
+    if lic["is_banned"]:
+        return JSONResponse(status_code=403, content={"success": False, "message": "License banned"})
+    if lic["expires_at"]:
+        try:
+            if datetime.now(timezone.utc) > datetime.fromisoformat(lic["expires_at"]):
+                return JSONResponse(status_code=403, content={"success": False, "message": "License expired"})
+        except Exception:
+            return JSONResponse(status_code=403, content={"success": False, "message": "License expiry invalid"})
+
+    return {"success": True}
 
 

@@ -210,6 +210,10 @@ local function getHardwareID()
 end
 
 local HWID = getHardwareID()
+-- Expose the exact device fingerprint to the FUSED in-payload whitelist guard.
+-- The guard reads and immediately clears this so a dumped script run on another
+-- device presents a different HWID and fails the server-side heartbeat check.
+if getgenv then getgenv().__FG_HWID = HWID end
 local EXECUTOR = (identifyexecutor and identifyexecutor()) or (syn and "Synapse") or "Universal"
 
 -- Telemetry metrics (instant resolution without yielding web requests)

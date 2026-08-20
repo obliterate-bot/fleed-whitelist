@@ -346,6 +346,107 @@ class CryptoEngine:
             # Non-protected callers may fall back to source code.
             return source_code
 
+    # ------------------------------------------------------------------
+    # Forensic watermarking (#2) + fused runtime whitelist guard (#1)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def generate_watermark(license_key: str, hwid: str = "") -> str:
+        """Deterministic per-buyer forensic marker. Derived from the server-only
+        MASTER_SECRET so a leaked build maps back to exactly one license, and the
+        client can neither read who it belongs to nor forge a different one."""
+        body = f"WM:{license_key}:{hwid}"
+        return hmac.new(MASTER_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()[:20]
+
+    @staticmethod
+    def generate_exec_token(license_key: str, hwid: str, ttl_seconds: int = 45) -> str:
+        """Short-lived, server-signed execution token embedded in the delivered
+        payload. Proves 'a real handshake issued this, for this key+device, just
+        now'. Stateless (HMAC over MASTER_SECRET) so heartbeat validation needs no
+        DB row kept alive."""
+        exp = int(time.time()) + int(ttl_seconds)
+        body = f"{license_key}|{hwid}|{exp}"
+        sig = hmac.new(MASTER_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()[:32]
+        raw = f"{body}|{sig}"
+        return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+    @staticmethod
+    def verify_exec_token(token: str) -> Tuple[bool, Optional[Dict]]:
+        try:
+            pad = "=" * (-len(token) % 4)
+            raw = base64.urlsafe_b64decode((token + pad).encode()).decode()
+            parts = raw.split("|")
+            if len(parts) != 4:
+                return False, None
+            license_key, hwid, exp_s, sig = parts
+            exp = int(exp_s)
+            body = f"{license_key}|{hwid}|{exp}"
+            expected = hmac.new(MASTER_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()[:32]
+            if not hmac.compare_digest(expected, sig):
+                return False, None
+            if int(time.time()) > exp:
+                return False, None
+            return True, {"key": license_key, "hwid": hwid, "exp": exp}
+        except Exception:
+            return False, None
+
+    @staticmethod
+    def build_fused_guard(server_url: str, exec_token: str, watermark: str) -> str:
+        """Lua prelude prepended to the script BEFORE virtualization, so the
+        whitelist check is fused into the same obfuscated blob as the code. It
+        re-validates the session at runtime against /v1/session/heartbeat using
+        the embedded execution token + the device HWID the loader stashed in
+        getgenv().__FG_HWID. A dumped/redistributed copy fails this check.
+        Lua 5.1 compatible (no goto/continue) for the O_bfuscate parser."""
+        srv = (server_url or "").rstrip("/")
+        template = (
+            'do\n'
+            'local _FGWM="__WM__"\n'
+            'local _FGTOK="__TOK__"\n'
+            'local _FGSRV="__SRV__"\n'
+            'local _hs=game:GetService("HttpService")\n'
+            'local _req=(syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)\n'
+            'local function _sleep(t) local ok=pcall(function() task.wait(t) end); if not ok then pcall(wait,t) end end\n'
+            'local function _kick(m)\n'
+            'local plr=nil\n'
+            'pcall(function() plr=game:GetService("Players").LocalPlayer end)\n'
+            'if plr then pcall(function() plr:Kick(m) end) end\n'
+            'error(m,0)\n'
+            'end\n'
+            'local _hwid=""\n'
+            'pcall(function()\n'
+            'local g=getgenv and getgenv()\n'
+            'if g and g.__FG_HWID then _hwid=tostring(g.__FG_HWID); g.__FG_HWID=nil end\n'
+            'end)\n'
+            'local _ok=false\n'
+            'if _req then\n'
+            'local _n=0\n'
+            'while _n<3 do\n'
+            '_n=_n+1\n'
+            'local sent,resp=pcall(function()\n'
+            'return _req({Url=_FGSRV.."/v1/session/heartbeat",Method="POST",Headers={["Content-Type"]="application/json"},Body=_hs:JSONEncode({exec_token=_FGTOK,hwid=_hwid,wm=_FGWM})})\n'
+            'end)\n'
+            'if sent and resp then\n'
+            'local code=resp.StatusCode or resp.Status or 0\n'
+            'if code==200 then\n'
+            'local okd,data=pcall(function() return _hs:JSONDecode(resp.Body) end)\n'
+            'if okd and data and data.success then _ok=true break else _kick("FleedGuard: session rejected") end\n'
+            'elseif code==401 or code==403 then\n'
+            '_kick("FleedGuard: unauthorized device/session")\n'
+            'end\n'
+            'end\n'
+            '_sleep(0.5)\n'
+            'end\n'
+            'end\n'
+            'if not _ok then _kick("FleedGuard: session validation failed") end\n'
+            'end\n'
+        )
+        return (
+            template
+            .replace("__WM__", watermark)
+            .replace("__TOK__", exec_token)
+            .replace("__SRV__", srv)
+        )
+
 crypto_engine = CryptoEngine()
 
 

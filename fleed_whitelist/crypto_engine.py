@@ -227,5 +227,60 @@ class CryptoEngine:
         auth_tag = hmac.new(key_bytes, cipher, hashlib.sha256).hexdigest()
         return encrypted_b64, auth_tag
 
+    @staticmethod
+    def obfuscate_with_obfuscate(source_code: str, profile: str = "dense") -> str:
+        """
+        Applies O_bfuscate 1.1 hybrid VM virtualization, register pressure optimization,
+        and polymorphic string-vault protection directly to Lua/Luau source code.
+        """
+        try:
+            import sys
+            import os
+            # Ensure O_bfuscate-1.1.0/src is in sys.path
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            obf_src = os.path.join(base_dir, "O_bfuscate-1.1.0", "src")
+            if obf_src not in sys.path:
+                sys.path.insert(0, obf_src)
+
+            from o_bfuscate.pipeline import obfuscate, Config
+
+            if profile == "dense":
+                cfg = Config(
+                    rename_locals=True,
+                    encrypt_strings=True,
+                    split_numbers=True,
+                    encrypt_properties=True,
+                    layered_strings=True,
+                    string_shards=3,
+                    string_decoys=6,
+                    noise=3,
+                    opaque_predicates=True,
+                    number_depth=5,
+                    bitwise_numbers=True,
+                    virtualize=True,
+                )
+            else:
+                cfg = Config(
+                    rename_locals=True,
+                    encrypt_strings=True,
+                    split_numbers=True,
+                    encrypt_properties=True,
+                    layered_strings=False,
+                    string_shards=1,
+                    string_decoys=0,
+                    noise=1,
+                    opaque_predicates=False,
+                    number_depth=2,
+                    bitwise_numbers=False,
+                    virtualize=False,
+                )
+
+            res = obfuscate(source_code, cfg)
+            return res.source
+        except Exception as e:
+            # Fallback to source code if parser fails on custom syntax
+            return source_code
+
 crypto_engine = CryptoEngine()
+
 

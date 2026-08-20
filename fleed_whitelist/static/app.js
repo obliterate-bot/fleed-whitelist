@@ -242,37 +242,45 @@ async function loadScripts() {
     }
 
     const currentOrigin = window.location.origin;
-    listEl.innerHTML = scripts.map(s => `
-      <div class="card" style="margin-bottom: 16px;">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 12px;">
-          <div>
-            <h3 style="color:var(--text-white); font-size:18px; margin-bottom:4px;">${escapeHtml(s.name)} 
-              <span class="badge ${s.is_obfuscated_mode ? 'badge-gold' : 'badge-zinc'}">
-                <i class="${s.is_obfuscated_mode ? 'fa-solid fa-lock' : 'fa-solid fa-file-code'}"></i> ${s.is_obfuscated_mode ? 'VM Protected' : 'Unobfuscated'}
-              </span>
-              ${s.killswitch_active ? '<span class="badge badge-danger"><i class="fa-solid fa-bolt"></i> KILLSWITCH ACTIVE</span>' : ''}
-            </h3>
-            <p style="color:var(--text-zinc-400); font-size:13px;">Slug: <code>${s.slug}</code> | Version: v${s.version} | Licenses: ${s.active_licenses || 0}</p>
-          </div>
-          <div style="display:flex; gap:8px;">
-            <button class="btn btn-secondary btn-sm" onclick="openEditScriptModal(${s.id})"><i class="fa-solid fa-pen-to-square"></i> Edit Source</button>
-            <button class="btn ${s.killswitch_active ? 'btn-primary' : 'btn-danger'} btn-sm" onclick="toggleKillswitch(${s.id}, ${s.killswitch_active})">
-              <i class="fa-solid fa-bolt"></i> ${s.killswitch_active ? 'Disable Killswitch' : 'Trigger Killswitch'}
-            </button>
-            <button class="btn btn-danger btn-sm" onclick="deleteScript(${s.id})"><i class="fa-solid fa-trash"></i></button>
-          </div>
-        </div>
+    listEl.innerHTML = scripts.map(s => {
+      let modeBadge = '<span class="badge badge-zinc"><i class="fa-solid fa-file-code"></i> Unobfuscated</span>';
+      if (s.is_obfuscated_mode === 2) {
+        modeBadge = '<span class="badge badge-gold" style="background:rgba(250,204,21,0.18); border-color:var(--border-gold);"><i class="fa-solid fa-shield-halved"></i> O_bfuscate 1.1 VM</span>';
+      } else if (s.is_obfuscated_mode === 1) {
+        modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-lock"></i> Stream Encrypted</span>';
+      }
 
-        <div style="background:var(--bg-input); padding: 12px; border-radius: 8px; border: 1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center;">
-          <code style="font-family:var(--font-mono); font-size:12px; color:var(--gold-light);">
-            loadstring(game:HttpGet("${currentOrigin}/v1/loader/${s.slug}"))()
-          </code>
-          <button class="btn btn-secondary btn-sm" onclick="copyText('loadstring(game:HttpGet(&quot;${currentOrigin}/v1/loader/${s.slug}&quot;))()', 'Loadstring copied!')">
-            <i class="fa-solid fa-copy"></i> Copy Loadstring
-          </button>
+      return `
+        <div class="card" style="margin-bottom: 16px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 12px;">
+            <div>
+              <h3 style="color:var(--text-white); font-size:18px; margin-bottom:4px;">${escapeHtml(s.name)} 
+                ${modeBadge}
+                ${s.killswitch_active ? '<span class="badge badge-danger"><i class="fa-solid fa-bolt"></i> KILLSWITCH ACTIVE</span>' : ''}
+              </h3>
+              <p style="color:var(--text-zinc-400); font-size:13px;">Slug: <code>${s.slug}</code> | Version: v${s.version} | Licenses: ${s.active_licenses || 0}</p>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="openEditScriptModal(${s.id})"><i class="fa-solid fa-pen-to-square"></i> Edit Source</button>
+              <button class="btn ${s.killswitch_active ? 'btn-primary' : 'btn-danger'} btn-sm" onclick="toggleKillswitch(${s.id}, ${s.killswitch_active})">
+                <i class="fa-solid fa-bolt"></i> ${s.killswitch_active ? 'Disable Killswitch' : 'Trigger Killswitch'}
+              </button>
+              <button class="btn btn-danger btn-sm" onclick="deleteScript(${s.id})"><i class="fa-solid fa-trash"></i></button>
+            </div>
+          </div>
+
+          <div style="background:var(--bg-input); padding: 12px; border-radius: 8px; border: 1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center;">
+            <code style="font-family:var(--font-mono); font-size:12px; color:var(--gold-light);">
+              loadstring(game:HttpGet("${currentOrigin}/v1/loader/${s.slug}"))()
+            </code>
+            <button class="btn btn-secondary btn-sm" onclick="copyText('loadstring(game:HttpGet(&quot;${currentOrigin}/v1/loader/${s.slug}&quot;))()', 'Loadstring copied!')">
+              <i class="fa-solid fa-copy"></i> Copy Loadstring
+            </button>
+          </div>
         </div>
-      </div>
-    `).join("");
+      `;
+    }).join("");
+
 
   } catch (err) {}
 }

@@ -8,43 +8,15 @@ class LoaderGenerator:
     @staticmethod
     def obfuscate_lua_payload(lua_code: str) -> str:
         """
-        Applies industrial-grade, polymorphic variable scrambling, string byte encoding,
-        and bytecode-style virtual wrapper to protect loader source code from plain sight.
+        Applies O_bfuscate 1.1 hybrid VM virtualization directly to the loader itself.
+        This completely eliminates simple regex extraction of XOR keys or byte arrays.
         """
-        import random
-        import string
+        from .crypto_engine import crypto_engine
+        try:
+            return crypto_engine.obfuscate_with_obfuscate(lua_code, profile="dense")
+        except Exception:
+            return lua_code
 
-        # Random dynamic key for byte transformation
-        xor_key = random.randint(100, 250)
-        encoded_bytes = [str(ord(c) ^ xor_key) for c in lua_code]
-        byte_stream = ",".join(encoded_bytes)
-
-        def rand_var(length=12):
-            return "_" + "".join(random.choices(string.ascii_letters + string.digits + "_", k=length))
-
-        v_stream = rand_var()
-        v_key = rand_var()
-        v_out = rand_var()
-        v_idx = rand_var()
-        v_val = rand_var()
-        v_char = rand_var()
-        v_bxor = rand_var()
-        v_concat = rand_var()
-        v_exec = rand_var()
-
-        obfuscated_wrapper = f"""-- [[ FleedGuard Protected Virtual Machine Loader ]]
--- [ARMOR]: Polymorphic Dynamic Bytecode Protection Active
-local {v_char}=string.char;local {v_concat}=table.concat;local {v_bxor}=(bit32 and bit32.bxor) or (bit and bit.bxor) or function(a,b) return a~=b and (a+b)%256 or 0 end;
-local {v_stream}={{{byte_stream}}};
-local {v_key}={xor_key};
-local {v_out}=table.create(#{v_stream});
-for {v_idx}=1,#{v_stream} do
-    local {v_val}={v_stream}[{v_idx}];
-    {v_out}[{v_idx}]={v_char}({v_bxor}({v_val},{v_key}));
-end
-local {v_exec}=loadstring({v_concat}({v_out}))();
-"""
-        return obfuscated_wrapper
 
     @staticmethod
     def generate_client_loader(server_url: str, script_slug: str, script_name: str, loader_token: str = "", obfuscate: bool = True) -> str:

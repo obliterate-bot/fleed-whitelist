@@ -414,31 +414,33 @@ local g=getgenv and getgenv()
 if g and g.__FG_HWID then _hwid=tostring(g.__FG_HWID); g.__FG_HWID=nil end
 end)
 local function _beat(tok)
-if not _req then return false,nil,0 end
+if not _req then return false,nil,0,"" end
 local sent,resp=pcall(function()
 return _req({Url=_FGSRV.."/v1/session/heartbeat",Method="POST",Headers={["Content-Type"]="application/json"},Body=_hs:JSONEncode({exec_token=tok,hwid=_hwid,wm=_FGWM})})
 end)
-if not sent or type(resp)~="table" then return false,nil,-1 end
+if not sent or type(resp)~="table" then return false,nil,-1,"" end
 local code=resp.StatusCode or resp.Status or 0
-if code==200 then
+local kick_msg=""
 local okd,data=pcall(function() return _hs:JSONDecode(resp.Body) end)
-if okd and type(data)=="table" and data.success then return true,data.token,200 end
-return false,nil,200
+if okd and type(data)=="table" then
+if data.kick_reason then kick_msg=tostring(data.kick_reason) end
+if (not kick_msg) and data.message then kick_msg=tostring(data.message) end
+if code==200 and data.success then return true,data.token,200,"" end
 end
-return false,nil,code
+return false,nil,code,kick_msg
 end
-local _ok,_next,_code=_beat(_FGTOK)
-if (not _ok) and _code==-1 then _sleep(0.15); _ok,_next,_code=_beat(_FGTOK) end
-if not _ok then _kick("FleedGuard: session validation failed") end
+local _ok,_next,_code,_kmsg=_beat(_FGTOK)
+if (not _ok) and _code==-1 then _sleep(0.15); _ok,_next,_code,_kmsg=_beat(_FGTOK) end
+if not _ok then _kick(_kmsg~="" and _kmsg or "FleedGuard: session validation failed") end
 if _next then _FGTOK=_next end
 _spawn(function()
 while true do
-_sleep(30)
-local rok,rnext,rcode=_beat(_FGTOK)
+_sleep(15)
+local rok,rnext,rcode,rkmsg=_beat(_FGTOK)
 if rok then
 if rnext then _FGTOK=rnext end
-elseif rcode==401 or rcode==403 then
-_kick("FleedGuard: session revoked")
+elseif rcode==401 or rcode==403 or rkmsg~="" then
+_kick(rkmsg~="" and rkmsg or "FleedGuard: session revoked by administrator")
 end
 end
 end)

@@ -192,6 +192,13 @@ class BanLeakerRequest(BaseModel):
     license_id: int
     reason: Optional[str] = "Banned via Forensic Watermark Trace"
 
+class KickPlayerRequest(BaseModel):
+    license_key: Optional[str] = None
+    hwid: Optional[str] = None
+    roblox_user_id: Optional[int] = None
+    roblox_username: Optional[str] = None
+    reason: Optional[str] = "Kicked by FleedGuard Administrator"
+
 async def send_discord_security_alert(webhook_url: str, title: str, description: str, fields: List[Dict], color: int = 0xEF4444):
     """Sends a rich, non-blocking Discord security alert embed."""
     if not webhook_url or not str(webhook_url).startswith("https://discord.com/api/webhooks/"):
@@ -1628,6 +1635,22 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
         except Exception:
             return JSONResponse(status_code=403, content={"success": False, "message": "License expiry invalid"})
 
+    # Live in-game kick check: if admin issued a kick for this key or HWID, terminate game session immediately
+    async with db.get_db() as conn:
+        k_cur = await conn.execute("""
+            SELECT reason FROM session_kicks 
+            WHERE (target_type = 'KEY' AND UPPER(target_value) = UPPER(?))
+               OR (target_type = 'HWID' AND UPPER(target_value) = UPPER(?))
+            ORDER BY id DESC LIMIT 1
+        """, (claims["key"], presented))
+        kick_row = await k_cur.fetchone()
+        if kick_row:
+            return JSONResponse(status_code=403, content={
+                "success": False, 
+                "action": "kick", 
+                "kick_reason": kick_row["reason"] or "FleedGuard: You have been kicked from the game by the administrator."
+            })
+
     # Roll the execution token so the fused guard's background re-check keeps
     # validating without needing a long-lived token. Short TTL + rolling means a
     # stolen token is useless within seconds while legit sessions refresh
@@ -1882,39 +1905,36 @@ async def download_db_backup(user: Dict = Depends(get_current_user)):
 
 @app.post("/api/tools/simulate-handshake")
 async def simulate_handshake(req: SimulateHandshakeRequest, user: Dict = Depends(get_current_user)):
+    """
+    Diagnostic tool for testing handshake logic without a live Roblox client.
+    """
     clean_slug = req.slug.strip().lower()
     clean_key = req.key.strip().upper()
     norm_hwid = crypto_engine.normalize_hwid(req.hwid or "SIMULATOR_HWID")
 
     async with db.get_db() as conn:
-        cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ? AND user_id = ?", (clean_slug, user["id"]))
-        script = await cursor.fetchone()
+        cur = await conn.execute("SELECT * FROM scripts WHERE slug = ? AND user_id = ?", (clean_slug, user["id"]))
+        script = await cur.fetchone()
         if not script:
             return {"valid": False, "reason": f"Script hub '{clean_slug}' not found under your account"}
 
-        if script["killswitch_active"]:
-            return {"valid": False, "reason": f"Script killswitch is active: {script['killswitch_reason']}"}
-
-        cursor = await conn.execute("SELECT * FROM licenses WHERE UPPER(license_key) = ? AND script_id = ?", (clean_key, script["id"]))
-        lic = await cursor.fetchone()
+        cur = await conn.execute("SELECT * FROM licenses WHERE script_id = ? AND UPPER(license_key) = UPPER(?)", (script["id"], clean_key))
+        lic = await cur.fetchone()
         if not lic:
-            return {"valid": False, "reason": f"License key '{clean_key}' does not exist for script '{script['name']}'"}
+            return {"valid": False, "reason": f"License key '{clean_key}' does not exist for this hub"}
 
         if lic["is_banned"]:
-            return {"valid": False, "reason": f"License key is banned: {lic['ban_reason'] or 'No reason provided'}"}
+            return {"valid": False, "reason": f"License key is BANNED (Reason: {lic['ban_reason'] or 'Terms violation'})"}
 
         if lic["expires_at"]:
             try:
-                exp_dt = datetime.fromisoformat(lic["expires_at"])
-                if datetime.now(timezone.utc) > exp_dt:
-                    return {"valid": False, "reason": f"License expired on {lic['expires_at']}"}
+                exp = datetime.fromisoformat(lic["expires_at"])
+                if datetime.now(timezone.utc) > exp:
+                    return {"valid": False, "reason": f"License key EXPIRED on {lic['expires_at']}"}
             except Exception:
                 pass
 
-        if lic["max_executions"] != -1 and lic["execution_count"] >= lic["max_executions"]:
-            return {"valid": False, "reason": f"Execution limit reached ({lic['execution_count']}/{lic['max_executions']})"}
-
-        hwid_status = "Unbound (Will bind on next execution)"
+        hwid_status = "Unbound (Will bind to first device)"
         if lic["hwid"]:
             if lic["hwid"] == norm_hwid:
                 hwid_status = "Matches bound device HWID"
@@ -1933,6 +1953,88 @@ async def simulate_handshake(req: SimulateHandshakeRequest, user: Dict = Depends
             "execution_count": lic["execution_count"],
             "expires_at": lic["expires_at"] or "Lifetime"
         }
+
+
+# ----------------- In-Game Remote Player Kicking API -----------------
+
+@app.post("/api/sessions/kick")
+async def kick_player_session(req: KickPlayerRequest, user: Dict = Depends(get_current_user)):
+    """
+    Remotely terminates and kicks a player from their active Roblox game session.
+    """
+    reason = req.reason.strip() if req.reason else "Kicked by FleedGuard Administrator"
+    targets_added = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    async with db.get_db() as conn:
+        if req.license_key:
+            await conn.execute("""
+                INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
+                VALUES (?, 'KEY', ?, ?, ?, ?)
+            """, (user["id"], req.license_key.strip(), reason, user["username"], now_iso))
+            targets_added += 1
+
+        if req.hwid:
+            await conn.execute("""
+                INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
+                VALUES (?, 'HWID', ?, ?, ?, ?)
+            """, (user["id"], req.hwid.strip(), reason, user["username"], now_iso))
+            targets_added += 1
+
+        if req.roblox_user_id:
+            await conn.execute("""
+                INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
+                VALUES (?, 'USER_ID', ?, ?, ?, ?)
+            """, (user["id"], str(req.roblox_user_id), reason, user["username"], now_iso))
+            targets_added += 1
+
+        if req.roblox_username:
+            await conn.execute("""
+                INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
+                VALUES (?, 'USERNAME', ?, ?, ?, ?)
+            """, (user["id"], req.roblox_username.strip(), reason, user["username"], now_iso))
+            targets_added += 1
+
+        # Lookup script_id and license_id if key provided
+        script_id = None
+        license_id = None
+        if req.license_key:
+            l_cur = await conn.execute("SELECT id, script_id FROM licenses WHERE UPPER(license_key) = UPPER(?)", (req.license_key.strip(),))
+            l_row = await l_cur.fetchone()
+            if l_row:
+                license_id = l_row["id"]
+                script_id = l_row["script_id"]
+
+        # Also log to execution_logs as SESSION_KICKED
+        await conn.execute("""
+            INSERT INTO execution_logs (script_id, license_id, license_key, roblox_username, roblox_user_id, status, details, hwid, timestamp)
+            VALUES (?, ?, ?, ?, ?, 'SESSION_KICKED', ?, ?, ?)
+        """, (script_id, license_id, req.license_key or "N/A", req.roblox_username or "Unknown", req.roblox_user_id or 0, f"Remote Kick: {reason}", req.hwid or "", now_iso))
+
+        await conn.commit()
+
+    return {"success": True, "message": f"Kick command issued for player/session ({reason})"}
+
+
+@app.get("/api/sessions/active")
+async def get_active_sessions(user: Dict = Depends(get_current_user)):
+    """
+    Returns players and devices with handshakes in the last 15 minutes.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT l.id, l.license_key, l.roblox_username, l.roblox_user_id, l.game_name, l.place_id, 
+                   l.executor_name, l.hwid, l.ip_address, l.timestamp, s.name as script_name, s.slug as script_slug
+            FROM execution_logs l
+            LEFT JOIN scripts s ON l.script_id = s.id
+            WHERE l.timestamp >= ? AND l.status = 'SUCCESS'
+            ORDER BY l.id DESC
+            LIMIT 50
+        """, (cutoff,))
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
 
 
 

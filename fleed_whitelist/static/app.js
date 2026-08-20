@@ -247,6 +247,9 @@ async function loadOverviewStats() {
     renderTopGames(stats.top_games || []);
     renderTopExecutors(stats.top_executors || []);
 
+    // Load active in-game sessions
+    loadActiveSessions();
+
     // Fetch system health to detect public tunnel
     loadSystemHealth();
   } catch (e) {}
@@ -1176,6 +1179,7 @@ async function openLicenseDetailModal(licenseId) {
           <span style="font-size:12px; color:var(--text-zinc-400);">Hub: <strong>${escapeHtml(lic.script_name)}</strong> (${lic.script_slug})</span>
         </div>
         <div style="display:flex; gap:8px;">
+          <button class="btn btn-danger btn-sm" onclick="openKickModal({ key: '${lic.license_key}', hwid: '${lic.hwid || ''}', displayName: '${lic.license_key}' })"><i class="fa-solid fa-bolt"></i> Kick Session</button>
           <button class="btn btn-secondary btn-sm" onclick="resetHWID(${lic.id})"><i class="fa-solid fa-arrows-rotate"></i> Reset HWID</button>
           <button class="btn ${lic.is_banned ? 'btn-secondary' : 'btn-danger'} btn-sm" onclick="toggleBanLicense(${lic.id}, ${lic.is_banned})">
             ${lic.is_banned ? '<i class="fa-solid fa-unlock"></i> Unban' : '<i class="fa-solid fa-ban"></i> Ban Key'}
@@ -1366,9 +1370,14 @@ function renderLogRow(log) {
         </div>
       </td>
       <td>
-        ${log.license_id ? `
-          <button class="btn btn-secondary btn-sm" onclick="resetHWID(${log.license_id})" title="Reset user HWID"><i class="fa-solid fa-arrows-rotate"></i></button>
-        ` : '—'}
+        <div style="display:flex; gap:6px;">
+          ${log.license_id ? `
+            <button class="btn btn-secondary btn-sm" onclick="resetHWID(${log.license_id})" title="Reset user HWID"><i class="fa-solid fa-arrows-rotate"></i></button>
+          ` : ''}
+          <button class="btn btn-danger btn-sm" onclick="openKickModal({ key: '${log.license_key || ''}', hwid: '${log.hwid || ''}', userId: ${log.roblox_user_id || 0}, username: '${log.roblox_username || ''}', displayName: '${log.roblox_username || log.license_key || 'Device'}' })" title="Kick Player from Game">
+            <i class="fa-solid fa-bolt"></i> Kick
+          </button>
+        </div>
       </td>
     </tr>
   `;
@@ -1741,6 +1750,7 @@ function renderPaletteResults(query) {
 
   // Static quick actions
   const actions = [
+    { title: "Remote Kick In-Game Player", icon: "fa-solid fa-bolt", tab: "overview", action: () => { closeModal("modalSearchPalette"); openKickModal(); } },
     { title: "Create New Script Hub", icon: "fa-solid fa-plus", tab: "scripts", action: () => { closeModal("modalSearchPalette"); openCreateScriptModal(); } },
     { title: "Bulk Generate License Keys", icon: "fa-solid fa-layer-group", tab: "licenses", action: () => { closeModal("modalSearchPalette"); openBulkGenModal(); } },
     { title: "Import Keys from CSV/TXT", icon: "fa-solid fa-file-import", tab: "licenses", action: () => { closeModal("modalSearchPalette"); openImportKeysModal(); } },
@@ -1785,6 +1795,107 @@ function renderPaletteResults(query) {
   });
 
   container.innerHTML = results.length > 0 ? results.join("") : `<div style="text-align:center; padding:20px; color:var(--text-zinc-500);">No matching commands or records.</div>`;
+}
+
+// ----------------- In-Game Remote Player Kicking -----------------
+async function loadActiveSessions() {
+  const tableBody = document.getElementById("activeSessionsTableBody");
+  if (!tableBody) return;
+
+  try {
+    const sessions = await apiCall("/api/sessions/active");
+    if (!sessions || sessions.length === 0) {
+      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 20px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-check" style="color:var(--success-color); margin-right:6px;"></i>No active in-game sessions in the last 15 minutes.</td></tr>`;
+      return;
+    }
+
+    tableBody.innerHTML = sessions.map(s => {
+      const avatarUrl = (s.roblox_user_id && s.roblox_user_id > 0)
+        ? `/api/roblox/avatar/${s.roblox_user_id}`
+        : `/api/roblox/avatar/1`;
+      const profileUrl = (s.roblox_user_id && s.roblox_user_id > 0) ? `https://www.roblox.com/users/${s.roblox_user_id}/profile` : '#';
+      const placeUrl = s.place_id > 0 ? `https://www.roblox.com/games/${s.place_id}` : '#';
+
+      return `
+        <tr>
+          <td>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <img src="${avatarUrl}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle);">
+              <div>
+                <a href="${profileUrl}" target="_blank" style="color:var(--gold-light); font-weight:600; text-decoration:none; font-size:12px; display:flex; align-items:center; gap:4px;">
+                  ${escapeHtml(s.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
+                </a>
+                <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${s.roblox_user_id || '—'}</span>
+              </div>
+            </div>
+          </td>
+          <td>
+            <a href="${placeUrl}" target="_blank" style="color:var(--text-white); font-size:12px; font-weight:500; text-decoration:none; display:flex; align-items:center; gap:4px;">
+              ${escapeHtml(s.game_name || 'Roblox Experience')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
+            </a>
+            <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${s.place_id || '—'}</span>
+          </td>
+          <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(s.script_name || 'Hub')}</strong></td>
+          <td>
+            <span class="key-badge" style="font-size:11px;" onclick="copyText('${s.license_key}')">${s.license_key.substring(0, 14)}... <i class="fa-solid fa-copy"></i></span>
+          </td>
+          <td><span class="badge badge-gold" style="font-size:10px;">${escapeHtml(s.executor_name || 'Universal')}</span></td>
+          <td style="font-size:11px; color:var(--text-zinc-400); font-family:var(--font-mono);">
+            ${new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          </td>
+          <td>
+            <button class="btn btn-danger btn-sm" onclick="openKickModal({ key: '${s.license_key || ''}', hwid: '${s.hwid || ''}', userId: ${s.roblox_user_id || 0}, username: '${s.roblox_username || ''}', displayName: '${s.roblox_username || s.license_key || 'Player'}' })">
+              <i class="fa-solid fa-bolt"></i> Kick
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (e) {}
+}
+
+function openKickModal(opts) {
+  opts = opts || {};
+  const displayInput = document.getElementById("kickTargetDisplay");
+  if (!displayInput) return;
+
+  displayInput.value = opts.displayName || opts.username || opts.key || opts.hwid || "Select Player / Key";
+  document.getElementById("kickTargetKey").value = opts.key || "";
+  document.getElementById("kickTargetHWID").value = opts.hwid || "";
+  document.getElementById("kickTargetUserId").value = opts.userId || "";
+  document.getElementById("kickTargetUsername").value = opts.username || "";
+  document.getElementById("kickReasonPreset").value = "FleedGuard: Session terminated by administrator";
+  document.getElementById("kickReasonText").value = "FleedGuard: Session terminated by administrator";
+  document.getElementById("modalKickPlayer").classList.add("active");
+}
+
+function applyKickPreset(val) {
+  if (val !== "custom") {
+    document.getElementById("kickReasonText").value = val;
+  }
+}
+
+async function handleExecuteKick(e) {
+  e.preventDefault();
+  const license_key = document.getElementById("kickTargetKey")?.value || null;
+  const hwid = document.getElementById("kickTargetHWID")?.value || null;
+  const roblox_user_id = parseInt(document.getElementById("kickTargetUserId")?.value) || null;
+  const roblox_username = document.getElementById("kickTargetUsername")?.value || null;
+  const reason = document.getElementById("kickReasonText")?.value.trim() || "Kicked by FleedGuard Administrator";
+
+  try {
+    const res = await apiCall("/api/sessions/kick", "POST", {
+      license_key,
+      hwid,
+      roblox_user_id,
+      roblox_username,
+      reason
+    });
+    showToast(res.message, "success");
+    closeModal("modalKickPlayer");
+    loadActiveSessions();
+    loadOverviewStats();
+  } catch (err) {}
 }
 
 // Global Keyboard Shortcut (Ctrl+K or Cmd+K)

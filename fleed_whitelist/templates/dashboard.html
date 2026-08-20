@@ -235,6 +235,35 @@
           </div>
         </div>
       </div>
+
+      <!-- Active In-Game Sessions (Live Players) -->
+      <div class="card" style="margin-top:24px; border:1px solid var(--border-gold-subtle);">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fa-solid fa-signal" style="color:var(--gold-primary);"></i> Active In-Game Sessions (Live Players)</h3>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <span class="badge badge-success"><i class="fa-solid fa-circle-dot"></i> Live Heartbeat Tracking</span>
+            <button class="btn btn-secondary btn-sm" onclick="loadActiveSessions()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+          </div>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Roblox Player</th>
+                <th>Game / Place ID</th>
+                <th>Hub</th>
+                <th>License Key</th>
+                <th>Executor</th>
+                <th>Last Active</th>
+                <th>Remote Action</th>
+              </tr>
+            </thead>
+            <tbody id="activeSessionsTableBody">
+              <tr><td colspan="7" style="text-align:center; padding:20px; color:var(--text-zinc-500);">Scanning for active game sessions...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </main>
 
     <!-- ======================================================== -->
@@ -998,9 +1027,54 @@ async function createLicense(slug, key, discordId, note) {
     </div>
   </div>
 
+  <!-- MODAL 10: Remote Kick In-Game Player -->
+  <div id="modalKickPlayer" class="modal-overlay">
+    <div class="modal-content" style="border-color: var(--danger-border);">
+      <div class="modal-header">
+        <h3 class="modal-title" style="color:var(--danger-light);"><i class="fa-solid fa-bolt" style="color:var(--danger-color);"></i> Remote Kick Player from Game</h3>
+        <button class="modal-close" onclick="closeModal('modalKickPlayer')">&times;</button>
+      </div>
+
+      <p style="color:var(--text-zinc-300); font-size:13px; margin-bottom:16px;">
+        Issues a remote termination signal that will immediately invoke <code>LocalPlayer:Kick()</code> in the target's Roblox game client.
+      </p>
+
+      <form onsubmit="handleExecuteKick(event)">
+        <div class="form-group">
+          <label class="form-label">Target Roblox Player / Key / HWID</label>
+          <input type="text" id="kickTargetDisplay" class="form-input" readonly style="font-weight:700; color:var(--gold-light);">
+          <input type="hidden" id="kickTargetKey">
+          <input type="hidden" id="kickTargetHWID">
+          <input type="hidden" id="kickTargetUserId">
+          <input type="hidden" id="kickTargetUsername">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Predefined Kick Reason</label>
+          <select id="kickReasonPreset" class="form-select" onchange="applyKickPreset(this.value)">
+            <option value="FleedGuard: Session terminated by administrator">Administrator Session Revocation</option>
+            <option value="FleedGuard: Suspicious activity & memory hook detected">Suspicious Memory Hook / Tampering</option>
+            <option value="FleedGuard: Unauthorized multi-account key sharing">Unauthorized Multi-Account Key Sharing</option>
+            <option value="FleedGuard: License terms of service violation">Terms of Service Violation</option>
+            <option value="custom">Custom Reason...</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">In-Game Kick Message (Shown on player's screen):</label>
+          <input type="text" id="kickReasonText" class="form-input" value="FleedGuard: Session terminated by administrator" required>
+        </div>
+
+        <button type="submit" class="btn btn-danger" style="width:100%; padding:12px; font-weight:700;">
+          <i class="fa-solid fa-bolt"></i> Kick Player Immediately
+        </button>
+      </form>
+    </div>
+  </div>
+
   <!-- Dynamic Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js?v=2.2.1"></script>
+  <script src="/static/app.js?v=2.2.2"></script>
 </body>
 </html>

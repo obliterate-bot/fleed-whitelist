@@ -366,9 +366,9 @@ async def on_command_error(ctx, error):
         await ctx.send(embed=utils.error_embed(f"unexpected command error ({code if dev_cog else 'untracked'})", ctx.author))
 
 async def main():
-    # This network filters Discord's TLS SNI. The connector omits SNI only for
-    # Discord hosts while preserving CA and hostname certificate validation.
-    bot.http.connector = DiscordTLSConnector(limit=0)
+    # Only use custom TLS SNI suppression if explicitly requested in config / env
+    if getattr(config, "BYPASS_DISCORD_TLS", False):
+        bot.http.connector = DiscordTLSConnector(limit=0)
 
     async with bot:
         # initialize database tables first

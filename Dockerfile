@@ -30,4 +30,4 @@ RUN chmod +x /app/start.sh
 EXPOSE 8000
 
 # Start both Whitelist API and Discord Bot
-CMD ["/bin/sh", "/app/start.sh"]
+CMD ["/bin/bash", "/app/start.sh"]

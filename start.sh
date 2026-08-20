@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
 echo "========================================================"
@@ -17,7 +17,7 @@ if [ -n "$DISCORD_TOKEN" ] && [ "$DISCORD_TOKEN" != "your_discord_bot_token_here
     echo "  [+] Starting SWISHBOT Discord Bot..."
     python main.py &
     BOT_PID=$!
-    wait -n $SERVER_PID $BOT_PID
+    wait -n || wait
 else
     echo "  [!] No DISCORD_TOKEN found. Running Whitelist Web API only."
     wait $SERVER_PID

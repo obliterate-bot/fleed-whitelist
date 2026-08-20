@@ -593,7 +593,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         Duration supports '10m', '1h', '7d', '30d', 'lifetime', etc.
         """
         clean_slug = slug.strip().lower()
-        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        ok, err_msg, user_row = await check_script_permission(ctx, clean_slug)
         if not ok:
             return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
@@ -705,7 +705,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         Duration supports '10m', '1h', '7d', '30d', 'lifetime', etc.
         """
         clean_slug = slug.strip().lower()
-        ok, err_msg, _ = await check_script_permission(ctx, clean_slug)
+        ok, err_msg, user_row = await check_script_permission(ctx, clean_slug)
         if not ok:
             return await ctx.send(embed=error_embed(err_msg, ctx.author))
 

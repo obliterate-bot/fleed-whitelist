@@ -1146,19 +1146,17 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         if not rows:
             return await ctx.send(embed=warn_embed(f"no whitelisted keys found for <@{discord_id}>.", ctx.author))
 
-        embed = fleed_embed(title=f"whitelist profile — <@{discord_id}>", author=ctx.author)
+        lines = [f"**target:** <@{discord_id}>\n"]
         for r in rows:
             status = "banned" if r["is_banned"] else "active"
-            hwid_val = f"`{r['hwid'][:16]}...`" if r["hwid"] else "unbound"
-            expires = r["expires_at"][:10] if r["expires_at"] else "lifetime"
-            embed.add_field(
-                name=f"{r['script_name']} (`{r['script_slug']}`)",
-                value=f"key: `{r['license_key']}`\n"
-                      f"status: {status} | hwid: {hwid_val}\n"
-                      f"executions: {r['execution_count']}\n"
-                      f"expires: {expires}",
-                inline=False
+            hwid_val = f"`{r['hwid'][:16]}...`" if r["hwid"] else "`unbound`"
+            expires = f"`{r['expires_at'][:10]}`" if r["expires_at"] else "`lifetime`"
+            lines.append(
+                f"**{r['script_name']}** (`{r['script_slug']}`)\n"
+                f"↳ **key:** `{r['license_key']}`\n"
+                f"↳ **status:** `{status}` • **hwid:** {hwid_val} • **execs:** `{r['execution_count']}` • **expires:** {expires}"
             )
+        embed = fleed_embed(title="whitelist profile", description="\n\n".join(lines), author=ctx.author)
         await ctx.send(embed=embed)
 
     @whitelist_group.command(name="force-resethwid", aliases=["freset", "adminreset"])
@@ -1932,21 +1930,25 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         if not rows:
             return await ctx.send(embed=warn_embed("no delegated whitelist managers configured yet.", ctx.author))
 
-        embed = fleed_embed(title="Authorized Whitelist Managers", author=ctx.author)
-        for r in rows:
+        lines = []
+        for i, r in enumerate(rows, start=1):
             is_role = r["is_role"] == 1
-            target_str = f"<@&{r['discord_user_id']}> (Role)" if is_role else f"<@{r['discord_user_id']}> (User)"
-            scope_str = f"`{r['script_slug']}`" if r["script_slug"] != "all" else "`All Scripts (Global)`"
-            granted_by_str = f"<@{r['granted_by']}>" if r["granted_by"] else "Owner"
+            target_mention = f"<@&{r['discord_user_id']}>" if is_role else f"<@{r['discord_user_id']}>"
+            tag_type = "role" if is_role else "user"
+            scope_str = f"`{r['script_slug']}`" if r["script_slug"] != "all" else "`all scripts (global)`"
+            granted_by_str = f"<@{r['granted_by']}>" if r["granted_by"] else "owner"
             created_str = r["created_at"][:10] if r["created_at"] else "—"
 
-            embed.add_field(
-                name=f"{target_str}",
-                value=f"**Scope:** {scope_str}\n"
-                      f"**Granted By:** {granted_by_str}\n"
-                      f"**Date:** {created_str}",
-                inline=False
+            lines.append(
+                f"**{i}.** {target_mention} (`{tag_type}`)\n"
+                f"↳ **scope:** {scope_str} • **granted by:** {granted_by_str} • **date:** `{created_str}`"
             )
+
+        embed = fleed_embed(
+            title="authorized whitelist managers",
+            description="\n\n".join(lines),
+            author=ctx.author
+        )
         await ctx.send(embed=embed)
 
     # Top-level direct shortcuts

@@ -47,7 +47,7 @@ local {v_exec}=loadstring({v_concat}({v_out}))();
         return obfuscated_wrapper
 
     @staticmethod
-    def generate_client_loader(server_url: str, script_slug: str, script_name: str, obfuscate: bool = True) -> str:
+    def generate_client_loader(server_url: str, script_slug: str, script_name: str, loader_token: str = "", obfuscate: bool = True) -> str:
         """
         Generates the armored client loader that runs inside Roblox Executors.
         Features:
@@ -59,6 +59,7 @@ local {v_exec}=loadstring({v_concat}({v_out}))();
         - Multi-source hardware fingerprinting with executor spoof detection
         - Sandboxed execution environment (`setfenv` + environment isolation)
         - Dynamic polymorphic encryption wrapper
+        - Ephemeral HMAC Loader Armor Token
         """
         clean_url = server_url.rstrip("/")
 
@@ -100,6 +101,7 @@ local _rshift = (bit32 and bit32.rshift) or (bit and bit.rshift)
 
 local FLEED_SERVER = "{clean_url}"
 local SCRIPT_SLUG = "{script_slug}"
+local LOADER_ARMOR_TOKEN = "{loader_token}"
 local FLEED_KEY = getgenv().FleedKey or getgenv().Key or _G.FleedKey or _G.Key
 
 if not FLEED_KEY or _type(FLEED_KEY) ~= "string" or #FLEED_KEY < 4 then
@@ -257,6 +259,7 @@ local init_resp = custom_req({{
         key = FLEED_KEY,
         hwid = HWID,
         client_challenge = client_challenge,
+        loader_token = LOADER_ARMOR_TOKEN,
         executor = EXECUTOR,
         roblox_username = rbx_username,
         roblox_user_id = rbx_user_id,

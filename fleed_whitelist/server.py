@@ -146,12 +146,14 @@ class HandshakeInitRequest(BaseModel):
     key: str
     hwid: str
     client_challenge: str
+    loader_token: Optional[str] = None
     executor: Optional[str] = "Universal"
     roblox_username: Optional[str] = None
     roblox_user_id: Optional[int] = None
     place_id: Optional[int] = None
     job_id: Optional[str] = None
     game_name: Optional[str] = None
+
 
 class HandshakeVerifyRequest(BaseModel):
     nonce: str
@@ -688,7 +690,7 @@ def check_rate_limit(key: str, max_requests: int = 30, window_sec: int = 60) -> 
 @app.get("/v1/loader/{slug}", response_class=PlainTextResponse)
 async def serve_raw_loader(slug: str, request: Request):
     """
-    Returns the dynamic Luau loader for a specific script.
+    Returns the dynamic Luau loader for a specific script with ephemeral HMAC loader token.
     """
     async with db.get_db() as conn:
         cursor = await conn.execute("SELECT name, slug FROM scripts WHERE slug = ?", (slug,))
@@ -700,12 +702,14 @@ async def serve_raw_loader(slug: str, request: Request):
     if request.headers.get("X-Forwarded-Proto") and request.headers.get("X-Forwarded-Host"):
         base_url = f"{request.headers.get('X-Forwarded-Proto')}://{request.headers.get('X-Forwarded-Host')}"
 
-    return loader_generator.generate_client_loader(base_url, script["slug"], script["name"])
+    # Generate ephemeral HMAC loader armor token bound to slug and short time window
+    loader_token = crypto_engine.generate_loader_token(script["slug"])
+    return loader_generator.generate_client_loader(base_url, script["slug"], script["name"], loader_token=loader_token)
 
 @app.post("/v1/handshake/init")
 async def handshake_init(req: HandshakeInitRequest, request: Request):
     """
-    Step 1 of Handshake: Validates key, HWID binding, applies rate limits, and creates dynamic challenge.
+    Step 1 of Handshake: Validates key, HWID binding, applies rate limits, and detects bypass fetchers.
     """
     client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "127.0.0.1").split(",")[0].strip()
     
@@ -728,6 +732,28 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         if not script:
             return JSONResponse(status_code=404, content={"success": False, "message": "Script not found"})
 
+        # Bypass Check 1: Enforce valid Loader Armor Token (defeats custom standalone fetcher scripts)
+        is_token_valid = crypto_engine.verify_loader_token(req.loader_token or "", script["slug"])
+        if not is_token_valid:
+            await conn.execute("""
+                INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BYPASS_ATTEMPT', 'Direct API fetcher detected (missing or forged loader armor token)', ?)
+            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
+            await conn.commit()
+            return JSONResponse(status_code=403, content={"success": False, "message": "Security Error: Direct API execution not permitted. Execute via official loader."})
+
+        # Bypass Check 2: Detect spoofed or bot telemetry
+        raw_hwid_lower = str(req.hwid or "").lower()
+        raw_user_lower = str(req.roblox_username or "").lower()
+        if any(term in raw_hwid_lower for term in ["fetcher", "dump", "intercept", "spoof", "test_hwid"]) or \
+           any(term in raw_user_lower for term in ["fetcher", "dumper", "interceptor", "cracker"]):
+            await conn.execute("""
+                INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BYPASS_ATTEMPT', 'Malicious extractor or dumper telemetry signature detected', ?)
+            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
+            await conn.commit()
+            return JSONResponse(status_code=403, content={"success": False, "message": "Security Violation: Extraction attempt detected and logged."})
+
         # Check Killswitch
         if script["killswitch_active"]:
             reason = script["killswitch_reason"] or "Script temporarily disabled by developer."
@@ -741,6 +767,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         # 2. Lookup License Key
         cursor = await conn.execute("SELECT * FROM licenses WHERE UPPER(license_key) = ? AND script_id = ?", (clean_key, script["id"]))
         license_row = await cursor.fetchone()
+
         if not license_row:
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)

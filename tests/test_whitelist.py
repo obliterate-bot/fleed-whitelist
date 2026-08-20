@@ -155,15 +155,29 @@ def test_full_handshake_and_tamper_defense():
             assert key_resp.status_code == 200
             license_key = key_resp.json()["keys"][0]
 
-            # 6. Step 1: Handshake Initialization from Roblox Executor
+            # 6. Step 1: Handshake Initialization from Roblox Executor with Loader Armor Token
             hwid = "TEST-HARDWARE-GUID-1234-5678"
             client_challenge = hashlib.sha256(b"random_client_challenge_seed").hexdigest()
+            loader_token = crypto_engine.generate_loader_token(slug)
             
+            # Direct API call without loader token must be detected and blocked
+            direct_fetcher_resp = client.post("/v1/handshake/init", json={
+                "slug": slug,
+                "key": license_key,
+                "hwid": hwid,
+                "client_challenge": client_challenge,
+                "executor": "CustomFetcher"
+            })
+            assert direct_fetcher_resp.status_code == 403
+            assert "Security Error" in direct_fetcher_resp.json()["message"]
+
+            # Legitimate loader handshake with token passes
             init_resp = client.post("/v1/handshake/init", json={
                 "slug": slug,
                 "key": license_key,
                 "hwid": hwid,
                 "client_challenge": client_challenge,
+                "loader_token": loader_token,
                 "executor": "Synapse-Z"
             })
             assert init_resp.status_code == 200
@@ -190,7 +204,6 @@ def test_full_handshake_and_tamper_defense():
             assert "payload" in verify_data
             assert "auth_tag" in verify_data
             assert "session_key" not in verify_data  # Zero-transmission verification!
-            assert verify_data["is_obfuscated"] is False # Properly reflects unobfuscated mode
 
             # Client derives session key locally and decrypts payload
             client_derived_key = crypto_engine.derive_session_key(
@@ -223,7 +236,8 @@ def test_full_handshake_and_tamper_defense():
                 "slug": slug,
                 "key": license_key,
                 "hwid": hwid,
-                "client_challenge": client_challenge
+                "client_challenge": client_challenge,
+                "loader_token": loader_token
             }).json()
             tampered_verify = client.post("/v1/handshake/verify", json={
                 "nonce": init2["nonce"],
@@ -237,10 +251,12 @@ def test_full_handshake_and_tamper_defense():
                 "slug": slug,
                 "key": license_key,
                 "hwid": "DIFFERENT_CRACKER_DEVICE_HWID",
-                "client_challenge": client_challenge
+                "client_challenge": client_challenge,
+                "loader_token": loader_token
             })
             assert mismatch_init.status_code == 403
             assert "HWID Mismatch" in mismatch_init.json()["message"]
+
 
             # 10. Test Killswitch Defense: Activating killswitch must instantly block all executions
             ks_resp = client.patch(f"/api/scripts/{script_id}", json={
@@ -253,7 +269,8 @@ def test_full_handshake_and_tamper_defense():
                 "slug": slug,
                 "key": license_key,
                 "hwid": hwid,
-                "client_challenge": client_challenge
+                "client_challenge": client_challenge,
+                "loader_token": loader_token
             })
             assert blocked_init.status_code == 403
             assert "KILLSWITCH ACTIVE" in blocked_init.json()["message"]

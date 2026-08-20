@@ -133,6 +133,35 @@ class CryptoEngine:
         return hashlib.sha256(seed.encode('utf-8')).hexdigest()
 
     @staticmethod
+    def generate_loader_token(script_slug: str, timestamp: Optional[int] = None) -> str:
+        """Generates an HMAC loader integrity token bound to the script slug and short time window (90s)."""
+        ts = timestamp or int(time.time())
+        window = ts // 90 # 90-second rolling token window
+        msg = f"loader_armor:{script_slug}:{window}"
+        sig = hmac.new(MASTER_SECRET.encode(), msg.encode(), hashlib.sha256).hexdigest()[:24]
+        return f"{window}:{sig}"
+
+    @staticmethod
+    def verify_loader_token(token: str, script_slug: str) -> bool:
+        """Verifies loader integrity token against current and previous time windows."""
+        try:
+            if not token or ":" not in token:
+                return False
+            window_str, sig = token.split(":", 1)
+            token_window = int(window_str)
+            current_window = int(time.time()) // 90
+            
+            # Allow current window and adjacent +/- 1 window (drift tolerance)
+            if abs(current_window - token_window) > 1:
+                return False
+                
+            expected_msg = f"loader_armor:{script_slug}:{token_window}"
+            expected_sig = hmac.new(MASTER_SECRET.encode(), expected_msg.encode(), hashlib.sha256).hexdigest()[:24]
+            return hmac.compare_digest(expected_sig, sig)
+        except Exception:
+            return False
+
+    @staticmethod
     def create_handshake_challenge(script_id: int, license_key: str, client_challenge: str, hwid: str) -> Dict:
         """Creates an ephemeral session challenge to defeat replay and MITM attacks with 12s window."""
         nonce = secrets.token_hex(16)

@@ -144,9 +144,7 @@ local function isNative(fn)
     end
 
     -- Check 4: newcclosure detection via upvalue reflection
-    -- In Luau executors, newcclosure wraps a Lua function by storing the Lua function as upvalue #1
-    -- Genuine C builtins never have Lua functions in their upvalues
-    if getupvalues and not islclosure(fn) then
+    if getupvalues and not (islclosure and islclosure(fn)) then
         local ok, upvs = _pcall(getupvalues, fn)
         if ok and _type(upvs) == "table" and #upvs > 0 then
             for _, upv in pairs(upvs) do
@@ -187,9 +185,15 @@ local function detectMetatableTamper()
     return false
 end
 
--- Validate core primitive integrity
-if not isNative(_string_byte) or not isNative(_string_char) or not isNative(_pcall) or not isNative(_tostring) or detectMetatableTamper() then
-    securityKick("Critical runtime environment tampering detected.")
+-- PRE-FLIGHT CHECK: Instant abort if loadstring, task.spawn, or core primitives are already hooked
+if not isNative(_loadstring) or
+   not isNative(_string_byte) or
+   not isNative(_string_char) or
+   not isNative(_pcall) or
+   not isNative(_tostring) or
+   (task and task.spawn and not isNative(task.spawn)) or
+   detectMetatableTamper() then
+    securityKick("Critical runtime environment or compiler hook detected on startup.")
     return
 end
 

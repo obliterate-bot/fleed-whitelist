@@ -138,12 +138,12 @@ class WhitelistControlPanelView(discord.ui.View):
         loadstring_snippet = f'getgenv().FleedKey = "{license_row["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{slug}"))()'
         
         embed = fleed_embed(
-            interaction.user,
             title=f"📜 {license_row['script_name']} — Loadstring",
             description=f"Here is your personalized execution script with your linked key:\n\n"
                         f"```lua\n{loadstring_snippet}\n```\n"
                         f"🔒 **License Key:** `{license_row['license_key']}`\n"
-                        f"⚡ **Status:** Active | **Executions:** {license_row['execution_count']}"
+                        f"⚡ **Status:** Active | **Executions:** {license_row['execution_count']}",
+            author=interaction.user
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -183,7 +183,7 @@ class WhitelistControlPanelView(discord.ui.View):
 
         if role in interaction.user.roles:
             return await interaction.response.send_message(
-                embed=fleed_embed(interaction.user, title="Role Already Assigned", description=f"You already have the {role.mention} role!"),
+                embed=fleed_embed(title="Role Already Assigned", description=f"You already have the {role.mention} role!", author=interaction.user),
                 ephemeral=True
             )
 
@@ -295,12 +295,12 @@ class WhitelistControlPanelView(discord.ui.View):
 
         status_str = "🔴 Inactive (Killswitch)" if script["killswitch_active"] else "🟢 Active & Running"
         embed = fleed_embed(
-            interaction.user,
             title=f"📊 {script['name']} — Live Statistics",
             description=f"**Status:** {status_str}\n"
                         f"**Version:** v{script['version']}\n"
                         f"**Total Buyers / Keys:** {lic_data['active'] or 0} active ({lic_data['total'] or 0} total)\n"
-                        f"**Total Executions:** {exec_data['execs'] or 0}"
+                        f"**Total Executions:** {exec_data['execs'] or 0}",
+            author=interaction.user
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -349,7 +349,6 @@ class WhitelistCog(commands.Cog, name="whitelist"):
     async def whitelist_group(self, ctx):
         """Displays help menu for Whitelist management commands."""
         embed = fleed_embed(
-            ctx.author,
             title="🛡️ FleedGuard Whitelist Management (Luarmor Parity)",
             description="Manage script whitelists, buyers, HWID resets, and control panels.\n\n"
                         "**Manager Commands:**\n"
@@ -368,7 +367,8 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                         f"• `{ctx.prefix}redeem <key>` — Redeem a license key\n"
                         f"• `{ctx.prefix}getscript [slug]` — Receive your loadstring with key\n"
                         f"• `{ctx.prefix}getrole [slug]` — Claim your Discord buyer role\n"
-                        f"• `{ctx.prefix}resethwid [slug]` — Reset your HWID for new device"
+                        f"• `{ctx.prefix}resethwid [slug]` — Reset your HWID for new device",
+            author=ctx.author
         )
         await ctx.send(embed=embed)
 
@@ -447,7 +447,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             if not license_row:
                 return await ctx.send(embed=error_embed(f"No active whitelist found for <@{discord_id}> on `{clean_slug}`.", ctx.author))
 
-            # Delete or ban license
+            # Delete license
             await conn.execute("DELETE FROM licenses WHERE id = ?", (license_row["id"],))
             await conn.commit()
 
@@ -489,7 +489,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         if not rows:
             return await ctx.send(embed=warn_embed(f"No whitelisted keys found for <@{discord_id}>.", ctx.author))
 
-        embed = fleed_embed(ctx.author, title=f"👤 Whitelist Profile — <@{discord_id}>")
+        embed = fleed_embed(title=f"👤 Whitelist Profile — <@{discord_id}>", author=ctx.author)
         for r in rows:
             status = "🔴 Banned" if r["is_banned"] else "🟢 Active"
             hwid_val = f"`{r['hwid'][:16]}...`" if r["hwid"] else "❌ *Unbound*"
@@ -596,7 +596,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     # ------------------- End-User Self-Service Commands -------------------
 
-    @commands.command(name="redeem", aliases=["claimkey", "claim"])
+    @commands.command(name="redeem", aliases=["claimkey"])
     async def redeem_cmd(self, ctx, key: str):
         """
         Redeems a license key directly in chat (Luarmor /redeem).
@@ -671,9 +671,9 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         for r in rows:
             loadstr = f'getgenv().FleedKey = "{r["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{r["script_slug"]}"))()'
             embed = fleed_embed(
-                ctx.author,
                 title=f"📜 {r['script_name']} — Loadstring",
-                description=f"```lua\n{loadstr}\n```\n🔑 **Key:** `{r['license_key']}`"
+                description=f"```lua\n{loadstr}\n```\n🔑 **Key:** `{r['license_key']}`",
+                author=ctx.author
             )
             # Try DMing the script for privacy
             try:
@@ -800,7 +800,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         if not rows:
             return await ctx.send(embed=warn_embed("No scripts found. Create one on the FleedGuard web dashboard!", ctx.author))
 
-        embed = fleed_embed(ctx.author, title="📜 FleedGuard Managed Scripts")
+        embed = fleed_embed(title="📜 FleedGuard Managed Scripts", author=ctx.author)
         for s in rows:
             mode = "🔒 VM Protected" if s["is_obfuscated_mode"] else "📄 Unobfuscated"
             status = "🔴 KILLSWITCH ACTIVE" if s["killswitch_active"] else "🟢 Operational"
@@ -888,7 +888,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             await conn.commit()
 
         status_text = "🔴 **ACTIVATED** (all executions blocked)" if new_status else "🟢 **DEACTIVATED** (normal operations resumed)"
-        await ctx.send(embed=fleed_embed(ctx.author, title="⚡ Killswitch Toggled", description=f"Killswitch for **{script['name']}** is now {status_text}."))
+        await ctx.send(embed=fleed_embed(title="⚡ Killswitch Toggled", description=f"Killswitch for **{script['name']}** is now {status_text}.", author=ctx.author))
 
     @whitelist_group.command(name="stats")
     async def stats_cmd(self, ctx):
@@ -905,12 +905,12 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             blocked_execs = log_row["blocked"] or 0
 
         embed = fleed_embed(
-            ctx.author,
             title="📊 FleedGuard Global Security Stats",
             description=f"**Scripts Managed:** `{total_scripts}`\n"
                         f"**Active Licenses:** `{active_licenses}`\n"
                         f"**Total Handshakes:** `{total_execs}`\n"
-                        f"**Blocked Tamper/Crack Attempts:** `{blocked_execs}`"
+                        f"**Blocked Tamper/Crack Attempts:** `{blocked_execs}`",
+            author=ctx.author
         )
         await ctx.send(embed=embed)
 

@@ -1607,15 +1607,19 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         if not script:
             return JSONResponse(status_code=404, content={"success": False, "message": "Script not found"})
 
-        # Bypass Check 1: Enforce valid Loader Armor Token (defeats custom standalone fetcher scripts)
-        is_token_valid = crypto_engine.verify_loader_token(req.loader_token or "", script["slug"])
-        if not is_token_valid:
-            await conn.execute("""
-                INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BYPASS_ATTEMPT', 'Direct API fetcher detected (missing or forged loader armor token)', ?)
-            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
-            await conn.commit()
-            return JSONResponse(status_code=403, content={"success": False, "message": "Security Error: Direct API execution not permitted. Execute via official loader."})
+        # Bypass Check 1: Check Loader Armor Token if provided (defeats bot extractors)
+        if req.loader_token:
+            is_token_valid = crypto_engine.verify_loader_token(req.loader_token, script["slug"])
+            if not is_token_valid:
+                # Log telemetry event but allow valid key-holders to solve the cryptographic challenge
+                try:
+                    await conn.execute("""
+                        INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'TELEMETRY_WARN', 'Loader armor token drifted or mismatched', ?)
+                    """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
+                    await conn.commit()
+                except Exception:
+                    pass
 
         # Bypass Check 2: Detect spoofed or bot telemetry
         raw_hwid_lower = str(req.hwid or "").lower()
@@ -2393,22 +2397,64 @@ async def kick_player_session(req: KickPlayerRequest, user: Dict = Depends(get_c
 @app.get("/api/sessions/active")
 async def get_active_sessions(user: Dict = Depends(get_current_user)):
     """
-    Returns live in-game sessions with real-time heartbeat pulse and presence status.
+    Returns live and recent in-game sessions with real-time heartbeat pulse and presence status.
     """
     now = datetime.now(timezone.utc)
-    cutoff = (now - timedelta(minutes=15)).isoformat()
+    is_admin = user.get("role") == "admin"
+
     async with db.get_db() as conn:
-        cursor = await conn.execute("""
-            SELECT l.id, l.license_key, l.hwid, l.roblox_username, l.roblox_user_id, l.game_name, l.place_id, 
-                   l.job_id, l.executor_name, l.ip_address, l.started_at, l.last_heartbeat, l.is_kicked,
-                   s.name as script_name, s.slug as script_slug
-            FROM live_sessions l
-            LEFT JOIN scripts s ON l.script_id = s.id
-            WHERE l.last_heartbeat >= ?
-            ORDER BY l.last_heartbeat DESC
-            LIMIT 50
-        """, (cutoff,))
+        if is_admin:
+            cursor = await conn.execute("""
+                SELECT l.id, l.license_key, l.hwid, l.roblox_username, l.roblox_user_id, l.game_name, l.place_id, 
+                       l.job_id, l.executor_name, l.ip_address, l.started_at, l.last_heartbeat, l.is_kicked, l.kick_reason,
+                       s.name as script_name, s.slug as script_slug
+                FROM live_sessions l
+                LEFT JOIN scripts s ON l.script_id = s.id
+                ORDER BY l.last_heartbeat DESC
+                LIMIT 50
+            """)
+        else:
+            cursor = await conn.execute("""
+                SELECT l.id, l.license_key, l.hwid, l.roblox_username, l.roblox_user_id, l.game_name, l.place_id, 
+                       l.job_id, l.executor_name, l.ip_address, l.started_at, l.last_heartbeat, l.is_kicked, l.kick_reason,
+                       s.name as script_name, s.slug as script_slug
+                FROM live_sessions l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE s.user_id = ?
+                ORDER BY l.last_heartbeat DESC
+                LIMIT 50
+            """, (user["id"],))
         rows = await cursor.fetchall()
+
+        # If live_sessions is currently empty, fallback to recent execution logs
+        if not rows:
+            if is_admin:
+                cursor_logs = await conn.execute("""
+                    SELECT e.id, e.license_key, e.hwid, e.roblox_username, e.roblox_user_id, e.game_name, e.place_id,
+                           e.job_id, e.executor_name, e.ip_address, e.timestamp as started_at, e.timestamp as last_heartbeat,
+                           (CASE WHEN e.status = 'SESSION_KICKED' THEN 1 ELSE 0 END) as is_kicked,
+                           e.details as kick_reason,
+                           s.name as script_name, s.slug as script_slug
+                    FROM execution_logs e
+                    LEFT JOIN scripts s ON e.script_id = s.id
+                    WHERE e.status = 'SUCCESS' OR e.status = 'SESSION_KICKED'
+                    ORDER BY e.id DESC
+                    LIMIT 50
+                """)
+            else:
+                cursor_logs = await conn.execute("""
+                    SELECT e.id, e.license_key, e.hwid, e.roblox_username, e.roblox_user_id, e.game_name, e.place_id,
+                           e.job_id, e.executor_name, e.ip_address, e.timestamp as started_at, e.timestamp as last_heartbeat,
+                           (CASE WHEN e.status = 'SESSION_KICKED' THEN 1 ELSE 0 END) as is_kicked,
+                           e.details as kick_reason,
+                           s.name as script_name, s.slug as script_slug
+                    FROM execution_logs e
+                    JOIN scripts s ON e.script_id = s.id
+                    WHERE s.user_id = ? AND (e.status = 'SUCCESS' OR e.status = 'SESSION_KICKED')
+                    ORDER BY e.id DESC
+                    LIMIT 50
+                """, (user["id"],))
+            rows = await cursor_logs.fetchall()
 
     results = []
     for r in rows:
@@ -2419,12 +2465,18 @@ async def get_active_sessions(user: Dict = Depends(get_current_user)):
         except Exception:
             secs_ago = 999
 
-        if secs_ago <= 35:
+        if d.get("is_kicked"):
+            presence_state = "kicked"
+            presence_label = "KICKED"
+        elif secs_ago <= 35:
             presence_state = "online"
             presence_label = "ONLINE"
-        elif secs_ago <= 90:
+        elif secs_ago <= 120:
             presence_state = "idle"
-            presence_label = "IDLE / LAG"
+            presence_label = "IDLE / IN-GAME"
+        elif secs_ago <= 86400:
+            presence_state = "recent"
+            presence_label = "RECENT"
         else:
             presence_state = "offline"
             presence_label = "LEFT GAME"

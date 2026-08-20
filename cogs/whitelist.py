@@ -3,7 +3,7 @@ from discord.ext import commands
 import datetime
 import secrets
 from typing import Optional, Union
-from utils import fleed_embed, success_embed, error_embed, warn_embed, find_role
+from utils import fleed_embed, success_embed, error_embed, warn_embed, find_role, send_group_help
 from fleed_whitelist.database import db
 from fleed_whitelist.loader_generator import loader_generator
 
@@ -341,30 +341,8 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     @commands.group(name="whitelist", aliases=["wl"], invoke_without_command=True)
     async def whitelist_group(self, ctx):
-        """Displays help menu for Whitelist management commands."""
-        embed = fleed_embed(
-            title="fleed whitelist management",
-            description="manage script whitelists, buyers, hwid resets, and control panels.\n\n"
-                        "**manager commands:**\n"
-                        f"• `{ctx.prefix}whitelist add <@user/id> <slug> [days] [note]` — whitelist a buyer directly\n"
-                        f"• `{ctx.prefix}whitelist remove <@user/id> <slug>` — remove buyer access\n"
-                        f"• `{ctx.prefix}whitelist check <@user/id> [slug]` — check buyer status and hwid\n"
-                        f"• `{ctx.prefix}whitelist force-resethwid <@user/id> [slug]` — force reset user hwid\n"
-                        f"• `{ctx.prefix}whitelist transfer <@old_user> <@new_user> <slug>` — transfer key ownership\n"
-                        f"• `{ctx.prefix}whitelist setrole <slug> <@role>` — configure buyer role\n"
-                        f"• `{ctx.prefix}whitelist genkey <slug> [days] [note]` — create unlinked license key\n"
-                        f"• `{ctx.prefix}whitelist ban <key/@user> [reason]` — ban a key or user\n"
-                        f"• `{ctx.prefix}whitelist unban <key/@user>` — unban a key or user\n"
-                        f"• `{ctx.prefix}whitelist killswitch <slug>` — toggle script killswitch\n"
-                        f"• `{ctx.prefix}whitelist panel <slug> [role]` — spawn buyer control panel\n\n"
-                        "**buyer commands:**\n"
-                        f"• `{ctx.prefix}redeem <key>` — redeem a license key\n"
-                        f"• `{ctx.prefix}getscript [slug]` — receive loadstring with key\n"
-                        f"• `{ctx.prefix}getrole [slug]` — claim buyer role\n"
-                        f"• `{ctx.prefix}resethwid [slug]` — reset hwid for new device",
-            author=ctx.author
-        )
-        await ctx.send(embed=embed)
+        """Displays interactive paginated help menu for whitelist commands."""
+        await send_group_help(ctx, ctx.command, "whitelist")
 
     @whitelist_group.command(name="add", aliases=["user", "create"])
     async def add_whitelist_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str, duration_days: int = 0, *, note: str = ""):

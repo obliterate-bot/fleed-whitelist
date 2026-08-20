@@ -5497,7 +5497,26 @@ COMMAND_DESCRIPTIONS = {
     "voice_defaults_daily": "Show daily voice defaults",
     "voice_defaults_weekly": "Show weekly voice defaults",
     "voice_defaults_monthly": "Show monthly voice defaults",
-    "voice_defaults_reset": "voice defaults reset command",}
+    "voice_defaults_reset": "voice defaults reset command",
+    "whitelist": "manage script whitelists, buyers, hwid resets, and control panels",
+    "whitelist add": "whitelist a buyer directly and bind key to discord",
+    "whitelist remove": "remove a buyer's whitelist access and revoke buyer role",
+    "whitelist check": "check whitelisted keys, hwid bindings, and execution stats",
+    "whitelist force-resethwid": "manager command to force reset a buyer's hwid binding",
+    "whitelist transfer": "transfer license key ownership from one user to another",
+    "whitelist setrole": "configure the discord buyer role for a script project",
+    "whitelist genkey": "generate new unlinked license keys in bulk",
+    "whitelist ban": "ban a license key or user from executing",
+    "whitelist unban": "unban a license key or user",
+    "whitelist killswitch": "toggle emergency killswitch for a script project",
+    "whitelist panel": "spawn interactive buyer control panel with buttons",
+    "whitelist scripts": "list all registered scripts and license hubs",
+    "whitelist stats": "view platform-wide security and execution analytics",
+    "redeem": "redeem a license key to link it to your discord account",
+    "getscript": "retrieve your personalized loadstring with linked key",
+    "getrole": "claim your discord buyer role for a redeemed script",
+    "resethwid": "reset your hwid binding to execute on a new device",
+}
 
 import discord
 from discord.ext import commands

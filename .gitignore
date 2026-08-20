@@ -1,0 +1,9 @@
+.env
+*.pyc
+__pycache__/
+__pycache__.zip
+.pytest_cache/
+service.log
+fleed.db
+fleed_whitelist.db
+data/

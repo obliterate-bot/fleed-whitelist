@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Developer Console — FleedGuard</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23FACC15'><path d='M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z'/></svg>">
+</head>
+<body>
+  <div class="bg-ambient-glow"></div>
+
+  <div class="app-container">
+    <!-- Navbar -->
+    <header class="navbar">
+      <div class="brand-badge">
+        <div class="brand-shield">🛡️</div>
+        <span>Fleed<span style="color:var(--gold-primary);">Guard</span> Console</span>
+      </div>
+
+      <div class="nav-links">
+        <span id="2FAStatusBadge" class="badge badge-zinc">Checking 2FA...</span>
+        <button id="btnSetup2FA" class="btn btn-secondary btn-sm" onclick="open2FAModal()" style="display: none;">
+          🔐 Enable 2FA
+        </button>
+        <div style="height: 24px; width: 1px; background: var(--border-subtle); margin: 0 4px;"></div>
+        <span id="profileUsername" style="font-weight: 600; color: var(--text-white); font-size: 13px;">User</span>
+        <button class="btn btn-danger btn-sm" onclick="handleLogout()">Logout</button>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="tabs-nav">
+      <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 Overview & Metrics</button>
+      <button class="tab-btn" data-tab="scripts" onclick="switchTab('scripts')">📜 Script Hub</button>
+      <button class="tab-btn" data-tab="licenses" onclick="switchTab('licenses')">🔑 License Keys</button>
+      <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">🛡️ Live Security Audit</button>
+      <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">⚙️ 2FA & API Tokens</button>
+    </nav>
+
+    <!-- VIEW 1: Overview & Metrics -->
+    <main id="view-overview" class="tab-view">
+      <div class="stats-grid">
+        <div class="card stat-box">
+          <div class="stat-label">Managed Scripts</div>
+          <div id="statScripts" class="stat-value gold">0</div>
+        </div>
+        <div class="card stat-box">
+          <div class="stat-label">Active Licenses</div>
+          <div id="statActiveLicenses" class="stat-value">0</div>
+        </div>
+        <div class="card stat-box">
+          <div class="stat-label">Total Handshakes</div>
+          <div id="statExecutions" class="stat-value">0</div>
+        </div>
+        <div class="card stat-box">
+          <div class="stat-label">Blocked Bypass Attempts</div>
+          <div id="statBlockedAttacks" class="stat-value" style="color:var(--danger-color);">0</div>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
+            <h3 style="color:var(--text-white); font-size: 16px;">Quick Actions</h3>
+          </div>
+          <div style="display:flex; gap:12px; flex-wrap: wrap;">
+            <button class="btn btn-primary" onclick="switchTab('scripts'); openCreateScriptModal();">+ New Script Hub</button>
+            <button class="btn btn-secondary" onclick="switchTab('licenses'); openBulkGenModal();">🔑 Bulk Generate Keys</button>
+            <button class="btn btn-secondary" onclick="switchTab('logs');">🔍 View Real-Time Audit Log</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="color:var(--text-white); font-size: 16px; margin-bottom: 12px;">Anti-Crack Engine Status</h3>
+          <div style="font-size: 13px; display:flex; flex-direction:column; gap:8px;">
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:var(--text-zinc-400);">HMAC Challenge-Response</span>
+              <span class="badge badge-success">ACTIVE</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:var(--text-zinc-400);">In-Memory VM Decryption</span>
+              <span class="badge badge-success">ARMORED</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:var(--text-zinc-400);">HWID Auto-Locking</span>
+              <span class="badge badge-success">ENABLED</span>
+            </div>
+            <div style="display:flex; justify-content:space-between;">
+              <span style="color:var(--text-zinc-400);">Global loadstring Hook Guard</span>
+              <span class="badge badge-success">ENGAGED</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- VIEW 2: Scripts Hub -->
+    <section id="view-scripts" class="tab-view" style="display: none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+        <h2 style="color:var(--text-white); font-size: 20px;">Script Hubs & Loaders</h2>
+        <button class="btn btn-primary" onclick="openCreateScriptModal()">+ Create Script</button>
+      </div>
+
+      <div id="scriptsList">
+        <!-- Injected via JavaScript -->
+      </div>
+    </section>
+
+    <!-- VIEW 3: Licenses Management -->
+    <section id="view-licenses" class="tab-view" style="display: none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:center; gap: 12px;">
+          <label class="form-label" style="margin:0;">Select Script:</label>
+          <select id="licenseScriptSelect" class="form-select" style="width: 250px;" onchange="loadLicensesForScript(this.value)">
+            <!-- Injected via JavaScript -->
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="openBulkGenModal()">+ Generate Keys</button>
+      </div>
+
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>License Key</th>
+                <th>Note / User</th>
+                <th>Bound HWID</th>
+                <th>Executions</th>
+                <th>Expires</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="licensesTableBody">
+              <!-- Injected via JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 4: Live Security Audit Logs -->
+    <section id="view-logs" class="tab-view" style="display: none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+        <div>
+          <h2 style="color:var(--text-white); font-size: 20px;">Live Security Audit Stream</h2>
+          <p style="color:var(--text-zinc-500); font-size: 13px;">Real-time incoming execution handshakes, HWID validations, and tamper events.</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="loadLiveLogs()">🔄 Refresh Now</button>
+      </div>
+
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Script</th>
+                <th>Key</th>
+                <th>Event / Status</th>
+                <th>HWID Fingerprint</th>
+                <th>Details / Executor</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody">
+              <!-- Injected via JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VIEW 5: 2FA & API Settings -->
+    <section id="view-settings" class="tab-view" style="display: none;">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+        <!-- Profile & 2FA Card -->
+        <div class="card">
+          <h3 style="color:var(--text-white); font-size: 18px; margin-bottom: 16px;">Two-Factor Authentication (2FA)</h3>
+          <p style="color:var(--text-zinc-400); font-size: 13px; margin-bottom: 20px;">
+            Secure your developer dashboard with TOTP (Google Authenticator, Authy) and emergency backup recovery codes.
+          </p>
+          <div style="background:var(--bg-input); padding: 16px; border-radius: 10px; border: 1px solid var(--border-subtle); margin-bottom: 20px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <strong style="color:var(--text-white); display:block;">TOTP Authentication</strong>
+                <span style="color:var(--text-zinc-500); font-size:12px;">RFC 6238 Time-Based OTP</span>
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="open2FAModal()">Configure 2FA</button>
+            </div>
+          </div>
+
+          <div style="font-size: 13px; color: var(--text-zinc-400);">
+            <div>Email: <strong id="profileEmail" style="color:var(--text-white);">—</strong></div>
+          </div>
+        </div>
+
+        <!-- API Key & Developer Integration -->
+        <div class="card">
+          <h3 style="color:var(--text-white); font-size: 18px; margin-bottom: 16px;">Developer REST API Token</h3>
+          <p style="color:var(--text-zinc-400); font-size: 13px; margin-bottom: 20px;">
+            Use this master API key to automate key generation, HWID resets, and Discord bot integration via <code>X-API-Key</code>.
+          </p>
+          <div class="form-group">
+            <label class="form-label">Master API Token</label>
+            <div style="display:flex; gap:8px;">
+              <input type="text" id="profileApiKey" class="form-input" readonly style="font-family:var(--font-mono); font-size:12px;">
+              <button class="btn btn-secondary" onclick="copyText(document.getElementById('profileApiKey').value)">Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- MODAL 1: 2FA Setup -->
+  <div id="modal2FA" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">🔐 Setup Two-Factor Authentication</h3>
+        <button class="modal-close" onclick="closeModal('modal2FA')">&times;</button>
+      </div>
+      <div class="qr-card">
+        <p style="color:var(--text-zinc-300); font-size:13px;">Scan this QR code with Google Authenticator or Authy:</p>
+        <img id="qrImage" class="qr-image" src="" alt="2FA QR Code">
+        <div style="font-family:var(--font-mono); font-size:12px; color:var(--gold-light);" id="secretKeyText"></div>
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <label class="form-label">Emergency Backup Recovery Codes (Save these securely):</label>
+        <div id="backupCodesGrid" class="backup-codes-grid"></div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Enter 6-Digit Authenticator Code to Confirm:</label>
+        <input type="text" id="verify2FACode" class="form-input" placeholder="123456" maxlength="6">
+      </div>
+
+      <button class="btn btn-primary" style="width: 100%;" onclick="confirmEnable2FA()">Verify & Activate 2FA</button>
+    </div>
+  </div>
+
+  <!-- MODAL 2: Create / Edit Script -->
+  <div id="modalScript" class="modal-overlay">
+    <div class="modal-content" style="max-width: 720px;">
+      <div class="modal-header">
+        <h3 id="scriptModalTitle" class="modal-title">Create New Script</h3>
+        <button class="modal-close" onclick="closeModal('modalScript')">&times;</button>
+      </div>
+
+      <form onsubmit="saveScript(event)">
+        <input type="hidden" id="scriptEditId">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="form-group">
+            <label class="form-label">Script Name</label>
+            <input type="text" id="scriptName" class="form-input" placeholder="Hoopz Aim & Auto-Shoot" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Unique Slug (URL identifier)</label>
+            <input type="text" id="scriptSlug" class="form-input" placeholder="hoopz_hub_v1" required>
+          </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <div class="form-group">
+            <label class="form-label">Version</label>
+            <input type="text" id="scriptVersion" class="form-input" value="1.0.0">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Protection Mode</label>
+            <select id="scriptMode" class="form-select">
+              <option value="1">🔒 Armored VM Mode (Anti-Dump & Encrypted)</option>
+              <option value="0">📄 Unobfuscated Mode (Raw Script + Server Whitelist)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Lua / Luau Source Code</label>
+          <textarea id="scriptSource" class="form-textarea" placeholder="-- Enter your raw Lua script here..." style="min-height: 220px;" required></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;">Save & Deploy to FleedGuard →</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 3: Bulk License Generator -->
+  <div id="modalBulkGen" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">🔑 Generate License Keys</h3>
+        <button class="modal-close" onclick="closeModal('modalBulkGen')">&times;</button>
+      </div>
+
+      <form onsubmit="handleBulkGenerate(event)">
+        <div class="form-group">
+          <label class="form-label">Quantity</label>
+          <input type="number" id="genCount" class="form-input" value="5" min="1" max="100" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Duration</label>
+          <select id="genDuration" class="form-select">
+            <option value="0">Lifetime (Never Expires)</option>
+            <option value="1">24 Hours (1 Day)</option>
+            <option value="7">7 Days (1 Week)</option>
+            <option value="30">30 Days (1 Month)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Max Executions per Key (-1 for Infinite)</label>
+          <input type="number" id="genMaxExecs" class="form-input" value="-1" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Note / Customer Tag (Optional)</label>
+          <input type="text" id="genNote" class="form-input" placeholder="VIP Customer / Discord Giveaway">
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;">Generate Keys Now</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+import os
+import aiosqlite
+import hashlib
+import secrets
+from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+
+DATABASE_PATH = os.getenv("FLEED_WHITELIST_DB", os.path.join(os.path.dirname(os.path.dirname(__file__)), "fleed_whitelist.db"))
+
+class WhitelistDB:
+    def __init__(self, db_path: str = DATABASE_PATH):
+        self.db_path = db_path
+
+    @asynccontextmanager
+    async def get_db(self):
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA journal_mode=WAL;")
+            await conn.execute("PRAGMA foreign_keys=ON;")
+            yield conn
+
+    async def init(self):
+        async with self.get_db() as conn:
+            # 1. Users Table (with 2FA support)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    salt TEXT NOT NULL,
+                    totp_secret TEXT,
+                    two_factor_enabled INTEGER DEFAULT 0,
+                    backup_codes TEXT,
+                    api_key TEXT UNIQUE NOT NULL,
+                    role TEXT DEFAULT 'developer',
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    last_login TEXT
+                )
+            """)
+
+            # 2. Scripts / Hubs Table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS scripts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    slug TEXT UNIQUE NOT NULL,
+                    description TEXT,
+                    version TEXT DEFAULT '1.0.0',
+                    raw_source TEXT NOT NULL,
+                    is_obfuscated_mode INTEGER DEFAULT 1, -- 1=Protected/VM, 0=Unobfuscated
+                    killswitch_active INTEGER DEFAULT 0,
+                    killswitch_reason TEXT,
+                    custom_headers TEXT,
+                    discord_webhook TEXT,
+                    buyer_role_id INTEGER DEFAULT 0,
+                    guild_id INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Migrations for existing scripts table
+            try:
+                await conn.execute("ALTER TABLE scripts ADD COLUMN buyer_role_id INTEGER DEFAULT 0;")
+            except Exception:
+                pass
+            try:
+                await conn.execute("ALTER TABLE scripts ADD COLUMN guild_id INTEGER DEFAULT 0;")
+            except Exception:
+                pass
+
+            # 3. Licenses / Keys Table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS licenses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    script_id INTEGER NOT NULL,
+                    license_key TEXT UNIQUE NOT NULL,
+                    note TEXT,
+                    discord_id TEXT,
+                    hwid TEXT,
+                    ip_address TEXT,
+                    max_executions INTEGER DEFAULT -1, -- -1 for infinite
+                    execution_count INTEGER DEFAULT 0,
+                    expires_at TEXT, -- NULL for lifetime, or ISO timestamp
+                    is_banned INTEGER DEFAULT 0,
+                    ban_reason TEXT,
+                    hwid_resets_remaining INTEGER DEFAULT 3,
+                    last_reset_at TEXT,
+                    created_at TEXT NOT NULL,
+                    last_executed_at TEXT,
+                    FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+                )
+            """)
+
+            # 4. Execution Logs Table
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS execution_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    script_id INTEGER,
+                    license_id INTEGER,
+                    license_key TEXT,
+                    hwid TEXT,
+                    ip_address TEXT,
+                    executor_name TEXT,
+                    status TEXT NOT NULL, -- 'SUCCESS', 'HWID_MISMATCH', 'EXPIRED', 'BANNED', 'TAMPER_DETECTED', 'KILLSWITCH'
+                    details TEXT,
+                    timestamp TEXT NOT NULL,
+                    FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE SET NULL,
+                    FOREIGN KEY (license_id) REFERENCES licenses(id) ON DELETE SET NULL
+                )
+            """)
+
+            # 5. Handshake Nonces Table (Time-based Anti-Replay)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS active_nonces (
+                    nonce TEXT PRIMARY KEY,
+                    script_id INTEGER NOT NULL,
+                    license_key TEXT NOT NULL,
+                    client_challenge TEXT NOT NULL,
+                    server_challenge TEXT NOT NULL,
+                    session_key TEXT NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """)
+
+            # Indices for ultra-fast lookup
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_script ON licenses(script_id);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_scripts_slug ON scripts(slug);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON execution_logs(timestamp);")
+            await conn.commit()
+
+db = WhitelistDB()

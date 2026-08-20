@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  # 1. FleedGuard Whitelist Web API & Dashboard
+  fleed-whitelist-api:
+    build: .
+    container_name: fleed_whitelist_api
+    restart: always
+    command: uvicorn fleed_whitelist.server:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - FLEED_MASTER_SECRET=${FLEED_MASTER_SECRET:-fleed_guard_super_secret_master_key_2026_x89a!}
+      - FLEED_WHITELIST_DB=/app/data/fleed_whitelist.db
+    volumes:
+      - ./data:/app/data
+
+  # 2. SWISHBOT Discord Bot
+  fleed-discord-bot:
+    build: .
+    container_name: fleed_discord_bot
+    restart: always
+    command: python main.py
+    depends_on:
+      - fleed-whitelist-api
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DATABASE_PATH=/app/data/fleed.db
+      - FLEED_WHITELIST_DB=/app/data/fleed_whitelist.db
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env

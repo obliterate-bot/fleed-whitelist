@@ -10,7 +10,7 @@ start "FleedGuard Web API" cmd /k "python fleed_whitelist/run_server.py"
 timeout /t 2 /nobreak >nul
 
 echo 2. Starting Cloudflare Public HTTPS Tunnel ...
-start "FleedGuard Public Tunnel" cmd /k "cloudflared tunnel --url http://localhost:8000"
+start "FleedGuard Public Tunnel" cmd /k "cloudflared tunnel --protocol http2 --url http://localhost:8000"
 
 echo.
 echo [✓] Whitelist API and Cloudflare Tunnel launched!

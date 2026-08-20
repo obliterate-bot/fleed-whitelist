@@ -16,7 +16,7 @@ class CloudflareTunnel:
 
     def start(self):
         """Starts cloudflared quick tunnel and extracts the HTTPS URL."""
-        cmd = ["cloudflared", "tunnel", "--url", f"http://localhost:{self.local_port}"]
+        cmd = ["cloudflared", "tunnel", "--protocol", "http2", "--url", f"http://127.0.0.1:{self.local_port}"]
         try:
             self.process = subprocess.Popen(
                 cmd,

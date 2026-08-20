@@ -61,15 +61,25 @@
       <div class="nav-links">
         <div class="dropdown">
           <button class="btn btn-secondary btn-sm" style="display:flex; align-items:center; gap:8px;">
-            <div id="userInitial" style="width:24px; height:24px; border-radius:50%; background:linear-gradient(135deg, var(--gold-primary), var(--gold-dark)); color:var(--bg-deep); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:11px;">U</div>
+            <div id="navAvatarContainer" style="width:24px; height:24px; border-radius:50%; overflow:hidden; background:linear-gradient(135deg, var(--gold-primary), var(--gold-dark)); color:var(--bg-deep); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:11px; border:1px solid var(--border-gold-subtle); flex-shrink:0;">
+              <img id="navAvatarImg" src="" style="width:100%; height:100%; object-fit:cover; display:none;">
+              <span id="userInitial">U</span>
+            </div>
             <span id="profileUsername" style="font-weight:600; color:var(--text-white); font-size:13px;">Developer</span>
             <i class="fa-solid fa-chevron-down" style="font-size:10px; color:var(--text-zinc-500);"></i>
           </button>
           <div class="dropdown-menu">
-            <div style="padding:10px 12px; border-bottom:1px solid var(--border-subtle); margin-bottom:4px;">
-              <div style="font-size:12px; font-weight:700; color:var(--text-white);" id="dropdownUserFull">Developer</div>
-              <div style="font-size:11px; color:var(--text-zinc-500);" id="dropdownEmail">dev@fleed.bot</div>
+            <div style="padding:10px 12px; border-bottom:1px solid var(--border-subtle); margin-bottom:4px; display:flex; align-items:center; gap:10px;">
+              <div id="dropdownAvatarContainer" style="width:36px; height:36px; border-radius:50%; overflow:hidden; background:linear-gradient(135deg, var(--gold-primary), var(--gold-dark)); color:var(--bg-deep); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px; border:1px solid var(--border-gold-subtle); flex-shrink:0;">
+                <img id="dropdownAvatarImg" src="" style="width:100%; height:100%; object-fit:cover; display:none;">
+                <span id="dropdownInitial">U</span>
+              </div>
+              <div style="overflow:hidden;">
+                <div style="font-size:13px; font-weight:700; color:var(--text-white); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="dropdownUserFull">Developer</div>
+                <div style="font-size:11px; color:var(--text-zinc-500); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" id="dropdownEmail">dev@fleed.bot</div>
+              </div>
             </div>
+            <button class="dropdown-item" onclick="openChangeAvatarModal()"><i class="fa-solid fa-image" style="color:var(--gold-primary);"></i> Change Avatar / PFP</button>
             <button class="dropdown-item" onclick="switchTab('settings')"><i class="fa-solid fa-sliders"></i> Security & API Keys</button>
             <button class="dropdown-item" onclick="open2FAModal()"><i class="fa-solid fa-lock"></i> 2FA Multi-Factor</button>
             <button class="dropdown-item" onclick="switchTab('system')"><i class="fa-solid fa-server"></i> System Health & Backup</button>
@@ -625,6 +635,30 @@ async function createLicense(slug, key, discordId, note) {
     <!-- VIEW 7: SECURITY & 2FA PROFILE                           -->
     <!-- ======================================================== -->
     <section id="view-settings" class="tab-view" style="display: none;">
+      <!-- Admin Profile & Avatar Customizer Card -->
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-header">
+          <h3 class="card-title"><i class="fa-solid fa-user-circle" style="color:var(--gold-primary);"></i> Administrator Profile & Avatar</h3>
+          <span class="badge badge-gold">Custom Profile Identity</span>
+        </div>
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px;">
+          <div style="display:flex; align-items:center; gap:16px;">
+            <div id="settingsAvatarContainer" style="width:60px; height:60px; border-radius:50%; overflow:hidden; background:linear-gradient(135deg, var(--gold-primary), var(--gold-dark)); color:var(--bg-deep); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:22px; border:2px solid var(--border-gold); box-shadow:0 0 20px rgba(250,204,21,0.25); flex-shrink:0;">
+              <img id="settingsAvatarImg" src="" style="width:100%; height:100%; object-fit:cover; display:none;">
+              <span id="settingsInitial">U</span>
+            </div>
+            <div>
+              <h4 id="settingsUsername" style="font-size:16px; color:var(--text-white); font-weight:700; margin:0 0 4px 0;">admin</h4>
+              <div style="font-size:12px; color:var(--text-zinc-400);">Account Email: <span id="settingsEmail" style="color:var(--text-zinc-200);">dev@fleed.bot</span></div>
+              <div style="font-size:12px; color:var(--text-zinc-400); margin-top:2px;">Role: <span id="settingsRole" class="badge badge-gold" style="font-size:10px;">DEVELOPER</span></div>
+            </div>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-primary btn-sm" onclick="openChangeAvatarModal()"><i class="fa-solid fa-camera"></i> Change Avatar</button>
+          </div>
+        </div>
+      </div>
+
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 24px;">
         <!-- 2FA Setup Card -->
         <div class="card">
@@ -1072,9 +1106,77 @@ async function createLicense(slug, key, discordId, note) {
     </div>
   </div>
 
+  <!-- MODAL 11: Change Avatar / Profile Picture -->
+  <div id="modalChangeAvatar" class="modal-overlay">
+    <div class="modal-content" style="max-width:520px;">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-image" style="color:var(--gold-primary);"></i> Change Dashboard Avatar</h3>
+        <button class="modal-close" onclick="closeModal('modalChangeAvatar')">&times;</button>
+      </div>
+
+      <p style="color:var(--text-zinc-300); font-size:13px; margin-bottom:16px;">
+        Choose a curated preset, sync your live Roblox avatar headshot, or paste a custom image URL.
+      </p>
+
+      <!-- Live Avatar Preview Box -->
+      <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:16px; background:var(--bg-input); border-radius:14px; border:1px solid var(--border-subtle); margin-bottom:16px;">
+        <div id="previewAvatarContainer" style="width:74px; height:74px; border-radius:50%; overflow:hidden; background:linear-gradient(135deg, var(--gold-primary), var(--gold-dark)); color:var(--bg-deep); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:26px; border:3px solid var(--gold-primary); box-shadow:0 0 25px rgba(250,204,21,0.35); margin-bottom:8px;">
+          <img id="previewAvatarImg" src="" style="width:100%; height:100%; object-fit:cover; display:none;">
+          <span id="previewInitial">U</span>
+        </div>
+        <span style="font-size:11px; color:var(--text-zinc-400);">Current Selection Preview</span>
+      </div>
+
+      <!-- Quick Preset Avatars -->
+      <div style="margin-bottom:16px;">
+        <label class="form-label" style="margin-bottom:8px;">Curated Presets</label>
+        <div style="display:grid; grid-template-columns: repeat(6, 1fr); gap:10px;">
+          <div class="preset-avatar-btn" onclick="selectPresetAvatar('https://images.unsplash.com/photo-1578632767115-351597cf2477?w=150&auto=format&fit=crop&q=80')" title="Cyber Gold" style="cursor:pointer; width:46px; height:46px; border-radius:50%; border:2px solid var(--border-subtle); overflow:hidden; transition:transform 0.15s, border-color 0.15s;">
+            <img src="https://images.unsplash.com/photo-1578632767115-351597cf2477?w=150&auto=format&fit=crop&q=80" style="width:100%; height:100%; object-fit:cover;">
+          </div>
+          <div class="preset-avatar-btn" onclick="selectPresetAvatar('https://images.unsplash.com/photo-1563089145-599997674d42?w=150&auto=format&fit=crop&q=80')" title="Neon Cyberpunk" style="cursor:pointer; width:46px; height:46px; border-radius:50%; border:2px solid var(--border-subtle); overflow:hidden; transition:transform 0.15s, border-color 0.15s;">
+            <img src="https://images.unsplash.com/photo-1563089145-599997674d42?w=150&auto=format&fit=crop&q=80" style="width:100%; height:100%; object-fit:cover;">
+          </div>
+          <div class="preset-avatar-btn" onclick="selectPresetAvatar('https://images.unsplash.com/photo-1534447677768-be436bb09401?w=150&auto=format&fit=crop&q=80')" title="Cosmic Nebula" style="cursor:pointer; width:46px; height:46px; border-radius:50%; border:2px solid var(--border-subtle); overflow:hidden; transition:transform 0.15s, border-color 0.15s;">
+            <img src="https://images.unsplash.com/photo-1534447677768-be436bb09401?w=150&auto=format&fit=crop&q=80" style="width:100%; height:100%; object-fit:cover;">
+          </div>
+          <div class="preset-avatar-btn" onclick="selectPresetAvatar('https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=150&auto=format&fit=crop&q=80')" title="Samurai Armor" style="cursor:pointer; width:46px; height:46px; border-radius:50%; border:2px solid var(--border-subtle); overflow:hidden; transition:transform 0.15s, border-color 0.15s;">
+            <img src="https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=150&auto=format&fit=crop&q=80" style="width:100%; height:100%; object-fit:cover;">
+          </div>
+          <div class="preset-avatar-btn" onclick="selectPresetAvatar('https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=150&auto=format&fit=crop&q=80')" title="Anime Synth" style="cursor:pointer; width:46px; height:46px; border-radius:50%; border:2px solid var(--border-subtle); overflow:hidden; transition:transform 0.15s, border-color 0.15s;">
+            <img src="https://images.unsplash.com/photo-1579783900882-c0d3dad7b119?w=150&auto=format&fit=crop&q=80" style="width:100%; height:100%; object-fit:cover;">
+          </div>
+          <div class="preset-avatar-btn" onclick="selectPresetAvatar('')" title="Default Gold Initial" style="cursor:pointer; width:46px; height:46px; border-radius:50%; border:2px solid var(--border-subtle); overflow:hidden; transition:transform 0.15s, border-color 0.15s;">
+            <div style="width:100%; height:100%; background:linear-gradient(135deg, var(--gold-primary), var(--gold-dark)); color:var(--bg-deep); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:14px;">U</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sync from Roblox -->
+      <div class="form-group" style="margin-bottom:14px;">
+        <label class="form-label"><i class="fa-solid fa-gamepad" style="color:var(--gold-primary); margin-right:4px;"></i> Sync Roblox Avatar Headshot</label>
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="avatarRobloxInput" class="form-input" placeholder="Enter Roblox Username or User ID">
+          <button type="button" class="btn btn-secondary" onclick="fetchRobloxAvatarPreview()"><i class="fa-solid fa-arrows-rotate"></i> Fetch</button>
+        </div>
+      </div>
+
+      <!-- Direct Custom Image URL -->
+      <div class="form-group" style="margin-bottom:20px;">
+        <label class="form-label"><i class="fa-solid fa-link" style="color:var(--gold-primary); margin-right:4px;"></i> Custom Image URL</label>
+        <input type="url" id="avatarCustomUrlInput" class="form-input" placeholder="https://i.imgur.com/example.png" oninput="updateAvatarPreviewDirect(this.value)">
+      </div>
+
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modalChangeAvatar')">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveUserAvatar()"><i class="fa-solid fa-floppy-disk"></i> Save Avatar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Dynamic Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js?v=2.2.2"></script>
+  <script src="/static/app.js?v=2.2.3"></script>
 </body>
 </html>

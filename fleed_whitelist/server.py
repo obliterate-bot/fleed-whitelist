@@ -446,9 +446,52 @@ async def get_me(user: Dict = Depends(get_current_user)):
         "role": user["role"],
         "two_factor_enabled": bool(user["two_factor_enabled"]),
         "api_key": api_key,
+        "avatar_url": user.get("avatar_url"),
         "discord_id": user["discord_id"] if "discord_id" in user.keys() else None,
         "created_at": user["created_at"]
     }
+
+class UpdateAvatarRequest(BaseModel):
+    avatar_url: Optional[str] = None
+    roblox_username: Optional[str] = None
+    roblox_user_id: Optional[int] = None
+    discord_id: Optional[str] = None
+
+@app.post("/api/auth/update_avatar")
+async def update_avatar(req: UpdateAvatarRequest, user: Dict = Depends(get_current_user)):
+    resolved_avatar = req.avatar_url.strip() if req.avatar_url else None
+
+    # 1. Resolve Roblox username / user ID if provided
+    if req.roblox_user_id and req.roblox_user_id > 0:
+        resolved_avatar = f"/api/roblox/avatar/{req.roblox_user_id}"
+    elif req.roblox_username:
+        clean_user = req.roblox_username.strip()
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post("https://users.roblox.com/v1/usernames/users", json={"usernames": [clean_user], "excludeBannedUsers": False}, timeout=aiohttp.ClientTimeout(total=4)) as r:
+                    if r.status == 200:
+                        data = await r.json()
+                        if data.get("data") and len(data["data"]) > 0:
+                            rbx_id = data["data"][0]["id"]
+                            resolved_avatar = f"/api/roblox/avatar/{rbx_id}"
+        except Exception:
+            pass
+
+    # 2. Resolve Discord ID if provided
+    if req.discord_id:
+        clean_disc = str(req.discord_id).strip("<@!>")
+        try:
+            user_info = await get_discord_user_cached(clean_disc)
+            if user_info and user_info.get("avatar_url"):
+                resolved_avatar = user_info["avatar_url"]
+        except Exception:
+            pass
+
+    async with db.get_db() as conn:
+        await conn.execute("UPDATE users SET avatar_url = ? WHERE id = ?", (resolved_avatar, user["id"]))
+        await conn.commit()
+
+    return {"success": True, "avatar_url": resolved_avatar, "message": "Avatar updated successfully!"}
 
 @app.post("/api/auth/regenerate_api_key")
 async def regenerate_api_key(user: Dict = Depends(get_current_user)):

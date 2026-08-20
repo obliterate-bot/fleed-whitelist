@@ -85,6 +85,8 @@ async function checkAuth() {
     const pingBadge = document.getElementById("headerPingBadge");
     if (pingBadge) pingBadge.innerText = `${pingMs}ms`;
 
+    loadProfileStats();
+
     if (window.location.pathname === "/" || window.location.pathname === "/index.html") {
       window.location.href = "/dashboard";
     }
@@ -175,6 +177,191 @@ async function confirmEnable2FA() {
 function closeModal(id) {
   const modal = document.getElementById(id);
   if (modal) modal.classList.remove("active");
+}
+
+let selectedAvatarUrl = null;
+
+function updateAvatarUI(avatarUrl, username) {
+  const initial = (username || "U").charAt(0).toUpperCase();
+
+  // 1. Navbar Avatar
+  const navImg = document.getElementById("navAvatarImg");
+  const navInit = document.getElementById("userInitial");
+  if (navImg && navInit) {
+    if (avatarUrl) {
+      navImg.src = avatarUrl;
+      navImg.style.display = "block";
+      navInit.style.display = "none";
+    } else {
+      navImg.style.display = "none";
+      navInit.style.display = "flex";
+      navInit.innerText = initial;
+    }
+  }
+
+  // 2. Dropdown Avatar
+  const dropImg = document.getElementById("dropdownAvatarImg");
+  const dropInit = document.getElementById("dropdownInitial");
+  if (dropImg && dropInit) {
+    if (avatarUrl) {
+      dropImg.src = avatarUrl;
+      dropImg.style.display = "block";
+      dropInit.style.display = "none";
+    } else {
+      dropImg.style.display = "none";
+      dropInit.style.display = "flex";
+      dropInit.innerText = initial;
+    }
+  }
+
+  // 3. Settings Page Avatar
+  const setImg = document.getElementById("settingsAvatarImg");
+  const setInit = document.getElementById("settingsInitial");
+  if (setImg && setInit) {
+    if (avatarUrl) {
+      setImg.src = avatarUrl;
+      setImg.style.display = "block";
+      setInit.style.display = "none";
+    } else {
+      setImg.style.display = "none";
+      setInit.style.display = "flex";
+      setInit.innerText = initial;
+    }
+  }
+}
+
+async function loadProfileStats() {
+  if (!currentUser) return;
+  const user = currentUser;
+
+  const profUser = document.getElementById("profileUsername");
+  if (profUser) profUser.innerText = user.username || "Developer";
+
+  const dropUser = document.getElementById("dropdownUserFull");
+  if (dropUser) dropUser.innerText = user.username || "Developer";
+
+  const dropEmail = document.getElementById("dropdownEmail");
+  if (dropEmail) dropEmail.innerText = user.email || "";
+
+  const setUsername = document.getElementById("settingsUsername");
+  if (setUsername) setUsername.innerText = user.username || "admin";
+
+  const setEmail = document.getElementById("settingsEmail");
+  if (setEmail) setEmail.innerText = user.email || "";
+
+  const setRole = document.getElementById("settingsRole");
+  if (setRole) setRole.innerText = (user.role || "developer").toUpperCase();
+
+  const profEmail = document.getElementById("profileEmail");
+  if (profEmail) profEmail.innerText = user.email || "—";
+
+  const profRole = document.getElementById("profileRole");
+  if (profRole) profRole.innerText = user.role || "developer";
+
+  const badge2FA = document.getElementById("2FAStatusBadge");
+  const btn2FA = document.getElementById("btnSetup2FA");
+  if (badge2FA && btn2FA) {
+    if (user.two_factor_enabled) {
+      badge2FA.className = "badge badge-success";
+      badge2FA.innerHTML = '<i class="fa-solid fa-circle-check"></i> Enabled & Enforced';
+      btn2FA.className = "btn btn-danger btn-sm";
+      btn2FA.innerHTML = '<i class="fa-solid fa-unlock"></i> Disable 2FA';
+      btn2FA.onclick = () => openDisable2FAModal();
+    } else {
+      badge2FA.className = "badge badge-zinc";
+      badge2FA.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Not Configured';
+      btn2FA.className = "btn btn-primary btn-sm";
+      btn2FA.innerHTML = '<i class="fa-solid fa-lock"></i> Configure 2FA';
+      btn2FA.onclick = () => open2FAModal();
+    }
+  }
+
+  updateAvatarUI(user.avatar_url, user.username);
+}
+
+// ----------------- Avatar Customization Functions -----------------
+function openChangeAvatarModal() {
+  selectedAvatarUrl = currentUser?.avatar_url || null;
+  updateModalAvatarPreview(selectedAvatarUrl);
+  document.getElementById("avatarCustomUrlInput").value = selectedAvatarUrl || "";
+  document.getElementById("avatarRobloxInput").value = "";
+  document.getElementById("modalChangeAvatar").classList.add("active");
+}
+
+function updateModalAvatarPreview(url) {
+  const previewImg = document.getElementById("previewAvatarImg");
+  const previewInit = document.getElementById("previewInitial");
+  const initial = (currentUser?.username || "U").charAt(0).toUpperCase();
+
+  if (url && url.trim()) {
+    previewImg.src = url;
+    previewImg.style.display = "block";
+    previewInit.style.display = "none";
+  } else {
+    previewImg.style.display = "none";
+    previewInit.style.display = "flex";
+    previewInit.innerText = initial;
+  }
+}
+
+function selectPresetAvatar(url) {
+  selectedAvatarUrl = url || null;
+  document.getElementById("avatarCustomUrlInput").value = url || "";
+  updateModalAvatarPreview(url);
+}
+
+function updateAvatarPreviewDirect(url) {
+  selectedAvatarUrl = url.trim() || null;
+  updateModalAvatarPreview(selectedAvatarUrl);
+}
+
+async function fetchRobloxAvatarPreview() {
+  const input = document.getElementById("avatarRobloxInput")?.value.trim();
+  if (!input) return showToast("Enter a Roblox username or User ID", "info");
+
+  showToast("Fetching Roblox avatar...", "info");
+  try {
+    let rbxId = parseInt(input);
+    if (isNaN(rbxId) || rbxId <= 0) {
+      // Username lookup
+      const res = await fetch(`https://users.roblox.com/v1/usernames/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usernames: [input], excludeBannedUsers: false })
+      });
+      const data = await res.json();
+      if (data.data && data.data.length > 0) {
+        rbxId = data.data[0].id;
+      } else {
+        return showToast(`Roblox user "${input}" not found`, "error");
+      }
+    }
+
+    const avatarUrl = `/api/roblox/avatar/${rbxId}`;
+    selectedAvatarUrl = avatarUrl;
+    document.getElementById("avatarCustomUrlInput").value = avatarUrl;
+    updateModalAvatarPreview(avatarUrl);
+    showToast(`Found Roblox avatar for User ID ${rbxId}!`, "success");
+  } catch (err) {
+    // Direct endpoint fallback
+    const fallbackUrl = `/api/roblox/avatar/1`;
+    selectedAvatarUrl = fallbackUrl;
+    updateModalAvatarPreview(fallbackUrl);
+  }
+}
+
+async function saveUserAvatar() {
+  const avatar_url = selectedAvatarUrl || document.getElementById("avatarCustomUrlInput")?.value.trim() || null;
+
+  try {
+    const res = await apiCall("/api/auth/update_avatar", "POST", { avatar_url });
+    showToast("Profile avatar updated successfully!", "success");
+    if (currentUser) {
+      currentUser.avatar_url = res.avatar_url;
+    }
+    updateAvatarUI(res.avatar_url, currentUser?.username);
+    closeModal("modalChangeAvatar");
+  } catch (err) {}
 }
 
 // ----------------- Dashboard Navigation -----------------

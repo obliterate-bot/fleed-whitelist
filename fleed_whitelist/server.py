@@ -143,7 +143,8 @@ class LicenseUpdateRequest(BaseModel):
 # Executor Handshake Models
 class HandshakeInitRequest(BaseModel):
     slug: str
-    key: str
+    key: Optional[str] = None
+    key_proof: Optional[str] = None
     hwid: str
     client_challenge: str
     loader_token: Optional[str] = None
@@ -153,6 +154,7 @@ class HandshakeInitRequest(BaseModel):
     place_id: Optional[int] = None
     job_id: Optional[str] = None
     game_name: Optional[str] = None
+
 
 
 class HandshakeVerifyRequest(BaseModel):
@@ -745,8 +747,14 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
     if not check_rate_limit(f"ip:{client_ip}", max_requests=40, window_sec=60):
         return JSONResponse(status_code=429, content={"success": False, "message": "Too many requests. Please slow down."})
 
-    clean_key = str(req.key).strip().upper()
-    if not check_rate_limit(f"key:{clean_key}", max_requests=25, window_sec=60):
+    clean_key = str(req.key or "").strip().upper()
+    req_key_proof = str(req.key_proof or "").strip().lower()
+
+    if not clean_key and not req_key_proof:
+        return JSONResponse(status_code=400, content={"success": False, "message": "Missing key or key_proof."})
+
+    rate_limit_id = req_key_proof if req_key_proof else clean_key
+    if not check_rate_limit(f"key:{rate_limit_id}", max_requests=25, window_sec=60):
         return JSONResponse(status_code=429, content={"success": False, "message": "Too many handshake attempts for this key."})
 
     norm_hwid = crypto_engine.normalize_hwid(req.hwid)
@@ -766,7 +774,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BYPASS_ATTEMPT', 'Direct API fetcher detected (missing or forged loader armor token)', ?)
-            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
+            """, (script["id"], clean_key or req_key_proof, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Security Error: Direct API execution not permitted. Execute via official loader."})
 
@@ -778,7 +786,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BYPASS_ATTEMPT', 'Malicious extractor or dumper telemetry signature detected', ?)
-            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
+            """, (script["id"], clean_key or req_key_proof, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Security Violation: Extraction attempt detected and logged."})
 
@@ -792,17 +800,29 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": f"KILLSWITCH ACTIVE: {reason}"})
 
-        # 2. Lookup License Key
-        cursor = await conn.execute("SELECT * FROM licenses WHERE UPPER(license_key) = ? AND script_id = ?", (clean_key, script["id"]))
-        license_row = await cursor.fetchone()
+        # 2. Lookup License Key (by raw key or one-way key_proof hash)
+        license_row = None
+        if clean_key:
+            cursor = await conn.execute("SELECT * FROM licenses WHERE UPPER(license_key) = ? AND script_id = ?", (clean_key, script["id"]))
+            license_row = await cursor.fetchone()
+        
+        if not license_row and req_key_proof:
+            # Query candidate licenses for this script and match by key_proof hash
+            cursor = await conn.execute("SELECT * FROM licenses WHERE script_id = ?", (script["id"],))
+            candidates = await cursor.fetchall()
+            for cand in candidates:
+                if crypto_engine.compute_key_proof(cand["license_key"]).lower() == req_key_proof:
+                    license_row = cand
+                    break
 
         if not license_row:
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'INVALID_KEY', 'Key does not exist for this script', ?)
-            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, now_iso))
+            """, (script["id"], clean_key or req_key_proof, norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Invalid license key"})
+
 
         # Check Banned
         if license_row["is_banned"]:
@@ -846,10 +866,13 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         else:
             bound_hwid = license_row["hwid"]
 
+        resolved_license_key = license_row["license_key"]
+
+
         # 3. Generate Handshake Challenge & Nonce with zero-transmission session key
         challenge = crypto_engine.create_handshake_challenge(
             script_id=script["id"],
-            license_key=req.key,
+            license_key=resolved_license_key,
             client_challenge=req.client_challenge,
             hwid=req.hwid
         )
@@ -860,7 +883,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         """, (
             challenge["nonce"],
             script["id"],
-            req.key,
+            resolved_license_key,
             req.client_challenge,
             challenge["server_challenge"],
             challenge["session_key"],
@@ -874,6 +897,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             now_ts
         ))
         await conn.commit()
+
 
     return {
         "success": True,

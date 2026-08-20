@@ -276,8 +276,10 @@ local function stream_decrypt(cipher_bytes, key_bytes)
     return _table_concat(out)
 end
 
--- 5. Step 1: Handshake Initialization
+-- 5. Step 1: Handshake Initialization (Key-Proof Zero-Exposure)
 local client_challenge = sha256_hex(_tostring(_os_time()) .. "_" .. _tostring(_math_random(10000000, 99999999)))
+local clean_key_str = _string_gsub(FLEED_KEY, "%s+", ""):upper()
+local key_proof = sha256_hex("fleed-ident:" .. clean_key_str)
 
 local init_resp = custom_req({{
     Url = FLEED_SERVER .. "/v1/handshake/init",
@@ -285,7 +287,7 @@ local init_resp = custom_req({{
     Headers = {{ ["Content-Type"] = "application/json", ["User-Agent"] = "FleedGuard/" .. EXECUTOR }},
     Body = HttpService:JSONEncode({{
         slug = SCRIPT_SLUG,
-        key = FLEED_KEY,
+        key_proof = key_proof,
         hwid = HWID,
         client_challenge = client_challenge,
         loader_token = LOADER_ARMOR_TOKEN,
@@ -315,8 +317,8 @@ end
 local server_challenge = init_data.server_challenge
 local nonce = init_data.nonce
 
--- Compute client proof signature: sha256(client_challenge:server_challenge:nonce:key:hwid)
-local sig_payload = client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. FLEED_KEY .. ":" .. HWID
+-- Compute client proof signature: sha256(client_challenge:server_challenge:nonce:clean_key:hwid)
+local sig_payload = client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. clean_key_str .. ":" .. HWID
 local client_sig = sha256_hex(sig_payload)
 
 local verify_resp = custom_req({{
@@ -351,7 +353,7 @@ end
 
 
 -- 7. KEK Key Unwrap & Zero-Transmission Session Key Resolution
-local kek = sha256_hex("fleed-kek:" .. _string_gsub(FLEED_KEY, "%s+", ""):upper() .. ":" .. nonce)
+local kek = sha256_hex("fleed-kek:" .. clean_key_str .. ":" .. nonce)
 local session_key = ""
 
 local decode_func = (crypt and crypt.base64decode and isNative(crypt.base64decode) and crypt.base64decode)
@@ -380,15 +382,12 @@ if verify_data.wrapped_key then
     end
     session_key = _table_concat(unwrap_out)
 else
-    -- Fallback session key derivation
-    session_key = sha256_hex(client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. FLEED_KEY .. ":" .. HWID)
+    securityKick("Key-wrapping protocol error: missing wrapped session key.")
+    return
 end
-
 
 -- 8. In-Memory Decryption, AEAD Tag Verification & Stream Parsing
 local raw_b64 = verify_data.payload
-local decode_func = (crypt and crypt.base64decode and isNative(crypt.base64decode) and crypt.base64decode)
-    or (syn and syn.crypt and syn.crypt.base64_decode and isNative(syn.crypt.base64_decode) and syn.crypt.base64_decode)
 local decoded_str = ""
 
 if decode_func then
@@ -412,20 +411,18 @@ for i = 1, decoded_len do
     cipher_bytes[i] = _string_byte(decoded_str, i)
 end
 
-
--- 8.5 HMAC Auth Tag & Ciphertext Integrity Verification
--- Ensures that the ciphertext was not modified, intercepted, or replayed by an HTTP proxy
+-- 8.5 Strict Ciphertext Authentication Tag Verification
+-- Verifies secret-prefix SHA-256 tag over (session_key .. nonce .. decoded_str)
 local expected_tag = verify_data.auth_tag
 if expected_tag and #expected_tag > 0 then
-    -- Verify tag against session_key + nonce over raw ciphertext bytes
     local tag_seed = session_key .. nonce .. decoded_str
     local computed_tag = sha256_hex(tag_seed)
-    -- Also allow fallback/direct tag match
-    if computed_tag ~= expected_tag and sha256_hex(decoded_str) ~= expected_tag and #expected_tag < 10 then
+    if computed_tag ~= expected_tag then
         securityKick("Payload integrity verification failed (tampered ciphertext).")
         return
     end
 end
+
 
 -- 9. Anti-Dumping, Anti-Decompiler & Sandboxed Execution Guard
 -- (securityKick already defined at top of loader — reuse it)

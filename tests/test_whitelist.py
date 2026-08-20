@@ -171,10 +171,11 @@ def test_full_handshake_and_tamper_defense():
             assert direct_fetcher_resp.status_code == 403
             assert "Security Error" in direct_fetcher_resp.json()["message"]
 
-            # Legitimate loader handshake with token passes
+            # Legitimate loader handshake with token and key_proof passes (keeping raw key off wire)
+            key_proof = crypto_engine.compute_key_proof(license_key)
             init_resp = client.post("/v1/handshake/init", json={
                 "slug": slug,
-                "key": license_key,
+                "key_proof": key_proof,
                 "hwid": hwid,
                 "client_challenge": client_challenge,
                 "loader_token": loader_token,
@@ -211,7 +212,13 @@ def test_full_handshake_and_tamper_defense():
             unwrapped_session_key = crypto_engine.unwrap_session_key(verify_data["wrapped_key"], kek)
             
             import base64
-            cipher_bytes = list(base64.b64decode(verify_data["payload"]))
+            cipher_bytes_raw = base64.b64decode(verify_data["payload"])
+            cipher_bytes = list(cipher_bytes_raw)
+            
+            # Verify strict client-side auth_tag match
+            expected_auth_tag = hashlib.sha256((unwrapped_session_key + nonce).encode('utf-8') + cipher_bytes_raw).hexdigest()
+            assert verify_data["auth_tag"] == expected_auth_tag
+
             key_bytes = (unwrapped_session_key + nonce).encode('utf-8')
             S = list(range(256))
             j = 0
@@ -226,6 +233,7 @@ def test_full_handshake_and_tamper_defense():
                 S[i], S[j] = S[j], S[i]
                 k = S[(S[i] + S[j]) % 256]
                 decrypted.append(byte ^ k)
+
 
             decrypted_str = decrypted.decode('utf-8')
             assert "Hoopz Elite Aimbot Loaded" in decrypted_str

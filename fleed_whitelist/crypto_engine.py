@@ -172,10 +172,16 @@ class CryptoEngine:
         return hashlib.sha256(clean.encode()).hexdigest()
 
     @staticmethod
-    def derive_kek(license_key: str, nonce: str) -> str:
-        """Derives a Key-Encryption-Key (KEK) using HMAC over the license key and nonce."""
+    def compute_key_proof(license_key: str) -> str:
+        """Computes one-way key proof hash to keep license key completely off the wire."""
         clean_key = license_key.strip().upper()
-        return hashlib.sha256(f"fleed-kek:{clean_key}:{nonce}".encode()).hexdigest()
+        return hashlib.sha256(f"fleed-ident:{clean_key}".encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def derive_kek(license_key: str, nonce: str) -> str:
+        """Derives a Key-Encryption-Key (KEK) using SHA256 over the license key and nonce."""
+        clean_key = license_key.strip().upper()
+        return hashlib.sha256(f"fleed-kek:{clean_key}:{nonce}".encode('utf-8')).hexdigest()
 
     @staticmethod
     def derive_session_key_server(script_id: int, client_challenge: str, server_challenge: str, nonce: str, hwid: str) -> str:
@@ -294,10 +300,17 @@ class CryptoEngine:
         for cand in candidates:
             if not cand:
                 continue
-            # SHA256 Candidate
+            # SHA256 Candidate (using key proof / clean key)
             expected_raw = f"{client_challenge}:{server_challenge}:{nonce}:{license_key}:{cand}"
             expected_sig = hashlib.sha256(expected_raw.encode('utf-8')).hexdigest().lower()
             if hmac.compare_digest(expected_sig, client_sig_clean):
+                return True, cand
+
+            # Also allow signature over key proof hash
+            key_proof = CryptoEngine.compute_key_proof(license_key)
+            expected_raw_kp = f"{client_challenge}:{server_challenge}:{nonce}:{key_proof}:{cand}"
+            expected_sig_kp = hashlib.sha256(expected_raw_kp.encode('utf-8')).hexdigest().lower()
+            if hmac.compare_digest(expected_sig_kp, client_sig_clean):
                 return True, cand
 
             # FNV-1a 32-bit fallback for lightweight executors
@@ -316,7 +329,8 @@ class CryptoEngine:
         """
         Encrypts the script payload with dynamic multi-round RC4/stream cipher
         with dynamic key rotation so it can be unpacked directly in-memory inside the client Luau VM.
-        Returns (base64_ciphertext, hmac_auth_tag).
+        Computes a secret-prefix SHA-256 auth tag over session_key + nonce + raw ciphertext bytes.
+        Returns (base64_ciphertext, auth_tag).
         """
         key_bytes = (session_key + nonce).encode('utf-8')
         data_bytes = source_code.encode('utf-8')
@@ -338,11 +352,14 @@ class CryptoEngine:
             cipher.append(byte ^ k)
 
         encrypted_b64 = base64.b64encode(cipher).decode()
-        auth_tag = hmac.new(key_bytes, cipher, hashlib.sha256).hexdigest()
+        # Secret-prefix SHA-256 auth tag: sha256(session_key + nonce + cipher_bytes)
+        # Matches client-side sha256_hex(session_key .. nonce .. decoded_str)
+        auth_tag_payload = key_bytes + bytes(cipher)
+        auth_tag = hashlib.sha256(auth_tag_payload).hexdigest()
         return encrypted_b64, auth_tag
 
     @staticmethod
-    def obfuscate_with_obfuscate(source_code: str, profile: str = "dense") -> str:
+    def obfuscate_with_obfuscate(source_code: str, profile: str = "dense", fail_closed: bool = False) -> str:
         """
         Applies O_bfuscate 1.1 hybrid VM virtualization, register pressure optimization,
         and polymorphic string-vault protection directly to Lua/Luau source code.
@@ -357,6 +374,7 @@ class CryptoEngine:
                 sys.path.insert(0, obf_src)
 
             from o_bfuscate.pipeline import obfuscate, Config
+
 
             if profile == "dense":
                 cfg = Config(
@@ -392,8 +410,11 @@ class CryptoEngine:
             res = obfuscate(source_code, cfg)
             return res.source
         except Exception as e:
-            # Fallback to source code if parser fails on custom syntax
+            if fail_closed:
+                raise RuntimeError(f"Obfuscation pipeline failed under fail-closed security policy: {str(e)}")
+            # Fallback to source code if parser fails on custom syntax and fail_closed is False
             return source_code
+
 
 crypto_engine = CryptoEngine()
 

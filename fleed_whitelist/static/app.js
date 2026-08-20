@@ -183,22 +183,42 @@ async function loadOverviewStats() {
 
 async function loadProfileStats() {
   if (!currentUser) return;
-  document.getElementById("profileUsername").innerText = currentUser.username;
-  document.getElementById("profileEmail").innerText = currentUser.email;
-  document.getElementById("profileApiKey").innerText = currentUser.api_key;
+  const uEl = document.getElementById("profileUsername");
+  if (uEl) uEl.innerText = currentUser.username || "—";
+
+  const eEl = document.getElementById("profileEmail");
+  if (eEl) eEl.innerText = currentUser.email || "—";
+
+  const kEl = document.getElementById("profileApiKey");
+  if (kEl) kEl.value = currentUser.api_key || "";
   
   const statusBadge = document.getElementById("2FAStatusBadge");
   if (statusBadge) {
     if (currentUser.two_factor_enabled) {
       statusBadge.className = "badge badge-success";
       statusBadge.innerText = "Enabled";
-      document.getElementById("btnSetup2FA").style.display = "none";
+      const btn = document.getElementById("btnSetup2FA");
+      if (btn) btn.style.display = "none";
     } else {
       statusBadge.className = "badge badge-danger";
       statusBadge.innerText = "Disabled";
-      document.getElementById("btnSetup2FA").style.display = "inline-flex";
+      const btn = document.getElementById("btnSetup2FA");
+      if (btn) btn.style.display = "inline-flex";
     }
   }
+}
+
+async function regenerateApiKey() {
+  if (!confirm("Are you sure you want to regenerate your Master API key? Any existing bots using the old key will need to be re-linked.")) return;
+  try {
+    const res = await apiCall("/api/auth/regenerate_api_key", "POST");
+    if (res.api_key) {
+      currentUser.api_key = res.api_key;
+      const kEl = document.getElementById("profileApiKey");
+      if (kEl) kEl.value = res.api_key;
+      showToast("API Key regenerated successfully!", "success");
+    }
+  } catch (err) {}
 }
 
 // ----------------- Scripts Management -----------------

@@ -205,8 +205,9 @@
           <div class="form-group">
             <label class="form-label">Master API Token</label>
             <div style="display:flex; gap:8px;">
-              <input type="text" id="profileApiKey" class="form-input" readonly style="font-family:var(--font-mono); font-size:12px;">
+              <input type="text" id="profileApiKey" class="form-input" readonly style="font-family:var(--font-mono); font-size:12px;" placeholder="Generating API key...">
               <button class="btn btn-secondary" onclick="copyText(document.getElementById('profileApiKey').value)">Copy</button>
+              <button class="btn btn-secondary" onclick="regenerateApiKey()">Regenerate</button>
             </div>
           </div>
         </div>

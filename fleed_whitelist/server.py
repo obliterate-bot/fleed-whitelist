@@ -262,16 +262,32 @@ async def logout():
 
 @app.get("/api/auth/me")
 async def get_me(user: Dict = Depends(get_current_user)):
+    api_key = user.get("api_key")
+    if not api_key:
+        api_key = f"fg_live_{secrets.token_hex(20)}"
+        async with db.get_db() as conn:
+            await conn.execute("UPDATE users SET api_key = ? WHERE id = ?", (api_key, user["id"]))
+            await conn.commit()
+        user["api_key"] = api_key
+
     return {
         "id": user["id"],
         "username": user["username"],
         "email": user["email"],
         "role": user["role"],
         "two_factor_enabled": bool(user["two_factor_enabled"]),
-        "api_key": user["api_key"],
+        "api_key": api_key,
         "discord_id": user["discord_id"] if "discord_id" in user.keys() else None,
         "created_at": user["created_at"]
     }
+
+@app.post("/api/auth/regenerate_api_key")
+async def regenerate_api_key(user: Dict = Depends(get_current_user)):
+    new_api_key = f"fg_live_{secrets.token_hex(20)}"
+    async with db.get_db() as conn:
+        await conn.execute("UPDATE users SET api_key = ? WHERE id = ?", (new_api_key, user["id"]))
+        await conn.commit()
+    return {"success": True, "api_key": new_api_key}
 
 # ----------------- 2FA Configuration Endpoints -----------------
 @app.post("/api/auth/2fa/setup")

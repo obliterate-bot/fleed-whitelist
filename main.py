@@ -9,6 +9,12 @@ import utils
 from discord_network import DiscordTLSConnector
 from utils import fleed_embed, error_embed, command_not_found_embed, command_help_embed
 
+# Expose FastAPI ASGI app if Railway attempts `uvicorn main:app`
+try:
+    from fleed_whitelist.server import app
+except Exception:
+    app = None
+
 async def get_prefix(bot, message):
     if not message.guild:
         return config.DEFAULT_PREFIX

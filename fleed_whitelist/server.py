@@ -975,21 +975,33 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
             raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense")
 
         effective_hwid = matching_hwid or req.hwid or bound_hwid
-        session_key = crypto_engine.derive_session_key(
+        
+        # 1. Derive unguessable server session key using MASTER_SECRET (prevents MITM proxy from computing it)
+        session_key = crypto_engine.derive_session_key_server(
+            script_id=row["script_id"],
             client_challenge=req.client_challenge,
             server_challenge=nonce_row["server_challenge"],
             nonce=req.nonce,
-            license_key=row["license_key"],
             hwid=effective_hwid
         )
+
+        # 2. Derive KEK (Key Encryption Key) from the client's actual license key
+        kek = crypto_engine.derive_kek(license_key=row["license_key"], nonce=req.nonce)
+
+        # 3. Wrap session key with KEK so only a client with the license key can unwrap it
+        wrapped_key = crypto_engine.wrap_session_key(session_key, kek)
+
+        # 4. Encrypt payload with server session key
         encrypted_payload, auth_tag = crypto_engine.encrypt_payload(raw_code, session_key, req.nonce)
 
-    # Note: session_key is NEVER returned to the client
+    # Note: session_key in plaintext is NEVER returned to the client
     return {
         "success": True,
         "payload": encrypted_payload,
+        "wrapped_key": wrapped_key,
         "auth_tag": auth_tag,
         "is_obfuscated": bool(row["is_obfuscated_mode"])
     }
+
 
 

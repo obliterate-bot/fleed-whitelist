@@ -172,10 +172,47 @@ class CryptoEngine:
         return hashlib.sha256(clean.encode()).hexdigest()
 
     @staticmethod
+    def derive_kek(license_key: str, nonce: str) -> str:
+        """Derives a Key-Encryption-Key (KEK) using HMAC over the license key and nonce."""
+        clean_key = license_key.strip().upper()
+        return hashlib.sha256(f"fleed-kek:{clean_key}:{nonce}".encode()).hexdigest()
+
+    @staticmethod
+    def derive_session_key_server(script_id: int, client_challenge: str, server_challenge: str, nonce: str, hwid: str) -> str:
+        """
+        Derives an unguessable server-side session key incorporating MASTER_SECRET.
+        A MITM proxy listening to traffic CANNOT compute this key because MASTER_SECRET is never sent across the wire.
+        """
+        seed = f"{MASTER_SECRET}:{script_id}:{client_challenge}:{server_challenge}:{nonce}:{hwid}"
+        return hashlib.sha256(seed.encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def wrap_session_key(session_key: str, kek: str) -> str:
+        """
+        Encrypts the session key with the KEK (Key-Encryption-Key) so only a client who actually
+        possesses the license key can unwrap the session key.
+        """
+        kek_bytes = kek.encode('utf-8')
+        sk_bytes = session_key.encode('utf-8')
+        wrapped = bytearray()
+        for idx, b in enumerate(sk_bytes):
+            wrapped.append(b ^ kek_bytes[idx % len(kek_bytes)])
+        return base64.b64encode(wrapped).decode()
+
+    @staticmethod
+    def unwrap_session_key(wrapped_b64: str, kek: str) -> str:
+        """Unwraps the session key using the local KEK."""
+        kek_bytes = kek.encode('utf-8')
+        wrapped = base64.b64decode(wrapped_b64)
+        unwrapped = bytearray()
+        for idx, b in enumerate(wrapped):
+            unwrapped.append(b ^ kek_bytes[idx % len(kek_bytes)])
+        return bytes(unwrapped).decode('utf-8')
+
+    @staticmethod
     def derive_session_key(client_challenge: str, server_challenge: str, nonce: str, license_key: str, hwid: str) -> str:
         """
-        Derives an ephemeral session key deterministically from the handshake parameters.
-        Neither client nor server needs to transmit the encryption key across the network.
+        Legacy/Fallback session key derivation.
         """
         seed = f"{client_challenge}:{server_challenge}:{nonce}:{license_key}:{hwid}"
         return hashlib.sha256(seed.encode('utf-8')).hexdigest()

@@ -203,19 +203,16 @@ def test_full_handshake_and_tamper_defense():
             assert verify_data["success"] is True
             assert "payload" in verify_data
             assert "auth_tag" in verify_data
+            assert "wrapped_key" in verify_data
             assert "session_key" not in verify_data  # Zero-transmission verification!
 
-            # Client derives session key locally and decrypts payload
-            client_derived_key = crypto_engine.derive_session_key(
-                client_challenge=client_challenge,
-                server_challenge=server_challenge,
-                nonce=nonce,
-                license_key=license_key,
-                hwid=norm_hwid
-            )
+            # Client unwraps session key via KEK and decrypts payload
+            kek = crypto_engine.derive_kek(license_key, nonce)
+            unwrapped_session_key = crypto_engine.unwrap_session_key(verify_data["wrapped_key"], kek)
+            
             import base64
             cipher_bytes = list(base64.b64decode(verify_data["payload"]))
-            key_bytes = (client_derived_key + nonce).encode('utf-8')
+            key_bytes = (unwrapped_session_key + nonce).encode('utf-8')
             S = list(range(256))
             j = 0
             for i in range(256):
@@ -229,7 +226,9 @@ def test_full_handshake_and_tamper_defense():
                 S[i], S[j] = S[j], S[i]
                 k = S[(S[i] + S[j]) % 256]
                 decrypted.append(byte ^ k)
-            assert "Hoopz Elite Aimbot Loaded" in decrypted.decode('utf-8')
+
+            decrypted_str = decrypted.decode('utf-8')
+            assert "Hoopz Elite Aimbot Loaded" in decrypted_str
 
             # 8. Test Tamper Attempt: Replaying with invalid signature must FAIL (403)
             init2 = client.post("/v1/handshake/init", json={

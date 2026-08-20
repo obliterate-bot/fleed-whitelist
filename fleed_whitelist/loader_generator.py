@@ -350,8 +350,40 @@ if not verify_data.success then
 end
 
 
--- 7. Zero-Transmission Local Session Key Derivation
-local session_key = sha256_hex(client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. FLEED_KEY .. ":" .. HWID)
+-- 7. KEK Key Unwrap & Zero-Transmission Session Key Resolution
+local kek = sha256_hex("fleed-kek:" .. _string_gsub(FLEED_KEY, "%s+", ""):upper() .. ":" .. nonce)
+local session_key = ""
+
+local decode_func = (crypt and crypt.base64decode and isNative(crypt.base64decode) and crypt.base64decode)
+    or (syn and syn.crypt and syn.crypt.base64_decode and isNative(syn.crypt.base64_decode) and syn.crypt.base64_decode)
+
+if verify_data.wrapped_key then
+    -- Decode wrapped session key
+    local raw_wk_b64 = verify_data.wrapped_key
+    local wk_str = (decode_func and decode_func(raw_wk_b64)) or ""
+    if #wk_str == 0 then
+        local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+        raw_wk_b64 = _string_gsub(raw_wk_b64, '[^'..b..'=]', '')
+        wk_str = (raw_wk_b64:gsub('=', ''):gsub('..', function(cc)
+            local c = 0
+            for i=1, 2 do c = c * 64 + (b:find(cc:sub(i, i)) - 1) end
+            return _string_char(_rshift(c, 4), _band(_rshift(c, 2), 0xFF))
+        end))
+    end
+    
+    local kek_len = #kek
+    local unwrap_out = table.create(#wk_str)
+    for idx = 1, #wk_str do
+        local b = _string_byte(wk_str, idx)
+        local kb = _string_byte(kek, ((idx - 1) % kek_len) + 1)
+        unwrap_out[idx] = _string_char(_bxor(b, kb))
+    end
+    session_key = _table_concat(unwrap_out)
+else
+    -- Fallback session key derivation
+    session_key = sha256_hex(client_challenge .. ":" .. server_challenge .. ":" .. nonce .. ":" .. FLEED_KEY .. ":" .. HWID)
+end
+
 
 -- 8. In-Memory Decryption, AEAD Tag Verification & Stream Parsing
 local raw_b64 = verify_data.payload
@@ -379,6 +411,7 @@ local cipher_bytes = table.create(decoded_len)
 for i = 1, decoded_len do
     cipher_bytes[i] = _string_byte(decoded_str, i)
 end
+
 
 -- 8.5 HMAC Auth Tag & Ciphertext Integrity Verification
 -- Ensures that the ciphertext was not modified, intercepted, or replayed by an HTTP proxy

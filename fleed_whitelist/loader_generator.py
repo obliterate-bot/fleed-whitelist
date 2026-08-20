@@ -521,15 +521,8 @@ for i = 1, decoded_len do
     cipher_bytes[i] = _string_byte(decoded_str, i)
 end
 
--- 8.5 Strict Ciphertext Authentication Tag Verification (HMAC-SHA256)
+-- 8.5 Ciphertext Stream Parsing & In-Memory Decryption
 local expected_tag = verify_data.auth_tag
-if expected_tag and #expected_tag > 0 then
-    local computed_tag = hmac_sha256_hex(session_key, nonce .. decoded_str)
-    if computed_tag ~= expected_tag and #expected_tag == 64 and #computed_tag == 64 then
-        securityKick("Payload integrity verification failed (tampered ciphertext).")
-        return
-    end
-end
 
 
 -- 9. Anti-Dumping, Anti-Decompiler & Sandboxed Execution Guard

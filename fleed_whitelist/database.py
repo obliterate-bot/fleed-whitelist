@@ -10,9 +10,22 @@ DATABASE_PATH = os.getenv("FLEED_WHITELIST_DB", os.path.join(os.path.dirname(os.
 class WhitelistDB:
     def __init__(self, db_path: str = DATABASE_PATH):
         self.db_path = db_path
+        # Ensure parent directory exists for persistent cloud volumes
+        parent_dir = os.path.dirname(self.db_path)
+        if parent_dir and not os.path.exists(parent_dir):
+            try:
+                os.makedirs(parent_dir, exist_ok=True)
+            except Exception:
+                pass
 
     @asynccontextmanager
     async def get_db(self):
+        parent_dir = os.path.dirname(self.db_path)
+        if parent_dir and not os.path.exists(parent_dir):
+            try:
+                os.makedirs(parent_dir, exist_ok=True)
+            except Exception:
+                pass
         async with aiosqlite.connect(self.db_path) as conn:
             conn.row_factory = aiosqlite.Row
             await conn.execute("PRAGMA journal_mode=WAL;")

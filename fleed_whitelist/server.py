@@ -2,6 +2,7 @@ import os
 import json
 import time
 import secrets
+import asyncio
 import urllib.request
 import aiohttp
 from datetime import datetime, timezone, timedelta
@@ -44,6 +45,17 @@ async def lifespan(app: FastAPI):
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, ("admin", "admin@fleed.bot", pw_hash, salt, api_key, "admin", now_iso))
             await conn.commit()
+
+        # Auto-heal past executions where place_id > 0 and game_name was 'Roblox Game'
+        try:
+            cur_places = await conn.execute("SELECT DISTINCT place_id FROM execution_logs WHERE (game_name = 'Roblox Game' OR game_name = 'Unknown' OR game_name IS NULL OR game_name = 'Roblox Experience') AND place_id > 0")
+            place_rows = await cur_places.fetchall()
+            for pr in place_rows:
+                pid = pr["place_id"]
+                if pid:
+                    asyncio.create_task(background_resolve_and_update_place(pid))
+        except Exception:
+            pass
     yield
 
 app = FastAPI(
@@ -1122,17 +1134,37 @@ async def get_dashboard_stats(user: Dict = Depends(get_current_user)):
 
         # Top Games / Experiences
         c7 = await conn.execute("""
-            SELECT COALESCE(NULLIF(game_name, ''), 'Roblox Experience') as gname,
+            SELECT game_name,
                    place_id,
                    COUNT(*) as cnt
             FROM execution_logs
-            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
-            GROUP BY gname, place_id
+            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?) AND status = 'SUCCESS'
+            GROUP BY place_id, game_name
             ORDER BY cnt DESC
-            LIMIT 5
+            LIMIT 15
         """, (user["id"],))
         top_games_rows = await c7.fetchall()
-        top_games = [{"name": r["gname"], "place_id": r["place_id"], "count": r["cnt"]} for r in top_games_rows]
+        top_games_dict = {}
+        for r in top_games_rows:
+            place_id = r["place_id"] or 0
+            cur_name = r["game_name"]
+            if (not cur_name or cur_name in ("Roblox Game", "Unknown", "Roblox Experience")) and place_id > 0:
+                resolved_name = await resolve_roblox_game_name(place_id, cur_name)
+                if resolved_name != cur_name and not resolved_name.startswith("Place #"):
+                    try:
+                        await conn.execute("UPDATE execution_logs SET game_name = ? WHERE place_id = ? AND (game_name = 'Roblox Game' OR game_name = 'Unknown' OR game_name IS NULL)", (resolved_name, place_id))
+                        await conn.execute("UPDATE live_sessions SET game_name = ? WHERE place_id = ? AND (game_name = 'Roblox Game' OR game_name = 'Unknown' OR game_name IS NULL)", (resolved_name, place_id))
+                    except Exception:
+                        pass
+                cur_name = resolved_name
+            elif not cur_name:
+                cur_name = f"Place #{place_id}" if place_id > 0 else "Roblox Experience"
+
+            key = (cur_name, place_id)
+            top_games_dict[key] = top_games_dict.get(key, 0) + r["cnt"]
+
+        top_games = [{"name": k[0], "place_id": k[1], "count": v} for k, v in sorted(top_games_dict.items(), key=lambda x: x[1], reverse=True)[:5]]
+        await conn.commit()
 
         return {
             "total_scripts": scripts_cnt,
@@ -1180,7 +1212,17 @@ async def get_logs(limit: int = 100, status_filter: Optional[str] = None, user: 
                 ORDER BY l.id DESC LIMIT ?
             """, (user["id"], limit))
         rows = await cursor.fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            pid = d.get("place_id") or 0
+            if (not d.get("game_name") or d.get("game_name") in ("Roblox Game", "Unknown", "Roblox Experience")) and pid > 0:
+                if pid in game_name_cache:
+                    d["game_name"] = game_name_cache[pid]
+                else:
+                    d["game_name"] = f"Place #{pid}"
+            result.append(d)
+        return result
 
 # Cache avatar headshots in memory to avoid repeated requests to Roblox API
 avatar_cache: Dict[int, str] = {}
@@ -1212,6 +1254,54 @@ async def get_roblox_avatar(user_id: int):
         pass
 
     return RedirectResponse(url=DEFAULT_AVATAR_SVG, status_code=302)
+
+# Cache resolved game titles in memory
+game_name_cache: Dict[int, str] = {}
+
+async def resolve_roblox_game_name(place_id: int, fallback: Optional[str] = None) -> str:
+    """Fetches the official Roblox game title given a place_id via Roblox Universe API."""
+    if not place_id or place_id <= 0:
+        return fallback if (fallback and fallback not in ("Roblox Game", "Unknown", "Roblox Experience")) else "Roblox Experience"
+    if place_id in game_name_cache:
+        return game_name_cache[place_id]
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            # 1. Fetch Universe ID from place ID
+            u_url = f"https://apis.roblox.com/universes/v1/places/{place_id}/universe"
+            async with session.get(u_url, headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    uid = data.get("universeId")
+                    if uid:
+                        # 2. Fetch Game Details
+                        g_url = f"https://games.roblox.com/v1/games?universeIds={uid}"
+                        async with session.get(g_url, headers=headers, timeout=aiohttp.ClientTimeout(total=3)) as gr:
+                            if gr.status == 200:
+                                gdata = await gr.json()
+                                if gdata.get("data") and len(gdata["data"]) > 0:
+                                    name = gdata["data"][0].get("name")
+                                    if name:
+                                        clean_name = str(name).strip()
+                                        game_name_cache[place_id] = clean_name
+                                        return clean_name
+    except Exception:
+        pass
+
+    return fallback if (fallback and fallback not in ("Roblox Game", "Unknown", "Roblox Experience")) else f"Place #{place_id}"
+
+async def background_resolve_and_update_place(place_id: int):
+    """Background worker to resolve place names and update database records."""
+    try:
+        resolved = await resolve_roblox_game_name(place_id)
+        if resolved and not resolved.startswith("Place #") and resolved not in ("Roblox Game", "Unknown", "Roblox Experience"):
+            async with db.get_db() as conn:
+                await conn.execute("UPDATE execution_logs SET game_name = ? WHERE place_id = ? AND (game_name = 'Roblox Game' OR game_name = 'Unknown' OR game_name IS NULL OR game_name = 'Roblox Experience')", (resolved, place_id))
+                await conn.execute("UPDATE live_sessions SET game_name = ? WHERE place_id = ? AND (game_name = 'Roblox Game' OR game_name = 'Unknown' OR game_name IS NULL OR game_name = 'Roblox Experience')", (resolved, place_id))
+                await conn.commit()
+    except Exception:
+        pass
 
 
 
@@ -1317,6 +1407,11 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
     norm_hwid = crypto_engine.normalize_hwid(req.hwid)
     now_iso = datetime.now(timezone.utc).isoformat()
     now_ts = int(time.time())
+
+    # Resolve real game name if place_id is provided and game_name is generic/empty
+    if req.place_id and req.place_id > 0:
+        if not req.game_name or req.game_name in ("Roblox Game", "Unknown", "Roblox Experience"):
+            req.game_name = await resolve_roblox_game_name(req.place_id, req.game_name)
 
     async with db.get_db() as conn:
         # 1. Lookup script
@@ -2137,6 +2232,14 @@ async def get_active_sessions(user: Dict = Depends(get_current_user)):
         d["seconds_ago"] = secs_ago
         d["presence_state"] = presence_state
         d["presence_label"] = presence_label
+
+        pid = d.get("place_id") or 0
+        if (not d.get("game_name") or d.get("game_name") in ("Roblox Game", "Unknown", "Roblox Experience")) and pid > 0:
+            if pid in game_name_cache:
+                d["game_name"] = game_name_cache[pid]
+            else:
+                d["game_name"] = f"Place #{pid}"
+
         results.append(d)
 
     return results

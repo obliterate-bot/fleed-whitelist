@@ -226,12 +226,19 @@ local HWID = getHardwareID()
 if getgenv then getgenv().__FG_HWID = HWID end
 local EXECUTOR = (identifyexecutor and identifyexecutor()) or (syn and "Synapse") or "Universal"
 
--- Telemetry metrics (instant resolution without yielding web requests)
+-- Telemetry metrics (instant resolution)
 local rbx_username = (LocalPlayer and LocalPlayer.Name) or "Unknown"
 local rbx_user_id = (LocalPlayer and LocalPlayer.UserId) or 0
 local rbx_place_id = game.PlaceId or 0
 local rbx_job_id = _tostring(game.JobId or "")
-local rbx_game_name = "Roblox Game"
+local rbx_game_name = "Roblox Experience"
+_pcall(function()
+    local market = game:GetService("MarketplaceService")
+    local info = market:GetProductInfo(game.PlaceId)
+    if info and info.Name then
+        rbx_game_name = _tostring(info.Name)
+    end
+end)
 
 -- 4. Cryptographic Hashing & In-Memory Stream Decryption
 local function sha256_hex(str)

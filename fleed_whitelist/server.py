@@ -623,14 +623,15 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": f"KILLSWITCH ACTIVE: {reason}"})
 
-        # 2. Lookup License Key
-        cursor = await conn.execute("SELECT * FROM licenses WHERE license_key = ? AND script_id = ?", (req.key, script["id"]))
+        # 2. Lookup License Key (Case-insensitive & clean)
+        clean_key = str(req.key).strip().upper()
+        cursor = await conn.execute("SELECT * FROM licenses WHERE UPPER(license_key) = ? AND script_id = ?", (clean_key, script["id"]))
         license_row = await cursor.fetchone()
         if not license_row:
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, 'INVALID_KEY', 'Key does not exist for this script', ?)
-            """, (script["id"], req.key, norm_hwid, client_ip, req.executor, now_iso))
+            """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Invalid license key"})
 
@@ -723,7 +724,7 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
             SELECT l.*, s.raw_source, s.is_obfuscated_mode, s.name as script_name
             FROM licenses l
             JOIN scripts s ON l.script_id = s.id
-            WHERE l.license_key = ? AND s.id = ?
+            WHERE UPPER(l.license_key) = UPPER(?) AND s.id = ?
         """, (nonce_row["license_key"], nonce_row["script_id"]))
         row = await cursor.fetchone()
         if not row:

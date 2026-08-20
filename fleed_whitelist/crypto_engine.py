@@ -315,9 +315,10 @@ class CryptoEngine:
                     string_decoys=2,
                     noise=1,
                     opaque_predicates=False,
+                    mask_literals=True,
                     number_depth=2,
                     bitwise_numbers=True,
-                    virtualize=True,
+                    virtualize=False,
                 )
             else:
                 cfg = Config(

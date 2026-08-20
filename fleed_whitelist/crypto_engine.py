@@ -10,7 +10,28 @@ import pyotp
 import qrcode
 import io
 
-MASTER_SECRET = os.getenv("FLEED_MASTER_SECRET", "fleed_guard_super_secret_master_key_2026_x89a!")
+# SECURITY: MASTER_SECRET must come from the environment. A hardcoded fallback
+# would let anyone who reads the source forge session tokens, loader tokens, and
+# handshake signatures. If it is missing we FAIL CLOSED: in production
+# (FLEED_ENV=production) we refuse to start; otherwise we generate a random
+# ephemeral secret for this process only (tokens reset on restart, which is safe).
+_MASTER_SECRET_ENV = os.getenv("FLEED_MASTER_SECRET", "").strip()
+if _MASTER_SECRET_ENV and len(_MASTER_SECRET_ENV) >= 32:
+    MASTER_SECRET = _MASTER_SECRET_ENV
+else:
+    if os.getenv("FLEED_ENV", "").lower() == "production":
+        raise RuntimeError(
+            "FLEED_MASTER_SECRET is missing or too short (>=32 chars required). "
+            "Refusing to start in production without a strong master secret."
+        )
+    import warnings as _warnings
+    MASTER_SECRET = secrets.token_hex(32)
+    _warnings.warn(
+        "FLEED_MASTER_SECRET not set (or <32 chars). Using a RANDOM ephemeral "
+        "secret for this process. Set FLEED_MASTER_SECRET in the environment for "
+        "persistent, secure tokens.",
+        RuntimeWarning,
+    )
 
 class CryptoEngine:
     @staticmethod
@@ -102,6 +123,15 @@ class CryptoEngine:
             if len(parts) != 3:
                 return None
             b64_header, b64_payload, b64_sig = parts
+            # SECURITY: pin the algorithm. Without this, an attacker could submit
+            # a token with "alg":"none" (or a different alg) and bypass signature
+            # checks on libraries that honor the header. We only accept HS256.
+            try:
+                header = json.loads(base64.urlsafe_b64decode(b64_header + "==").decode())
+            except Exception:
+                return None
+            if not isinstance(header, dict) or header.get("alg") != "HS256":
+                return None
             unsigned = f"{b64_header}.{b64_payload}"
             expected_sig = hmac.new(MASTER_SECRET.encode(), unsigned.encode(), hashlib.sha256).digest()
             actual_sig = base64.urlsafe_b64decode(b64_sig + "==")
@@ -209,19 +239,15 @@ class CryptoEngine:
         for cand in candidates:
             if not cand:
                 continue
-            # SHA256 Candidate
+            # SHA256 signature ONLY. The previous 32-bit FNV-1a fallback was
+            # trivially forgeable (a 4-byte space can be brute-forced in
+            # milliseconds), which let an attacker pass verification without the
+            # real key/HWID. It has been removed. Every executor that can run
+            # this loader has a SHA-256 implementation (crypt.hash), so there is
+            # no legitimate need for a weak fallback.
             expected_raw = f"{client_challenge}:{server_challenge}:{nonce}:{license_key}:{cand}"
             expected_sig = hashlib.sha256(expected_raw.encode('utf-8')).hexdigest().lower()
             if hmac.compare_digest(expected_sig, client_sig_clean):
-                return True, cand
-
-            # FNV-1a 32-bit fallback for lightweight executors
-            h = 0x811c9dc5
-            for b in expected_raw.encode('utf-8'):
-                h = (h ^ b) & 0xFFFFFFFF
-                h = (h * 0x01000193) & 0xFFFFFFFF
-            fnv_sig = f"{h:08x}".lower()
-            if hmac.compare_digest(fnv_sig, client_sig_clean):
                 return True, cand
 
         return False, None
@@ -257,10 +283,15 @@ class CryptoEngine:
         return encrypted_b64, auth_tag
 
     @staticmethod
-    def obfuscate_with_obfuscate(source_code: str, profile: str = "dense") -> str:
+    def obfuscate_with_obfuscate(source_code: str, profile: str = "dense", fail_closed: bool = False) -> str:
         """
         Applies O_bfuscate 1.1 hybrid VM virtualization, register pressure optimization,
         and polymorphic string-vault protection directly to Lua/Luau source code.
+
+        SECURITY: When fail_closed=True (used for protected scripts on the delivery
+        path), any failure raises instead of silently returning the RAW source.
+        Returning raw source on error would ship unprotected plaintext to the
+        client -- a fail-OPEN behavior. Protected mode must fail CLOSED.
         """
         try:
             import sys
@@ -305,9 +336,14 @@ class CryptoEngine:
                 )
 
             res = obfuscate(source_code, cfg)
+            if not res or not getattr(res, "source", None):
+                raise RuntimeError("Obfuscation pipeline returned empty output")
             return res.source
         except Exception as e:
-            # Fallback to source code if parser fails on custom syntax
+            if fail_closed:
+                # Do NOT leak raw source. Caller must refuse to serve the payload.
+                raise RuntimeError(f"Obfuscation failed under fail-closed policy: {e}")
+            # Non-protected callers may fall back to source code.
             return source_code
 
 crypto_engine = CryptoEngine()

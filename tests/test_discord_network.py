@@ -42,10 +42,10 @@ class DiscordSniTests(unittest.TestCase):
             "api.discord.com",
             "discord.gg",
             "gateway.discord.gg",
-        )
-        retained = (
             "discordapp.com",
             "cdn.discordapp.com",
+        )
+        retained = (
             "discord.com.example.org",
             "notdiscord.gg",
             "example.com",

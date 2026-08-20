@@ -51,13 +51,23 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware for developer integrations & web UI
+# CORS middleware for the web dashboard only.
+# SECURITY: allow_origins=["*"] together with allow_credentials=True is both
+# invalid per the CORS spec and unsafe (it would let any website make
+# authenticated requests with the user's cookies). The executor handshake API is
+# server-to-server (no browser origin), so it needs no CORS. We restrict browser
+# origins to the dashboard host(s) configured via FLEED_ALLOWED_ORIGINS.
+_allowed_origins = [
+    o.strip()
+    for o in os.getenv("FLEED_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,  # empty list = no cross-origin browser access
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-API-Key"],
 )
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -888,8 +898,40 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         if not row:
             return JSONResponse(status_code=404, content={"success": False, "message": "Authorization context lost"})
 
+        # 2b. Re-validate license state at delivery time (init and verify are
+        # separate requests; a key could be banned/expired between them).
+        if row["is_banned"]:
+            await conn.execute("""
+                INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BANNED', 'Key banned before payload delivery', ?)
+            """, (row["script_id"], row["id"], row["license_key"], row["hwid"], client_ip, nonce_row["executor_name"], nonce_row["roblox_username"], nonce_row["roblox_user_id"], nonce_row["place_id"], nonce_row["job_id"], nonce_row["game_name"], now_iso))
+            await conn.commit()
+            return JSONResponse(status_code=403, content={"success": False, "message": "License key has been banned."})
+
+        if row["expires_at"]:
+            try:
+                _exp_dt = datetime.fromisoformat(row["expires_at"])
+                if datetime.now(timezone.utc) > _exp_dt:
+                    return JSONResponse(status_code=403, content={"success": False, "message": "License key has expired"})
+            except Exception:
+                # Unparseable expiry -> fail closed.
+                return JSONResponse(status_code=403, content={"success": False, "message": "License expiry invalid"})
+
         # 3. Verify Client Signature with bound HWID
         bound_hwid = row["hwid"]
+
+        # STRICT HWID GATE: the raw HWID presented now MUST normalize to the exact
+        # HWID bound to this license. This is the authoritative device check --
+        # it lives here on the server, never on the client. No first-bind bypass
+        # is possible because init already bound the HWID before issuing a nonce.
+        if not bound_hwid or crypto_engine.normalize_hwid(req.hwid or "") != bound_hwid:
+            await conn.execute("""
+                INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'HWID_MISMATCH', 'HWID at verify does not match bound device', ?)
+            """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, nonce_row["executor_name"], nonce_row["roblox_username"], nonce_row["roblox_user_id"], nonce_row["place_id"], nonce_row["job_id"], nonce_row["game_name"], now_iso))
+            await conn.commit()
+            return JSONResponse(status_code=403, content={"success": False, "message": "HWID Mismatch! Please reset your HWID via dashboard or Discord bot."})
+
         is_valid_sig, matching_hwid = crypto_engine.verify_client_signature(
             client_signature=req.signature,
             client_challenge=req.client_challenge,
@@ -929,11 +971,22 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
         raw_code = row["raw_source"]
         
-        # If script is in protected mode (mode 1 or 2), apply O_bfuscate 1.1 VM virtualization
-        # This guarantees that even if an attacker writes a custom fetcher with a valid key,
-        # they will only ever decrypt heavily virtualized VM bytecode instead of raw source code.
+        # If script is in protected mode (mode 1 or 2), apply O_bfuscate 1.1 VM virtualization.
+        # FAIL CLOSED: if virtualization fails we must NOT ship raw source. A valid
+        # key-holder can always read whatever the client executes, so the only
+        # source protection we can guarantee is that the delivered payload is
+        # virtualized bytecode, never readable source. If that guarantee cannot be
+        # met, refuse to deliver.
         if row["is_obfuscated_mode"] in (1, 2):
-            raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense")
+            try:
+                raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense", fail_closed=True)
+            except Exception as _obf_err:
+                await conn.execute("""
+                    INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELIVERY_BLOCKED', 'Protected-mode obfuscation failed; refused to ship raw source', ?)
+                """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
+                await conn.commit()
+                return JSONResponse(status_code=503, content={"success": False, "message": "Protected payload temporarily unavailable. Contact the developer."})
 
         effective_hwid = matching_hwid or req.hwid or bound_hwid
         session_key = crypto_engine.derive_session_key(

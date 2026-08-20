@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>O_bfuscate Gate</title>
+  <link rel="stylesheet" href="/dashboard/styles.css">
+</head>
+<body>
+  <div class="app-shell" id="app-shell" aria-hidden="true">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">O_</span>
+        <span class="brand-copy"><strong>Gate</strong><small>by O_bfuscate</small></span>
+      </div>
+
+      <nav class="nav-stack" aria-label="Primary navigation">
+        <p class="nav-label">Workspace</p>
+        <button class="nav-item is-active" data-view="overview">
+          <span class="nav-icon" aria-hidden="true">⌂</span>
+          <span>Overview</span>
+        </button>
+        <button class="nav-item" data-view="licenses">
+          <span class="nav-icon" aria-hidden="true">⌘</span>
+          <span>License keys</span>
+          <span class="nav-count" id="nav-license-count">0</span>
+        </button>
+        <button class="nav-item" data-view="loaders">
+          <span class="nav-icon" aria-hidden="true">↗</span>
+          <span>Loaders</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <div class="server-card">
+          <div class="server-row">
+            <span class="live-dot" aria-hidden="true"></span>
+            <strong>Self-hosted</strong>
+          </div>
+          <p>Your key data stays on this server.</p>
+        </div>
+        <button class="profile-button" id="logout-button">
+          <span class="avatar">AD</span>
+          <span><strong>Administrator</strong><small>Local workspace</small></span>
+          <span class="profile-exit" aria-hidden="true">↪</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="icon-button mobile-menu" id="mobile-menu" aria-label="Open navigation">☰</button>
+        <div class="breadcrumbs">
+          <span>O_bfuscate</span>
+          <span aria-hidden="true">/</span>
+          <strong id="page-crumb">Overview</strong>
+        </div>
+        <div class="topbar-actions">
+          <div class="api-status"><span class="live-dot"></span><span>API online</span></div>
+          <button class="button button-primary" data-open-create>
+            <span aria-hidden="true">＋</span> Create key
+          </button>
+        </div>
+      </header>
+
+      <section class="view is-active" data-view-panel="overview">
+        <div class="page-heading welcome-heading">
+          <div>
+            <p class="eyebrow">Command center</p>
+            <h1>Good evening, Administrator.</h1>
+            <p>Here’s what’s happening across your whitelist.</p>
+          </div>
+          <button class="button button-secondary" id="refresh-overview">↻ Refresh data</button>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card">
+            <div class="stat-top"><span class="stat-icon stat-icon-blue">⌘</span><span class="trend">All time</span></div>
+            <p>Total licenses</p>
+            <strong id="stat-total">—</strong>
+            <small><span id="stat-active-inline">—</span> currently active</small>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top"><span class="stat-icon stat-icon-green">✓</span><span class="trend trend-up">Live</span></div>
+            <p>Active keys</p>
+            <strong id="stat-active">—</strong>
+            <small>Ready to authenticate</small>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top"><span class="stat-icon stat-icon-violet">⌁</span><span class="trend">Locked</span></div>
+            <p>HWIDs bound</p>
+            <strong id="stat-hwid">—</strong>
+            <small>Device-linked licenses</small>
+          </article>
+          <article class="stat-card">
+            <div class="stat-top"><span class="stat-icon stat-icon-amber">◷</span><span class="trend trend-warn">7 days</span></div>
+            <p>Expiring soon</p>
+            <strong id="stat-expiring">—</strong>
+            <small>Need attention this week</small>
+          </article>
+        </div>
+
+        <div class="overview-grid">
+          <article class="panel status-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">License health</p><h2>Status overview</h2></div>
+              <button class="text-button" data-go-licenses>View all keys →</button>
+            </div>
+            <div class="health-summary">
+              <div class="health-score">
+                <div class="health-ring" id="health-ring">
+                  <span><strong id="health-percent">0%</strong><small>active</small></span>
+                </div>
+              </div>
+              <div class="health-breakdown">
+                <div class="breakdown-item">
+                  <span class="legend-dot legend-green"></span>
+                  <span><strong>Active</strong><small>Valid and available</small></span>
+                  <b id="health-active">0</b>
+                </div>
+                <div class="breakdown-item">
+                  <span class="legend-dot legend-amber"></span>
+                  <span><strong>Expired</strong><small>Past expiration</small></span>
+                  <b id="health-expired">0</b>
+                </div>
+                <div class="breakdown-item">
+                  <span class="legend-dot legend-red"></span>
+                  <span><strong>Revoked</strong><small>Manually disabled</small></span>
+                  <b id="health-revoked">0</b>
+                </div>
+              </div>
+            </div>
+            <div class="status-track" aria-label="License status distribution">
+              <span class="track-active" id="track-active"></span>
+              <span class="track-expired" id="track-expired"></span>
+              <span class="track-revoked" id="track-revoked"></span>
+            </div>
+          </article>
+
+          <article class="panel activity-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">Audit trail</p><h2>Recent activity</h2></div>
+              <span class="pulse-label"><span class="live-dot"></span> Live</span>
+            </div>
+            <div class="activity-list" id="activity-list">
+              <div class="empty-compact">No activity yet.</div>
+            </div>
+          </article>
+        </div>
+
+        <article class="panel table-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">Latest additions</p><h2>Recent licenses</h2></div>
+            <button class="button button-secondary button-small" data-open-create>＋ New key</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>License</th><th>Project</th><th>Status</th><th>HWID</th><th>Expires</th><th></th></tr></thead>
+              <tbody id="recent-license-rows"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="view" data-view-panel="licenses">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Access management</p>
+            <h1>License keys</h1>
+            <p>Issue, bind, extend, and revoke access from one place.</p>
+          </div>
+          <button class="button button-primary" data-open-create>＋ Create license</button>
+        </div>
+
+        <div class="toolbar">
+          <label class="search-field">
+            <span aria-hidden="true">⌕</span>
+            <input id="license-search" type="search" placeholder="Search label, key, or ID…">
+          </label>
+          <label class="select-field">
+            <span>Status</span>
+            <select id="status-filter">
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="expired">Expired</option>
+              <option value="revoked">Revoked</option>
+            </select>
+          </label>
+          <label class="select-field">
+            <span>Project</span>
+            <select id="project-filter"><option value="">All projects</option></select>
+          </label>
+          <span class="result-count" id="license-result-count">0 keys</span>
+        </div>
+
+        <article class="panel table-panel license-table-panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>License</th><th>Project</th><th>Status</th><th>HWID binding</th><th>Last used</th><th>Expiration</th><th></th></tr></thead>
+              <tbody id="license-rows"></tbody>
+            </table>
+          </div>
+          <div class="table-empty" id="license-empty" hidden>
+            <span class="empty-icon">⌘</span>
+            <h3>No keys found</h3>
+            <p>Try another filter or create a new license.</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="view" data-view-panel="loaders">
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Secure delivery</p>
+            <h1>Loadstring loaders</h1>
+            <p>Generate key-bound loaders that validate access before serving your build.</p>
+          </div>
+          <button class="button button-secondary" id="open-publish">↑ Publish release</button>
+        </div>
+
+        <div class="loader-grid">
+          <article class="panel generator-panel">
+            <div class="panel-heading">
+              <div><span class="step-number">1</span><h2>Configure loader</h2></div>
+            </div>
+            <div class="form-stack">
+              <label class="field">
+                <span>License key</span>
+                <select id="loader-license"><option value="">Select a license…</option></select>
+                <small>Only active, recoverable keys can generate loaders.</small>
+              </label>
+              <label class="field">
+                <span>Release</span>
+                <select id="loader-build"><option value="">Latest published release</option></select>
+              </label>
+              <label class="field">
+                <span>Public service URL</span>
+                <input id="loader-base-url" type="url" placeholder="https://keys.example.com">
+                <small>Use the public HTTPS origin that clients can reach.</small>
+              </label>
+              <button class="button button-primary button-full" id="generate-loader">Generate loader</button>
+            </div>
+          </article>
+
+          <article class="panel code-panel">
+            <div class="code-topbar">
+              <div class="code-tabs" role="tablist">
+                <button class="code-tab is-active" data-code-mode="one_liner">One line</button>
+                <button class="code-tab" data-code-mode="loader">Readable</button>
+              </div>
+              <button class="copy-button" id="copy-loader">Copy code</button>
+            </div>
+            <pre class="code-output" id="loader-code"><code><span class="code-comment">-- Choose a license and generate its loader.</span>
+<span class="code-comment">-- HWID collection is added automatically when enabled.</span></code></pre>
+            <div class="code-footer">
+              <span><span class="shield-dot">✓</span> Key validation</span>
+              <span><span class="shield-dot">✓</span> Expiration check</span>
+              <span><span class="shield-dot">✓</span> HWID lock</span>
+            </div>
+          </article>
+        </div>
+
+        <div class="loader-bottom-grid">
+          <article class="panel releases-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">Delivery targets</p><h2>Published releases</h2></div>
+              <button class="text-button" id="open-publish-secondary">Publish new →</button>
+            </div>
+            <div class="release-list" id="release-list"></div>
+          </article>
+          <article class="info-card">
+            <span class="info-icon">i</span>
+            <div>
+              <h3>How gated delivery works</h3>
+              <p>The loader sends its key and device ID to your server. Only a valid, unexpired, correctly bound key receives the published script.</p>
+              <ol>
+                <li>Publish an inline build or remote artifact.</li>
+                <li>Create a license with HWID locking enabled.</li>
+                <li>Copy the generated loadstring to your customer.</li>
+              </ol>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <section class="auth-screen" id="auth-screen">
+    <div class="auth-ambient auth-ambient-one"></div>
+    <div class="auth-ambient auth-ambient-two"></div>
+    <div class="auth-card">
+      <div class="auth-brand"><span class="brand-mark">O_</span><span><strong>Gate</strong><small>Whitelist control center</small></span></div>
+      <div class="auth-copy">
+        <p class="eyebrow">Administrator access</p>
+        <h1>Welcome back.</h1>
+        <p>Enter the token printed by <code>o-bfuscate-license serve</code>.</p>
+      </div>
+      <form id="auth-form">
+        <label class="field">
+          <span>Admin token</span>
+          <div class="password-field">
+            <input id="admin-token" type="password" autocomplete="current-password" placeholder="obfa_••••••••••••" required>
+            <button type="button" id="toggle-token" aria-label="Show token">Show</button>
+          </div>
+        </label>
+        <p class="form-error" id="auth-error" role="alert"></p>
+        <button class="button button-primary button-full" type="submit">Open dashboard →</button>
+      </form>
+      <p class="auth-footnote">The token is kept in this browser tab only.</p>
+    </div>
+  </section>
+
+  <div class="modal-backdrop" id="create-modal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="create-modal-title">
+      <header class="modal-header">
+        <div><p class="eyebrow">New access</p><h2 id="create-modal-title">Create license key</h2></div>
+        <button class="icon-button" data-close-modal aria-label="Close">×</button>
+      </header>
+      <form id="create-license-form">
+        <div class="modal-body">
+          <div class="form-grid">
+            <label class="field">
+              <span>Label</span>
+              <input id="create-label" maxlength="120" placeholder="Customer or order name">
+            </label>
+            <label class="field">
+              <span>Project</span>
+              <select id="create-project" required></select>
+            </label>
+          </div>
+          <label class="field">
+            <span>Expiration</span>
+            <div class="segmented" id="expiration-options">
+              <button type="button" data-expiration="7">7 days</button>
+              <button type="button" data-expiration="30" class="is-active">30 days</button>
+              <button type="button" data-expiration="90">90 days</button>
+              <button type="button" data-expiration="never">Lifetime</button>
+              <button type="button" data-expiration="custom">Custom</button>
+            </div>
+          </label>
+          <label class="field" id="custom-expiration-field" hidden>
+            <span>Expires at end of day</span>
+            <input id="custom-expiration" type="date">
+          </label>
+          <div class="toggle-card">
+            <span class="toggle-copy">
+              <strong>HWID lock on first use</strong>
+              <small>Require a device ID and bind this key to the first device.</small>
+            </span>
+            <label class="switch"><input id="create-hwid-lock" type="checkbox" checked><span></span></label>
+          </div>
+          <label class="field">
+            <span>Pre-bind HWID <em>Optional</em></span>
+            <input id="create-hwid" placeholder="Leave empty to bind on first use">
+          </label>
+          <label class="field">
+            <span>Internal note <em>Optional</em></span>
+            <textarea id="create-note" maxlength="1000" rows="3" placeholder="Visible only to administrators"></textarea>
+          </label>
+          <p class="form-error" id="create-error" role="alert"></p>
+          <div class="created-key" id="created-key-panel" hidden>
+            <span class="success-icon">✓</span>
+            <div>
+              <strong>License created</strong>
+              <p>Copy this key now or reveal it later from the license table.</p>
+              <div class="key-copy-row"><code id="created-key-value"></code><button type="button" id="copy-created-key">Copy</button></div>
+            </div>
+          </div>
+        </div>
+        <footer class="modal-footer">
+          <button type="button" class="button button-secondary" data-close-modal>Cancel</button>
+          <button type="submit" class="button button-primary" id="create-submit">Create license</button>
+        </footer>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="manage-modal" hidden>
+    <section class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="manage-title">
+      <header class="modal-header">
+        <div><p class="eyebrow">License controls</p><h2 id="manage-title">Manage license</h2></div>
+        <button class="icon-button" data-close-modal aria-label="Close">×</button>
+      </header>
+      <div class="modal-body" id="manage-body"></div>
+      <footer class="modal-footer modal-footer-between">
+        <button class="button button-danger-ghost" id="manage-revoke">Revoke license</button>
+        <button class="button button-secondary" data-close-modal>Done</button>
+      </footer>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" id="publish-modal" hidden>
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="publish-title">
+      <header class="modal-header">
+        <div><p class="eyebrow">Protected build</p><h2 id="publish-title">Publish release</h2></div>
+        <button class="icon-button" data-close-modal aria-label="Close">×</button>
+      </header>
+      <form id="publish-form">
+        <div class="modal-body">
+          <div class="form-grid">
+            <label class="field"><span>Project</span><select id="publish-project" required></select></label>
+            <label class="field"><span>Build ID</span><input id="publish-build" placeholder="v1.2.0" required></label>
+          </div>
+          <label class="field">
+            <span>Delivery type</span>
+            <div class="segmented two-up">
+              <button type="button" data-delivery="inline" class="is-active">Inline source</button>
+              <button type="button" data-delivery="remote">Remote URL</button>
+            </div>
+          </label>
+          <label class="field" id="inline-source-field">
+            <span>Obfuscated Luau source</span>
+            <textarea id="publish-source" rows="9" placeholder="Paste the protected script served after validation…"></textarea>
+          </label>
+          <label class="field" id="remote-url-field" hidden>
+            <span>Artifact URL</span>
+            <input id="publish-url" type="url" placeholder="https://cdn.example.com/build.luau">
+            <small>The service proxies this file so its URL is not exposed by the loader.</small>
+          </label>
+          <p class="form-error" id="publish-error" role="alert"></p>
+        </div>
+        <footer class="modal-footer">
+          <button type="button" class="button button-secondary" data-close-modal>Cancel</button>
+          <button type="submit" class="button button-primary">Publish release</button>
+        </footer>
+      </form>
+    </section>
+  </div>
+
+  <div class="toast-region" id="toast-region" aria-live="polite"></div>
+  <script src="/dashboard/app.js" defer></script>
+</body>
+</html>

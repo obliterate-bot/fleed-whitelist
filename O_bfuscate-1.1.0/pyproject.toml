@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=77", "wheel>=0.45"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "o-bfuscate"
+version = "1.1.0"
+description = "A deterministic, Luau-aware source protection CLI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "O_bfuscate contributors"}]
+keywords = ["luau", "lua", "obfuscator", "roblox", "minifier"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+o-bfuscate = "o_bfuscate.cli:main"
+o-bfuscate-license = "o_bfuscate.license_cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+o_bfuscate = ["macro_sdk.luau", "dashboard/*.html", "dashboard/*.css", "dashboard/*.js"]

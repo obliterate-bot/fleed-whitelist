@@ -1,0 +1,35 @@
+{
+  "admin_secret": "nUdVx3bhZjGIIOKeLAuXn7KlxoG-kEBCDRLQOkZEW_0",
+  "audit": [
+    {
+      "action": "project_saved",
+      "at": "2026-07-29T02:12:34Z",
+      "detail": null,
+      "license_id": null,
+      "project": "default"
+    }
+  ],
+  "created_at": "2026-07-29T02:12:34Z",
+  "licenses": {},
+  "projects": {
+    "default": {
+      "allow_unpublished_builds": false,
+      "created_at": "2026-07-29T02:12:34Z",
+      "enabled": true,
+      "latest_release": null,
+      "releases": {},
+      "secret": "pbheqwd3dkUEUFULbD5otn5_npzXM_kt-lAT6nEkrfU"
+    }
+  },
+  "schema": 2,
+  "service_secret": "NyrL3MM9dVweXM0-TEntYyg-4lNoTJLsqlPptzt_ZaU",
+  "stats": {
+    "denied_authorizations": 0,
+    "loader_requests": 0,
+    "successful_authorizations": 0
+  },
+  "telemetry": {
+    "enabled": false,
+    "events": {}
+  }
+}

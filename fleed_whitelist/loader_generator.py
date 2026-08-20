@@ -124,25 +124,43 @@ end
 local function isNative(fn)
     if not fn or _type(fn) ~= "function" then return false end
     
-    -- Check 1: islclosure check (instant detection of Lua function hooks)
+    -- Check 1: isfunctionhooked API (direct executor hook detection)
+    local is_hk = isfunctionhooked or is_function_hooked or ishooked
+    if is_hk then
+        local hk = false
+        local ok = _pcall(function() hk = is_hk(fn) end)
+        if ok and hk then return false end
+    end
+
+    -- Check 2: islclosure check (instant detection of pure Lua function hooks)
     if islclosure then
         local is_l = false
         local ok = _pcall(function() is_l = islclosure(fn) end)
-        if ok and is_l then
-            return false
-        end
+        if ok and is_l then return false end
     end
 
-    -- Check 2: iscclosure detection if supported
+    -- Check 3: iscclosure check
     if iscclosure then
         local is_c = true
         local ok = _pcall(function() is_c = iscclosure(fn) end)
-        if ok and not is_c then
-            return false
+        if ok and not is_c then return false end
+    end
+
+    -- Check 4: newcclosure detection via upvalue reflection
+    -- In Luau executors, newcclosure wraps a Lua function by storing the Lua function as upvalue #1
+    -- Genuine C builtins never have Lua functions in their upvalues
+    if getupvalues and not islclosure(fn) then
+        local ok, upvs = _pcall(getupvalues, fn)
+        if ok and _type(upvs) == "table" and #upvs > 0 then
+            for _, upv in pairs(upvs) do
+                if _type(upv) == "function" then
+                    return false
+                end
+            end
         end
     end
 
-    -- Check 3: Safe debug.info check (handling standard Luau debug.info signature)
+    -- Check 5: debug.info source inspection
     if debug and debug.info then
         local src = nil
         local ok = _pcall(function()

@@ -1,0 +1,5 @@
+include README.md CHANGELOG.md LICENSE MACROS.md
+recursive-include src/o_bfuscate *.py *.luau *.html *.css *.js
+recursive-include tests *.py
+recursive-include examples *.lua *.luau *.py
+recursive-include vendor/luau *

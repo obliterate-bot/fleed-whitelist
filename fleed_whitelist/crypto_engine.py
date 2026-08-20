@@ -124,15 +124,29 @@ class CryptoEngine:
         return hashlib.sha256(clean.encode()).hexdigest()
 
     @staticmethod
-    def create_handshake_challenge(script_id: int, license_key: str, client_challenge: str) -> Dict:
-        """Creates an ephemeral session challenge to defeat replay and MITM attacks."""
+    def derive_session_key(client_challenge: str, server_challenge: str, nonce: str, license_key: str, hwid: str) -> str:
+        """
+        Derives an ephemeral session key deterministically from the handshake parameters.
+        Neither client nor server needs to transmit the encryption key across the network.
+        """
+        seed = f"{client_challenge}:{server_challenge}:{nonce}:{license_key}:{hwid}"
+        return hashlib.sha256(seed.encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def create_handshake_challenge(script_id: int, license_key: str, client_challenge: str, hwid: str) -> Dict:
+        """Creates an ephemeral session challenge to defeat replay and MITM attacks with 12s window."""
         nonce = secrets.token_hex(16)
         server_challenge = secrets.token_hex(16)
-        expires_at = int(time.time()) + 30 # 30-second handshake window
+        expires_at = int(time.time()) + 12 # Tight 12-second handshake window
         
-        # Derive unique session encryption key
-        session_seed = f"{nonce}:{server_challenge}:{client_challenge}:{MASTER_SECRET}"
-        session_key = hashlib.sha256(session_seed.encode()).hexdigest()
+        # Derive unique session encryption key locally (never sent to client in verify response)
+        session_key = CryptoEngine.derive_session_key(
+            client_challenge=client_challenge,
+            server_challenge=server_challenge,
+            nonce=nonce,
+            license_key=license_key,
+            hwid=hwid
+        )
 
         return {
             "nonce": nonce,
@@ -150,8 +164,11 @@ class CryptoEngine:
         license_key: str,
         hwid: str,
         raw_hwid: Optional[str] = None
-    ) -> bool:
-        """Verifies that the executor client mathematically signed the challenge with HWID & Key."""
+    ) -> Tuple[bool, Optional[str]]:
+        """
+        Verifies that the executor client mathematically signed the challenge with HWID & Key.
+        Returns (is_valid, matching_hwid_representation).
+        """
         client_sig_clean = client_signature.strip().lower()
 
         # Candidates for HWID field in signature
@@ -167,7 +184,7 @@ class CryptoEngine:
             expected_raw = f"{client_challenge}:{server_challenge}:{nonce}:{license_key}:{cand}"
             expected_sig = hashlib.sha256(expected_raw.encode('utf-8')).hexdigest().lower()
             if hmac.compare_digest(expected_sig, client_sig_clean):
-                return True
+                return True, cand
 
             # FNV-1a 32-bit fallback for lightweight executors
             h = 0x811c9dc5
@@ -176,21 +193,21 @@ class CryptoEngine:
                 h = (h * 0x01000193) & 0xFFFFFFFF
             fnv_sig = f"{h:08x}".lower()
             if hmac.compare_digest(fnv_sig, client_sig_clean):
-                return True
+                return True, cand
 
-        return False
+        return False, None
 
     @staticmethod
     def encrypt_payload(source_code: str, session_key: str, nonce: str) -> Tuple[str, str]:
         """
-        Encrypts the script payload with dynamic multi-round RC4/ChaCha-style stream cipher
+        Encrypts the script payload with dynamic multi-round RC4/stream cipher
         with dynamic key rotation so it can be unpacked directly in-memory inside the client Luau VM.
+        Returns (base64_ciphertext, hmac_auth_tag).
         """
         key_bytes = (session_key + nonce).encode('utf-8')
         data_bytes = source_code.encode('utf-8')
         
         # Stream encryption suitable for zero-dependency execution inside Roblox Lua VM
-        # RC4-like KSA/PRGA dynamic stream cipher with dynamic S-box permutation
         S = list(range(256))
         j = 0
         for i in range(256):
@@ -211,3 +228,4 @@ class CryptoEngine:
         return encrypted_b64, auth_tag
 
 crypto_engine = CryptoEngine()
+

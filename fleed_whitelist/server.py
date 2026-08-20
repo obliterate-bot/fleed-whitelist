@@ -616,6 +616,21 @@ async def get_logs(limit: int = 50, user: Dict = Depends(get_current_user)):
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
+# ----------------- Rate Limiting & Anti-Brute Force Engine -----------------
+handshake_rate_limit: Dict[str, List[float]] = {}
+
+def check_rate_limit(key: str, max_requests: int = 30, window_sec: int = 60) -> bool:
+    """Sliding-window rate limiter. Returns True if allowed, False if exceeded."""
+    now = time.time()
+    timestamps = handshake_rate_limit.setdefault(key, [])
+    # Filter out entries older than window
+    timestamps = [t for t in timestamps if now - t < window_sec]
+    handshake_rate_limit[key] = timestamps
+    if len(timestamps) >= max_requests:
+        return False
+    timestamps.append(now)
+    return True
+
 # ----------------- Roblox Executor Loader & Handshake API -----------------
 @app.get("/v1/loader/{slug}", response_class=PlainTextResponse)
 async def serve_raw_loader(slug: str, request: Request):
@@ -637,9 +652,18 @@ async def serve_raw_loader(slug: str, request: Request):
 @app.post("/v1/handshake/init")
 async def handshake_init(req: HandshakeInitRequest, request: Request):
     """
-    Step 1 of Handshake: Validates key, HWID binding, and creates dynamic challenge.
+    Step 1 of Handshake: Validates key, HWID binding, applies rate limits, and creates dynamic challenge.
     """
     client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "127.0.0.1").split(",")[0].strip()
+    
+    # Apply Rate Limiting per IP and per Key
+    if not check_rate_limit(f"ip:{client_ip}", max_requests=40, window_sec=60):
+        return JSONResponse(status_code=429, content={"success": False, "message": "Too many requests. Please slow down."})
+
+    clean_key = str(req.key).strip().upper()
+    if not check_rate_limit(f"key:{clean_key}", max_requests=25, window_sec=60):
+        return JSONResponse(status_code=429, content={"success": False, "message": "Too many handshake attempts for this key."})
+
     norm_hwid = crypto_engine.normalize_hwid(req.hwid)
     now_iso = datetime.now(timezone.utc).isoformat()
     now_ts = int(time.time())
@@ -661,8 +685,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": f"KILLSWITCH ACTIVE: {reason}"})
 
-        # 2. Lookup License Key (Case-insensitive & clean)
-        clean_key = str(req.key).strip().upper()
+        # 2. Lookup License Key
         cursor = await conn.execute("SELECT * FROM licenses WHERE UPPER(license_key) = ? AND script_id = ?", (clean_key, script["id"]))
         license_row = await cursor.fetchone()
         if not license_row:
@@ -704,6 +727,7 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             await conn.execute("""
                 UPDATE licenses SET hwid = ?, ip_address = ? WHERE id = ?
             """, (norm_hwid, client_ip, license_row["id"]))
+            bound_hwid = norm_hwid
         elif license_row["hwid"] != norm_hwid:
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
@@ -711,9 +735,16 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
             """, (script["id"], license_row["id"], req.key, norm_hwid, client_ip, req.executor, req.roblox_username, req.roblox_user_id, req.place_id, req.job_id, req.game_name, now_iso))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "HWID Mismatch! Please reset your HWID via dashboard or Discord bot."})
+        else:
+            bound_hwid = license_row["hwid"]
 
-        # 3. Generate Handshake Challenge & Nonce
-        challenge = crypto_engine.create_handshake_challenge(script["id"], req.key, req.client_challenge)
+        # 3. Generate Handshake Challenge & Nonce with zero-transmission session key
+        challenge = crypto_engine.create_handshake_challenge(
+            script_id=script["id"],
+            license_key=req.key,
+            client_challenge=req.client_challenge,
+            hwid=req.hwid
+        )
         
         await conn.execute("""
             INSERT OR REPLACE INTO active_nonces (nonce, script_id, license_key, client_challenge, server_challenge, session_key, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, expires_at, created_at)
@@ -745,7 +776,8 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
 @app.post("/v1/handshake/verify")
 async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
     """
-    Step 2 of Handshake: Verifies HMAC signature of client and delivers encrypted payload.
+    Step 2 of Handshake: Verifies cryptographic HMAC signature of client and delivers encrypted payload.
+    The session decryption key is NEVER sent over the network.
     """
     client_ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "127.0.0.1").split(",")[0].strip()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -758,9 +790,11 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         if not nonce_row:
             return JSONResponse(status_code=400, content={"success": False, "message": "Invalid or expired session nonce"})
 
+        # Single-use: delete nonce immediately
+        await conn.execute("DELETE FROM active_nonces WHERE nonce = ?", (req.nonce,))
+        await conn.commit()
+
         if now_ts > nonce_row["expires_at"]:
-            await conn.execute("DELETE FROM active_nonces WHERE nonce = ?", (req.nonce,))
-            await conn.commit()
             return JSONResponse(status_code=400, content={"success": False, "message": "Session challenge expired"})
 
         # 2. Lookup License & Script
@@ -776,7 +810,7 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
 
         # 3. Verify Client Signature with bound HWID
         bound_hwid = row["hwid"]
-        is_valid_sig = crypto_engine.verify_client_signature(
+        is_valid_sig, matching_hwid = crypto_engine.verify_client_signature(
             client_signature=req.signature,
             client_challenge=req.client_challenge,
             server_challenge=nonce_row["server_challenge"],
@@ -798,14 +832,10 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
                 INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'TAMPER_DETECTED', 'Cryptographic signature mismatch / MITM attempt', ?)
             """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
-            await conn.execute("DELETE FROM active_nonces WHERE nonce = ?", (req.nonce,))
             await conn.commit()
             return JSONResponse(status_code=403, content={"success": False, "message": "Security Verification Failed: Tampered handshake"})
 
-        # 4. Consume Nonce (Single use protection)
-        await conn.execute("DELETE FROM active_nonces WHERE nonce = ?", (req.nonce,))
-
-        # 5. Increment Execution Count & Record Success
+        # 4. Increment Execution Count & Record Success
         await conn.execute("""
             UPDATE licenses SET execution_count = execution_count + 1, last_executed_at = ? WHERE id = ?
         """, (now_iso, row["id"]))
@@ -816,15 +846,23 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
         await conn.commit()
 
-        # 6. Encrypt Payload for in-memory VM unpacking
+        # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
         raw_code = row["raw_source"]
-        session_key = nonce_row["session_key"]
+        effective_hwid = matching_hwid or req.hwid or bound_hwid
+        session_key = crypto_engine.derive_session_key(
+            client_challenge=req.client_challenge,
+            server_challenge=nonce_row["server_challenge"],
+            nonce=req.nonce,
+            license_key=row["license_key"],
+            hwid=effective_hwid
+        )
         encrypted_payload, auth_tag = crypto_engine.encrypt_payload(raw_code, session_key, req.nonce)
 
+    # Note: session_key is NEVER returned to the client
     return {
         "success": True,
         "payload": encrypted_payload,
-        "session_key": session_key,
         "auth_tag": auth_tag,
         "is_obfuscated": bool(row["is_obfuscated_mode"])
     }
+

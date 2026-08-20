@@ -16,18 +16,28 @@
     <header class="navbar">
       <div class="brand-badge">
         <div class="brand-shield"><i class="fa-solid fa-shield-halved"></i></div>
-        <span>Fleed<span style="color:var(--gold-primary);">Guard</span> Console</span>
+        <div style="display:flex; flex-direction:column;">
+          <span style="line-height:1.1;">Fleed<span style="color:var(--gold-primary);">Guard</span></span>
+          <span style="font-size:11px; color:var(--text-zinc-500); font-weight:600; text-transform:uppercase; letter-spacing:1px;">Enterprise Security Console</span>
+        </div>
       </div>
 
       <div class="nav-links">
+        <div class="live-indicator">
+          <span class="live-pulse"></span>
+          <span style="font-size:12px; font-weight:600; color:var(--text-zinc-300);">Engine Online</span>
+        </div>
         <span id="2FAStatusBadge" class="badge badge-zinc">Checking 2FA...</span>
         <button id="btnSetup2FA" class="btn btn-secondary btn-sm" onclick="open2FAModal()" style="display: none;">
           <i class="fa-solid fa-lock"></i> Enable 2FA
         </button>
         <div style="height: 24px; width: 1px; background: var(--border-subtle); margin: 0 4px;"></div>
-        <span id="profileUsername" style="font-weight: 600; color: var(--text-white); font-size: 13px;">User</span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg, var(--gold-primary), var(--gold-dark)); color:var(--bg-deep); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:12px;" id="userInitial">U</div>
+          <span id="profileUsername" style="font-weight: 600; color: var(--text-white); font-size: 13px;">User</span>
+        </div>
         <button class="btn btn-danger btn-sm" onclick="handleLogout()">
-          <i class="fa-solid fa-right-from-bracket"></i> Logout
+          <i class="fa-solid fa-right-from-bracket"></i>
         </button>
       </div>
     </header>
@@ -35,64 +45,77 @@
     <!-- Navigation Tabs -->
     <nav class="tabs-nav">
       <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')"><i class="fa-solid fa-chart-line"></i> Overview & Metrics</button>
-      <button class="tab-btn" data-tab="scripts" onclick="switchTab('scripts')"><i class="fa-solid fa-code"></i> Script Hub</button>
-      <button class="tab-btn" data-tab="licenses" onclick="switchTab('licenses')"><i class="fa-solid fa-key"></i> License Keys</button>
+      <button class="tab-btn" data-tab="scripts" onclick="switchTab('scripts')"><i class="fa-solid fa-code"></i> Script Hubs & Loaders</button>
+      <button class="tab-btn" data-tab="licenses" onclick="switchTab('licenses')"><i class="fa-solid fa-key"></i> License Key Manager</button>
       <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')"><i class="fa-solid fa-shield"></i> Live Security Audit</button>
-      <button class="tab-btn" data-tab="bypasses" onclick="switchTab('bypasses')"><i class="fa-solid fa-triangle-exclamation" style="color:var(--danger-color);"></i> Bypass Attempts</button>
-      <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')"><i class="fa-solid fa-sliders"></i> 2FA & API Tokens</button>
+      <button class="tab-btn" data-tab="bypasses" onclick="switchTab('bypasses')"><i class="fa-solid fa-triangle-exclamation" style="color:var(--danger-color);"></i> Threat Intelligence</button>
+      <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')"><i class="fa-solid fa-sliders"></i> Security & API Tokens</button>
     </nav>
 
     <!-- VIEW 1: Overview & Metrics -->
     <main id="view-overview" class="tab-view">
       <div class="stats-grid">
         <div class="card stat-box">
-          <div class="stat-label">Managed Scripts</div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="stat-label">Managed Hubs</div>
+            <i class="fa-solid fa-code" style="color:var(--gold-primary); font-size:18px;"></i>
+          </div>
           <div id="statScripts" class="stat-value gold">0</div>
         </div>
         <div class="card stat-box">
-          <div class="stat-label">Active Licenses</div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="stat-label">Active Licenses</div>
+            <i class="fa-solid fa-key" style="color:var(--success-color); font-size:18px;"></i>
+          </div>
           <div id="statActiveLicenses" class="stat-value">0</div>
         </div>
         <div class="card stat-box">
-          <div class="stat-label">Total Handshakes</div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="stat-label">Total Executions</div>
+            <i class="fa-solid fa-bolt" style="color:var(--info-color); font-size:18px;"></i>
+          </div>
           <div id="statExecutions" class="stat-value">0</div>
         </div>
         <div class="card stat-box" style="border-color: rgba(239, 68, 68, 0.35);">
-          <div class="stat-label" style="color:var(--danger-color);">Blocked Bypass Attempts</div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div class="stat-label" style="color:var(--danger-color);">Blocked Attacks & Bypasses</div>
+            <i class="fa-solid fa-shield-virus" style="color:var(--danger-color); font-size:18px;"></i>
+          </div>
           <div id="statBlockedAttacks" class="stat-value" style="color:var(--danger-color);">0</div>
         </div>
       </div>
 
-      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px; margin-bottom:24px;">
         <div class="card">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
-            <h3 style="color:var(--text-white); font-size: 16px;"><i class="fa-solid fa-bolt" style="color:var(--gold-primary); margin-right:8px;"></i>Quick Actions</h3>
+            <h3 style="color:var(--text-white); font-size: 16px;"><i class="fa-solid fa-bolt" style="color:var(--gold-primary); margin-right:8px;"></i>Quick Hub Controls</h3>
           </div>
           <div style="display:flex; gap:12px; flex-wrap: wrap;">
             <button class="btn btn-primary" onclick="switchTab('scripts'); openCreateScriptModal();"><i class="fa-solid fa-plus"></i> New Script Hub</button>
             <button class="btn btn-secondary" onclick="switchTab('licenses'); openBulkGenModal();"><i class="fa-solid fa-key"></i> Bulk Generate Keys</button>
+            <button class="btn btn-secondary" onclick="switchTab('licenses'); openSingleGenModal();"><i class="fa-solid fa-plus-circle"></i> Add Custom Key</button>
             <button class="btn btn-secondary" onclick="switchTab('logs');"><i class="fa-solid fa-list-check"></i> View Live Audit</button>
             <button class="btn btn-danger" onclick="switchTab('bypasses');"><i class="fa-solid fa-shield-virus"></i> View Threat Feed</button>
           </div>
         </div>
 
         <div class="card">
-          <h3 style="color:var(--text-white); font-size: 16px; margin-bottom: 12px;"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:8px;"></i>Anti-Crack Engine Status</h3>
+          <h3 style="color:var(--text-white); font-size: 16px; margin-bottom: 12px;"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:8px;"></i>Security Armor Status</h3>
           <div style="font-size: 13px; display:flex; flex-direction:column; gap:8px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="color:var(--text-zinc-400);">HMAC Challenge-Response</span>
-              <span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> ACTIVE</span>
+              <span style="color:var(--text-zinc-400);">Key-Gated Loaders</span>
+              <span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> ACTIVE (403 Gate)</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="color:var(--text-zinc-400);">In-Memory VM Decryption</span>
-              <span class="badge badge-success"><i class="fa-solid fa-lock"></i> ARMORED</span>
+              <span style="color:var(--text-zinc-400);">O_bfuscate 1.1 VM</span>
+              <span class="badge badge-success"><i class="fa-solid fa-lock"></i> VIRTUALIZED</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="color:var(--text-zinc-400);">HWID Auto-Locking</span>
+              <span style="color:var(--text-zinc-400);">HWID Device Locking</span>
               <span class="badge badge-success"><i class="fa-solid fa-fingerprint"></i> ENABLED</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <span style="color:var(--text-zinc-400);">Anti-Hook Compiler Guard</span>
+              <span style="color:var(--text-zinc-400);">Anti-Hook Memory Sanitizer</span>
               <span class="badge badge-success"><i class="fa-solid fa-shield-cat"></i> ENGAGED</span>
             </div>
           </div>
@@ -102,9 +125,15 @@
 
     <!-- VIEW 2: Scripts Hub -->
     <section id="view-scripts" class="tab-view" style="display: none;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
-        <h2 style="color:var(--text-white); font-size: 20px;"><i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Script Hubs & Loaders</h2>
-        <button class="btn btn-primary" onclick="openCreateScriptModal()"><i class="fa-solid fa-plus"></i> Create Script</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; flex-wrap:wrap; gap:12px;">
+        <div>
+          <h2 style="color:var(--text-white); font-size: 20px;"><i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Script Hubs & Dynamic Loaders</h2>
+          <p style="color:var(--text-zinc-500); font-size: 13px;">Manage scripts, protection modes, killswitches, and copy key-gated execution loadstrings.</p>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <input type="text" id="searchScriptsInput" class="form-input" placeholder="Search scripts..." style="width:220px;" oninput="filterScriptsList(this.value)">
+          <button class="btn btn-primary" onclick="openCreateScriptModal()"><i class="fa-solid fa-plus"></i> Create Hub</button>
+        </div>
       </div>
 
       <div id="scriptsList">
@@ -114,14 +143,46 @@
 
     <!-- VIEW 3: Licenses Management -->
     <section id="view-licenses" class="tab-view" style="display: none;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; flex-wrap:wrap; gap:12px;">
-        <div style="display:flex; align-items:center; gap: 12px;">
-          <label class="form-label" style="margin:0;">Select Script:</label>
-          <select id="licenseScriptSelect" class="form-select" style="width: 250px;" onchange="loadLicensesForScript(this.value)">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; align-items:center; gap: 12px; flex-wrap:wrap;">
+          <label class="form-label" style="margin:0;">Select Hub:</label>
+          <select id="licenseScriptSelect" class="form-select" style="width: 220px;" onchange="loadLicensesForScript(this.value)">
             <!-- Injected via JavaScript -->
           </select>
+          <input type="text" id="searchLicenseInput" class="form-input" placeholder="Search key, user note, HWID..." style="width:240px;" oninput="filterLicensesTable(this.value)">
+          <select id="filterStatusSelect" class="form-select" style="width: 140px;" onchange="filterLicensesTable()">
+            <option value="all">All Statuses</option>
+            <option value="active">Active Only</option>
+            <option value="banned">Banned Only</option>
+            <option value="bound">Bound HWID</option>
+            <option value="unbound">Unbound</option>
+          </select>
         </div>
-        <button class="btn btn-primary" onclick="openBulkGenModal()"><i class="fa-solid fa-plus"></i> Generate Keys</button>
+        <div style="display:flex; gap:8px;">
+          <div class="dropdown">
+            <button class="btn btn-secondary"><i class="fa-solid fa-download"></i> Export <i class="fa-solid fa-chevron-down" style="font-size:10px; margin-left:4px;"></i></button>
+            <div class="dropdown-menu">
+              <button class="dropdown-item" onclick="exportKeys('txt')"><i class="fa-solid fa-file-lines"></i> Export as TXT (Keys Only)</button>
+              <button class="dropdown-item" onclick="exportKeys('json')"><i class="fa-solid fa-file-code"></i> Export as JSON</button>
+              <button class="dropdown-item" onclick="exportKeys('csv')"><i class="fa-solid fa-file-csv"></i> Export as CSV</button>
+              <button class="dropdown-item" onclick="copyAllKeys()"><i class="fa-solid fa-copy"></i> Copy All to Clipboard</button>
+            </div>
+          </div>
+          <button class="btn btn-secondary" onclick="openSingleGenModal()"><i class="fa-solid fa-plus"></i> Single Key</button>
+          <button class="btn btn-primary" onclick="openBulkGenModal()"><i class="fa-solid fa-layer-group"></i> Bulk Generate</button>
+        </div>
+      </div>
+
+      <!-- Floating Bulk Action Bar -->
+      <div id="bulkActionBar" class="bulk-action-bar" style="display:none;">
+        <span id="bulkSelectedCount" style="font-weight:600; color:var(--text-white);">0 keys selected</span>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="bulkAction('copy')"><i class="fa-solid fa-copy"></i> Copy Selected</button>
+          <button class="btn btn-secondary btn-sm" onclick="bulkAction('resethwid')"><i class="fa-solid fa-arrows-rotate"></i> Reset HWID</button>
+          <button class="btn btn-secondary btn-sm" onclick="bulkAction('ban')"><i class="fa-solid fa-ban"></i> Ban</button>
+          <button class="btn btn-secondary btn-sm" onclick="bulkAction('unban')"><i class="fa-solid fa-unlock"></i> Unban</button>
+          <button class="btn btn-danger btn-sm" onclick="bulkAction('delete')"><i class="fa-solid fa-trash"></i> Delete</button>
+        </div>
       </div>
 
       <div class="card" style="padding: 0; overflow: hidden;">
@@ -129,9 +190,10 @@
           <table>
             <thead>
               <tr>
+                <th style="width:40px;"><input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(this.checked)"></th>
                 <th>License Key</th>
-                <th>Note / User</th>
-                <th>Bound HWID</th>
+                <th>Buyer / Note</th>
+                <th>Bound Device HWID</th>
                 <th>Executions</th>
                 <th>Expires</th>
                 <th>Status</th>
@@ -148,12 +210,26 @@
 
     <!-- VIEW 4: Live Security Audit Logs -->
     <section id="view-logs" class="tab-view" style="display: none;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; flex-wrap:wrap; gap:12px;">
         <div>
           <h2 style="color:var(--text-white); font-size: 20px;"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:8px;"></i>Live Security Audit Stream</h2>
-          <p style="color:var(--text-zinc-500); font-size: 13px;">Real-time incoming execution handshakes, HWID validations, and tamper events.</p>
+          <p style="color:var(--text-zinc-500); font-size: 13px;">Real-time execution handshakes, HWID verifications, and tamper telemetry.</p>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="loadLiveLogs()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Now</button>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <input type="text" id="searchLogsInput" class="form-input" placeholder="Search player, key, IP, game..." style="width:220px;" oninput="filterLogsTable(this.value)">
+          <select id="logStatusFilter" class="form-select" style="width:150px;" onchange="loadLiveLogs()">
+            <option value="">All Events</option>
+            <option value="SUCCESS">Successes Only</option>
+            <option value="blocked">Threats & Blocks</option>
+            <option value="HWID_MISMATCH">HWID Mismatch</option>
+            <option value="TAMPER_DETECTED">Tamper Detected</option>
+            <option value="INVALID_KEY">Invalid Key</option>
+          </select>
+          <button id="toggleAutoRefreshBtn" class="btn btn-secondary btn-sm" onclick="toggleAutoRefresh()">
+            <i class="fa-solid fa-pause"></i> Auto-Refresh: <span id="autoRefreshState">ON</span>
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="loadLiveLogs()"><i class="fa-solid fa-arrows-rotate"></i></button>
+        </div>
       </div>
 
       <div class="card" style="padding: 0; overflow: hidden;">
@@ -162,13 +238,14 @@
             <thead>
               <tr>
                 <th>Time</th>
-                <th>Script</th>
+                <th>Hub</th>
                 <th>Roblox Player</th>
-                <th>Game / Place</th>
+                <th>Game / Experience</th>
                 <th>License Key</th>
                 <th>Status</th>
-                <th>Executor & Details</th>
+                <th>Executor & Trace</th>
                 <th>HWID / IP</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="logsTableBody">
@@ -181,10 +258,10 @@
 
     <!-- VIEW 4.5: Bypass Attempts Dedicated Threat Audit -->
     <section id="view-bypasses" class="tab-view" style="display: none;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; flex-wrap:wrap; gap:12px;">
         <div>
           <h2 style="color:var(--danger-color); font-size: 20px;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:8px;"></i>Blocked Bypass Attempts & Threat Feed</h2>
-          <p style="color:var(--text-zinc-500); font-size: 13px;">Intercepted tamper signatures, hooked compiler attempts, HWID mismatches, and replay attacks.</p>
+          <p style="color:var(--text-zinc-500); font-size: 13px;">Intercepted tamper signatures, scraper bots, compiler hooks, and memory extractors.</p>
         </div>
         <button class="btn btn-danger btn-sm" onclick="loadBypassLogs()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Threats</button>
       </div>
@@ -195,11 +272,11 @@
             <thead>
               <tr>
                 <th>Time</th>
-                <th>Threat Type</th>
+                <th>Threat Signature</th>
                 <th>Roblox Player</th>
-                <th>Game / Place</th>
+                <th>Target Game</th>
                 <th>Attempted Key</th>
-                <th>Attack Details</th>
+                <th>Security Defense Trigger</th>
                 <th>Attacker HWID & IP</th>
               </tr>
             </thead>
@@ -211,15 +288,14 @@
       </div>
     </section>
 
-
-    <!-- VIEW 5: 2FA & API Settings -->
+    <!-- VIEW 5: Security Settings & API -->
     <section id="view-settings" class="tab-view" style="display: none;">
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 24px;">
         <!-- Profile & 2FA Card -->
         <div class="card">
-          <h3 style="color:var(--text-white); font-size: 18px; margin-bottom: 16px;">Two-Factor Authentication (2FA)</h3>
+          <h3 style="color:var(--text-white); font-size: 18px; margin-bottom: 16px;"><i class="fa-solid fa-user-shield" style="color:var(--gold-primary); margin-right:8px;"></i>Two-Factor Authentication (2FA)</h3>
           <p style="color:var(--text-zinc-400); font-size: 13px; margin-bottom: 20px;">
-            Secure your developer dashboard with TOTP (Google Authenticator, Authy) and emergency backup recovery codes.
+            Enforce TOTP multi-factor authentication (Google Authenticator, Authy) to secure your hub administration and key generator.
           </p>
           <div style="background:var(--bg-input); padding: 16px; border-radius: 10px; border: 1px solid var(--border-subtle); margin-bottom: 20px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -238,16 +314,17 @@
 
         <!-- API Key & Developer Integration -->
         <div class="card">
-          <h3 style="color:var(--text-white); font-size: 18px; margin-bottom: 16px;">Developer REST API Token</h3>
+          <h3 style="color:var(--text-white); font-size: 18px; margin-bottom: 16px;"><i class="fa-solid fa-key" style="color:var(--gold-primary); margin-right:8px;"></i>Developer REST API Token</h3>
           <p style="color:var(--text-zinc-400); font-size: 13px; margin-bottom: 20px;">
-            Use this master API key to automate key generation, HWID resets, and Discord bot integration via <code>X-API-Key</code>.
+            Authenticate Discord bots, Sellix/Shoppy automations, or custom websites using the <code>X-API-Key</code> header.
           </p>
           <div class="form-group">
-            <label class="form-label">Master API Token</label>
+            <label class="form-label">Master API Key</label>
             <div style="display:flex; gap:8px;">
-              <input type="text" id="profileApiKey" class="form-input" readonly style="font-family:var(--font-mono); font-size:12px;" placeholder="Generating API key...">
-              <button class="btn btn-secondary" onclick="copyText(document.getElementById('profileApiKey').value)">Copy</button>
-              <button class="btn btn-secondary" onclick="regenerateApiKey()">Regenerate</button>
+              <input type="password" id="profileApiKey" class="form-input" readonly style="font-family:var(--font-mono); font-size:12px;" placeholder="API Key">
+              <button class="btn btn-secondary" onclick="toggleApiKeyVisibility()"><i id="apiKeyEyeIcon" class="fa-solid fa-eye"></i></button>
+              <button class="btn btn-secondary" onclick="copyText(document.getElementById('profileApiKey').value)"><i class="fa-solid fa-copy"></i></button>
+              <button class="btn btn-secondary" onclick="regenerateApiKey()"><i class="fa-solid fa-arrows-rotate"></i></button>
             </div>
           </div>
         </div>
@@ -284,9 +361,9 @@
 
   <!-- MODAL 2: Create / Edit Script -->
   <div id="modalScript" class="modal-overlay">
-    <div class="modal-content" style="max-width: 720px;">
+    <div class="modal-content" style="max-width: 760px;">
       <div class="modal-header">
-        <h3 id="scriptModalTitle" class="modal-title"><i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Create New Script</h3>
+        <h3 id="scriptModalTitle" class="modal-title"><i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Create Script Hub</h3>
         <button class="modal-close" onclick="closeModal('modalScript')">&times;</button>
       </div>
 
@@ -294,11 +371,11 @@
         <input type="hidden" id="scriptEditId">
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 16px;">
           <div class="form-group">
-            <label class="form-label">Script Name</label>
+            <label class="form-label">Hub Name</label>
             <input type="text" id="scriptName" class="form-input" placeholder="Hoopz Aim & Auto-Shoot" required>
           </div>
           <div class="form-group">
-            <label class="form-label">Unique Slug (URL identifier)</label>
+            <label class="form-label">Unique Slug (URL Identifier)</label>
             <input type="text" id="scriptSlug" class="form-input" placeholder="hoopz_hub_v1" required>
           </div>
         </div>
@@ -309,9 +386,9 @@
             <input type="text" id="scriptVersion" class="form-input" value="1.0.0">
           </div>
           <div class="form-group">
-            <label class="form-label">Protection Mode</label>
+            <label class="form-label">Protection & Virtualization Mode</label>
             <select id="scriptMode" class="form-select">
-              <option value="2">O_bfuscate 1.1 (Hybrid VM, Dense Register Optimization & Vault)</option>
+              <option value="2">O_bfuscate 1.1 (Hybrid VM, Dense Register Optimization & Vaults)</option>
               <option value="1">FleedGuard Stream Armor (Anti-Dump & Encrypted Handshake)</option>
               <option value="0">Unobfuscated Mode (Raw Script + Server Whitelist)</option>
             </select>
@@ -319,8 +396,16 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Lua / Luau Source Code</label>
-          <textarea id="scriptSource" class="form-textarea" placeholder="-- Enter your raw Lua script here..." style="min-height: 220px;" required></textarea>
+          <label class="form-label">Discord Security Webhook (Optional - Alerts on executions/tampering)</label>
+          <input type="url" id="scriptWebhook" class="form-input" placeholder="https://discord.com/api/webhooks/...">
+        </div>
+
+        <div class="form-group">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <label class="form-label" style="margin:0;">Lua / Luau Source Code</label>
+            <span id="scriptSizeCounter" style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">0 bytes</span>
+          </div>
+          <textarea id="scriptSource" class="form-textarea" placeholder="-- Enter your raw Lua script here..." style="min-height: 220px; font-family:var(--font-mono); font-size:13px;" oninput="updateScriptSizeCounter()" required></textarea>
         </div>
 
         <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-cloud-arrow-up"></i> Save & Deploy to FleedGuard</button>
@@ -332,7 +417,7 @@
   <div id="modalBulkGen" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <h3 class="modal-title"><i class="fa-solid fa-key" style="color:var(--gold-primary); margin-right:8px;"></i>Generate License Keys</h3>
+        <h3 class="modal-title"><i class="fa-solid fa-layer-group" style="color:var(--gold-primary); margin-right:8px;"></i>Bulk Generate License Keys</h3>
         <button class="modal-close" onclick="closeModal('modalBulkGen')">&times;</button>
       </div>
 
@@ -349,6 +434,8 @@
             <option value="1">24 Hours (1 Day)</option>
             <option value="7">7 Days (1 Week)</option>
             <option value="30">30 Days (1 Month)</option>
+            <option value="90">90 Days (3 Months)</option>
+            <option value="365">365 Days (1 Year)</option>
           </select>
         </div>
 
@@ -364,6 +451,71 @@
 
         <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-plus"></i> Generate Keys Now</button>
       </form>
+    </div>
+  </div>
+
+  <!-- MODAL 4: Single Custom License Key -->
+  <div id="modalSingleGen" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-key" style="color:var(--gold-primary); margin-right:8px;"></i>Create Custom License Key</h3>
+        <button class="modal-close" onclick="closeModal('modalSingleGen')">&times;</button>
+      </div>
+
+      <form onsubmit="handleSingleGenerate(event)">
+        <div class="form-group">
+          <label class="form-label">Custom Key String</label>
+          <input type="text" id="singleKeyString" class="form-input" placeholder="FLEED-CUSTOM-VIP-KEY" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Buyer Note / Discord ID</label>
+          <input type="text" id="singleKeyNote" class="form-input" placeholder="Discord User @obliterate">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Duration</label>
+          <select id="singleKeyDuration" class="form-select">
+            <option value="0">Lifetime</option>
+            <option value="1">24 Hours</option>
+            <option value="7">7 Days</option>
+            <option value="30">30 Days</option>
+            <option value="365">365 Days</option>
+          </select>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-plus"></i> Create License Key</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL 5: Loadstring Generator & Formatter -->
+  <div id="modalLoadstring" class="modal-overlay">
+    <div class="modal-content" style="max-width: 650px;">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-terminal" style="color:var(--gold-primary); margin-right:8px;"></i>Key-Gated Loadstring Generator</h3>
+        <button class="modal-close" onclick="closeModal('modalLoadstring')">&times;</button>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <label class="form-label">Select Loadstring Style:</label>
+        <select id="loadstringStyleSelect" class="form-select" onchange="renderModalLoadstring()">
+          <option value="standard">Standard Buyer Template (getgenv().FleedKey)</option>
+          <option value="direct">Direct URL with Embedded Key (?key=KEY)</option>
+          <option value="inline">One-Liner Loadstring</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">License Key to Bind:</label>
+        <input type="text" id="loadstringKeyInput" class="form-input" placeholder="FLEED-XXXX-XXXX-XXXX" oninput="renderModalLoadstring()">
+      </div>
+
+      <div style="background:var(--bg-input); padding: 14px; border-radius: 8px; border: 1px solid var(--border-subtle); margin-bottom: 16px;">
+        <pre id="modalLoadstringCode" style="font-family:var(--font-mono); font-size:12px; color:var(--gold-light); white-space:pre-wrap; word-break:break-all; margin:0;"></pre>
+      </div>
+
+      <button class="btn btn-primary" style="width:100%; padding:12px;" onclick="copyModalLoadstring()"><i class="fa-solid fa-copy"></i> Copy to Clipboard</button>
     </div>
   </div>
 

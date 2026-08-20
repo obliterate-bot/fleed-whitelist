@@ -1,6 +1,6 @@
 /**
- * FleedGuard Client Dashboard Engine
- * Handles full auth, 2FA, scripts, licenses, and live audit stream.
+ * FleedGuard Enterprise Client Dashboard Engine
+ * Advanced Whitelist Management, Anti-Dump DRM, Real-Time Telemetry & QoL Automation
  */
 
 const API_BASE = "";
@@ -9,18 +9,23 @@ const API_BASE = "";
 let currentUser = null;
 let currentScripts = [];
 let currentLicenses = [];
+let currentLogs = [];
+let currentBypasses = [];
 let selectedScriptId = null;
+let selectedLicenseIds = new Set();
 let liveLogInterval = null;
+let isAutoRefreshOn = true;
+let modalSelectedScript = null;
 
-// Toast Utility
+// Toast Notification Utility
 function showToast(message, type = "success") {
   const container = document.getElementById("toastContainer");
   if (!container) return;
   const toast = document.createElement("div");
   toast.className = `toast toast-${type}`;
-  let icon = '<i class="fa-solid fa-circle-check"></i>';
-  if (type === 'error') icon = '<i class="fa-solid fa-triangle-exclamation"></i>';
-  if (type === 'info') icon = '<i class="fa-solid fa-circle-info"></i>';
+  let icon = '<i class="fa-solid fa-circle-check" style="color:var(--success-color);"></i>';
+  if (type === 'error') icon = '<i class="fa-solid fa-triangle-exclamation" style="color:var(--danger-color);"></i>';
+  if (type === 'info') icon = '<i class="fa-solid fa-circle-info" style="color:var(--info-color);"></i>';
   toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
   container.appendChild(toast);
   setTimeout(() => {
@@ -31,6 +36,7 @@ function showToast(message, type = "success") {
 
 // Copy to Clipboard Utility
 function copyText(text, label = "Copied to clipboard!") {
+  if (!text) return;
   navigator.clipboard.writeText(text).then(() => {
     showToast(label, "success");
   }).catch(() => {
@@ -38,7 +44,7 @@ function copyText(text, label = "Copied to clipboard!") {
   });
 }
 
-// API Helper
+// API Fetch Helper
 async function apiCall(endpoint, method = "GET", body = null) {
   const headers = { "Content-Type": "application/json" };
   const token = localStorage.getItem("fleed_token");
@@ -60,7 +66,7 @@ async function apiCall(endpoint, method = "GET", body = null) {
   }
 }
 
-// ----------------- Auth Functions -----------------
+// ----------------- Auth & Profile -----------------
 async function checkAuth() {
   try {
     const user = await apiCall("/api/auth/me");
@@ -188,7 +194,12 @@ async function loadOverviewStats() {
 async function loadProfileStats() {
   if (!currentUser) return;
   const uEl = document.getElementById("profileUsername");
-  if (uEl) uEl.innerText = currentUser.username || "—";
+  if (uEl) uEl.innerText = currentUser.username || "Developer";
+
+  const initEl = document.getElementById("userInitial");
+  if (initEl && currentUser.username) {
+    initEl.innerText = currentUser.username.charAt(0).toUpperCase();
+  }
 
   const eEl = document.getElementById("profileEmail");
   if (eEl) eEl.innerText = currentUser.email || "—";
@@ -200,20 +211,33 @@ async function loadProfileStats() {
   if (statusBadge) {
     if (currentUser.two_factor_enabled) {
       statusBadge.className = "badge badge-success";
-      statusBadge.innerText = "Enabled";
+      statusBadge.innerHTML = '<i class="fa-solid fa-shield-check"></i> 2FA Enabled';
       const btn = document.getElementById("btnSetup2FA");
       if (btn) btn.style.display = "none";
     } else {
       statusBadge.className = "badge badge-danger";
-      statusBadge.innerText = "Disabled";
+      statusBadge.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> 2FA Disabled';
       const btn = document.getElementById("btnSetup2FA");
       if (btn) btn.style.display = "inline-flex";
     }
   }
 }
 
+function toggleApiKeyVisibility() {
+  const input = document.getElementById("profileApiKey");
+  const icon = document.getElementById("apiKeyEyeIcon");
+  if (!input || !icon) return;
+  if (input.type === "password") {
+    input.type = "text";
+    icon.className = "fa-solid fa-eye-slash";
+  } else {
+    input.type = "password";
+    icon.className = "fa-solid fa-eye";
+  }
+}
+
 async function regenerateApiKey() {
-  if (!confirm("Are you sure you want to regenerate your Master API key? Any existing bots using the old key will need to be re-linked.")) return;
+  if (!confirm("Are you sure you want to regenerate your Master API key? Any bots using the old key will need to be re-linked.")) return;
   try {
     const res = await apiCall("/api/auth/regenerate_api_key", "POST");
     if (res.api_key) {
@@ -225,74 +249,113 @@ async function regenerateApiKey() {
   } catch (err) {}
 }
 
-// ----------------- Scripts Management -----------------
+// ----------------- Scripts Hub Management -----------------
 async function loadScripts() {
   try {
     const scripts = await apiCall("/api/scripts");
     currentScripts = scripts;
-    const listEl = document.getElementById("scriptsList");
-    if (!listEl) return;
-
-    if (scripts.length === 0) {
-      listEl.innerHTML = `<div class="card" style="text-align:center; padding: 40px;">
-        <p style="color:var(--text-zinc-400); margin-bottom: 16px;">No scripts created yet.</p>
-        <button class="btn btn-primary" onclick="openCreateScriptModal()">+ Create Your First Script</button>
-      </div>`;
-      return;
-    }
-
-    const currentOrigin = window.location.origin;
-    listEl.innerHTML = scripts.map(s => {
-      let modeBadge = '<span class="badge badge-zinc"><i class="fa-solid fa-file-code"></i> Unobfuscated</span>';
-      if (s.is_obfuscated_mode === 2) {
-        modeBadge = '<span class="badge badge-gold" style="background:rgba(250,204,21,0.18); border-color:var(--border-gold);"><i class="fa-solid fa-shield-halved"></i> O_bfuscate 1.1 VM</span>';
-      } else if (s.is_obfuscated_mode === 1) {
-        modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-lock"></i> Stream Encrypted</span>';
-      }
-
-      return `
-        <div class="card" style="margin-bottom: 16px;">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 12px;">
-            <div>
-              <h3 style="color:var(--text-white); font-size:18px; margin-bottom:4px;">${escapeHtml(s.name)} 
-                ${modeBadge}
-                ${s.killswitch_active ? '<span class="badge badge-danger"><i class="fa-solid fa-bolt"></i> KILLSWITCH ACTIVE</span>' : ''}
-              </h3>
-              <p style="color:var(--text-zinc-400); font-size:13px;">Slug: <code>${s.slug}</code> | Version: v${s.version} | Licenses: ${s.active_licenses || 0}</p>
-            </div>
-            <div style="display:flex; gap:8px;">
-              <button class="btn btn-secondary btn-sm" onclick="openEditScriptModal(${s.id})"><i class="fa-solid fa-pen-to-square"></i> Edit Source</button>
-              <button class="btn ${s.killswitch_active ? 'btn-primary' : 'btn-danger'} btn-sm" onclick="toggleKillswitch(${s.id}, ${s.killswitch_active})">
-                <i class="fa-solid fa-bolt"></i> ${s.killswitch_active ? 'Disable Killswitch' : 'Trigger Killswitch'}
-              </button>
-              <button class="btn btn-danger btn-sm" onclick="deleteScript(${s.id})"><i class="fa-solid fa-trash"></i></button>
-            </div>
-          </div>
-
-          <div style="background:var(--bg-input); padding: 12px; border-radius: 8px; border: 1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center;">
-            <code style="font-family:var(--font-mono); font-size:12px; color:var(--gold-light);">
-              loadstring(game:HttpGet("${currentOrigin}/v1/loader/${s.slug}"))()
-            </code>
-            <button class="btn btn-secondary btn-sm" onclick="copyText('loadstring(game:HttpGet(&quot;${currentOrigin}/v1/loader/${s.slug}&quot;))()', 'Loadstring copied!')">
-              <i class="fa-solid fa-copy"></i> Copy Loadstring
-            </button>
-          </div>
-        </div>
-      `;
-    }).join("");
-
-
+    renderScripts(scripts);
   } catch (err) {}
 }
 
+function renderScripts(scripts) {
+  const listEl = document.getElementById("scriptsList");
+  if (!listEl) return;
+
+  if (scripts.length === 0) {
+    listEl.innerHTML = `<div class="card" style="text-align:center; padding: 40px;">
+      <p style="color:var(--text-zinc-400); margin-bottom: 16px;">No script hubs created yet.</p>
+      <button class="btn btn-primary" onclick="openCreateScriptModal()">+ Create Your First Hub</button>
+    </div>`;
+    return;
+  }
+
+  const currentOrigin = window.location.origin;
+  listEl.innerHTML = scripts.map(s => {
+    let modeBadge = '<span class="badge badge-zinc"><i class="fa-solid fa-file-code"></i> Unobfuscated</span>';
+    if (s.is_obfuscated_mode === 2) {
+      modeBadge = '<span class="badge badge-gold" style="background:rgba(250,204,21,0.18); border-color:var(--border-gold);"><i class="fa-solid fa-shield-halved"></i> O_bfuscate 1.1 VM</span>';
+    } else if (s.is_obfuscated_mode === 1) {
+      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-lock"></i> Stream Encrypted</span>';
+    }
+
+    const keyGatedLoadstring = `getgenv().FleedKey = "YOUR_KEY"\nloadstring(game:HttpGet("${currentOrigin}/v1/loader/${s.slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;
+    const cleanLoadstringOneLiner = `loadstring(game:HttpGet("${currentOrigin}/v1/loader/${s.slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;
+
+    return `
+      <div class="card" style="margin-bottom: 16px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom: 14px; flex-wrap:wrap; gap:10px;">
+          <div>
+            <h3 style="color:var(--text-white); font-size:18px; margin-bottom:4px; display:flex; align-items:center; gap:8px;">
+              ${escapeHtml(s.name)} 
+              ${modeBadge}
+              ${s.killswitch_active ? '<span class="badge badge-danger"><i class="fa-solid fa-bolt"></i> KILLSWITCH ACTIVE</span>' : '<span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> LIVE</span>'}
+            </h3>
+            <p style="color:var(--text-zinc-400); font-size:13px;">
+              Slug: <code style="color:var(--gold-light);">${s.slug}</code> | Version: v${s.version} | Bound Licenses: ${s.active_licenses || 0}
+            </p>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="openLoadstringModal('${s.slug}', '${escapeHtml(s.name)}')"><i class="fa-solid fa-terminal"></i> Get Loadstrings</button>
+            <button class="btn btn-secondary btn-sm" onclick="openEditScriptModal(${s.id})"><i class="fa-solid fa-pen-to-square"></i> Edit Source</button>
+            <button class="btn ${s.killswitch_active ? 'btn-primary' : 'btn-danger'} btn-sm" onclick="toggleKillswitch(${s.id}, ${s.killswitch_active})">
+              <i class="fa-solid fa-bolt"></i> ${s.killswitch_active ? 'Disable Killswitch' : 'Trigger Killswitch'}
+            </button>
+            <button class="btn btn-danger btn-sm" onclick="deleteScript(${s.id})"><i class="fa-solid fa-trash"></i></button>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-input); padding: 12px 16px; border-radius: 10px; border: 1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+          <div style="overflow:hidden; text-overflow:ellipsis;">
+            <span style="font-size:11px; color:var(--text-zinc-500); display:block; margin-bottom:2px; font-weight:600; text-transform:uppercase;">Key-Gated Execution Loadstring:</span>
+            <code style="font-family:var(--font-mono); font-size:12px; color:var(--gold-light); word-break:break-all;">
+              ${cleanLoadstringOneLiner}
+            </code>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-secondary btn-sm" onclick="copyText('${keyGatedLoadstring.replace(/'/g, "\\'")}', 'Standard loadstring template copied!')">
+              <i class="fa-solid fa-copy"></i> Copy Template
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function filterScriptsList(query) {
+  const q = (query || "").toLowerCase().trim();
+  const filtered = currentScripts.filter(s => 
+    s.name.toLowerCase().includes(q) || s.slug.toLowerCase().includes(q)
+  );
+  renderScripts(filtered);
+}
+
+function updateScriptSizeCounter() {
+  const text = document.getElementById("scriptSource")?.value || "";
+  const bytes = new Blob([text]).size;
+  const counter = document.getElementById("scriptSizeCounter");
+  if (counter) {
+    if (bytes > 1024 * 1024) {
+      counter.innerText = (bytes / (1024 * 1024)).toFixed(2) + " MB";
+    } else if (bytes > 1024) {
+      counter.innerText = (bytes / 1024).toFixed(1) + " KB";
+    } else {
+      counter.innerText = bytes + " bytes";
+    }
+  }
+}
+
 function openCreateScriptModal() {
-  document.getElementById("scriptModalTitle").innerHTML = '<i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Create New Script';
+  document.getElementById("scriptModalTitle").innerHTML = '<i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Create Script Hub';
   document.getElementById("scriptEditId").value = "";
   document.getElementById("scriptName").value = "";
   document.getElementById("scriptSlug").value = "";
   document.getElementById("scriptVersion").value = "1.0.0";
   document.getElementById("scriptSource").value = "-- Paste your Lua / Luau script here\nprint(\"Hello from FleedGuard Protected Script!\")\n";
-  document.getElementById("scriptMode").value = "1";
+  document.getElementById("scriptMode").value = "2";
+  document.getElementById("scriptWebhook").value = "";
+  updateScriptSizeCounter();
   document.getElementById("modalScript").classList.add("active");
 }
 
@@ -300,13 +363,15 @@ async function openEditScriptModal(id) {
   const script = currentScripts.find(s => s.id === id);
   if (!script) return;
 
-  document.getElementById("scriptModalTitle").innerHTML = `<i class="fa-solid fa-pen-to-square" style="color:var(--gold-primary); margin-right:8px;"></i>Edit Script: ${escapeHtml(script.name)}`;
+  document.getElementById("scriptModalTitle").innerHTML = `<i class="fa-solid fa-pen-to-square" style="color:var(--gold-primary); margin-right:8px;"></i>Edit Hub: ${escapeHtml(script.name)}`;
   document.getElementById("scriptEditId").value = script.id;
   document.getElementById("scriptName").value = script.name;
   document.getElementById("scriptSlug").value = script.slug;
   document.getElementById("scriptVersion").value = script.version;
   document.getElementById("scriptSource").value = script.raw_source;
-  document.getElementById("scriptMode").value = script.is_obfuscated_mode ? "1" : "0";
+  document.getElementById("scriptMode").value = script.is_obfuscated_mode ? String(script.is_obfuscated_mode) : "0";
+  document.getElementById("scriptWebhook").value = script.discord_webhook || "";
+  updateScriptSizeCounter();
   document.getElementById("modalScript").classList.add("active");
 }
 
@@ -318,14 +383,15 @@ async function saveScript(e) {
   const version = document.getElementById("scriptVersion").value;
   const raw_source = document.getElementById("scriptSource").value;
   const is_obfuscated_mode = parseInt(document.getElementById("scriptMode").value);
+  const discord_webhook = document.getElementById("scriptWebhook").value;
 
   try {
     if (id) {
-      await apiCall(`/api/scripts/${id}`, "PATCH", { name, version, raw_source, is_obfuscated_mode });
+      await apiCall(`/api/scripts/${id}`, "PATCH", { name, version, raw_source, is_obfuscated_mode, discord_webhook });
       showToast("Script updated successfully!");
     } else {
-      await apiCall("/api/scripts", "POST", { name, slug, version, raw_source, is_obfuscated_mode });
-      showToast("Script created successfully!");
+      await apiCall("/api/scripts", "POST", { name, slug, version, raw_source, is_obfuscated_mode, discord_webhook });
+      showToast("Script hub created successfully!");
     }
     closeModal("modalScript");
     loadScripts();
@@ -334,7 +400,7 @@ async function saveScript(e) {
 
 async function toggleKillswitch(id, currentStatus) {
   const newStatus = currentStatus ? 0 : 1;
-  const reason = newStatus ? prompt("Enter Killswitch Reason (optional):", "Security emergency") : "";
+  const reason = newStatus ? prompt("Enter Killswitch Reason (optional):", "Emergency maintenance in progress") : "";
   try {
     await apiCall(`/api/scripts/${id}`, "PATCH", { killswitch_active: newStatus, killswitch_reason: reason });
     showToast(newStatus ? "Killswitch ACTIVATED! Executions blocked." : "Killswitch deactivated.", newStatus ? "error" : "success");
@@ -351,7 +417,38 @@ async function deleteScript(id) {
   } catch (err) {}
 }
 
-// ----------------- Licenses Management -----------------
+// ----------------- Loadstring Modal QoL -----------------
+function openLoadstringModal(slug, name) {
+  modalSelectedScript = { slug, name };
+  document.getElementById("loadstringKeyInput").value = "";
+  renderModalLoadstring();
+  document.getElementById("modalLoadstring").classList.add("active");
+}
+
+function renderModalLoadstring() {
+  if (!modalSelectedScript) return;
+  const origin = window.location.origin;
+  const style = document.getElementById("loadstringStyleSelect").value;
+  const key = document.getElementById("loadstringKeyInput").value.trim() || "FLEED-XXXX-XXXX-XXXX";
+
+  let code = "";
+  if (style === "standard") {
+    code = `getgenv().FleedKey = "${key}"\nloadstring(game:HttpGet("${origin}/v1/loader/${modalSelectedScript.slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;
+  } else if (style === "direct") {
+    code = `loadstring(game:HttpGet("${origin}/v1/loader/${modalSelectedScript.slug}?key=${key}"))()`;
+  } else {
+    code = `getgenv().FleedKey="${key}";loadstring(game:HttpGet("${origin}/v1/loader/${modalSelectedScript.slug}?key=${key}"))()`;
+  }
+
+  document.getElementById("modalLoadstringCode").innerText = code;
+}
+
+function copyModalLoadstring() {
+  const text = document.getElementById("modalLoadstringCode").innerText;
+  copyText(text, "Loadstring copied!");
+}
+
+// ----------------- Licenses Management & Bulk Actions -----------------
 async function loadLicensesView() {
   const select = document.getElementById("licenseScriptSelect");
   if (!select) return;
@@ -360,34 +457,55 @@ async function loadLicensesView() {
     currentScripts = await apiCall("/api/scripts");
   }
 
-  select.innerHTML = currentScripts.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${s.slug})</option>`).join("");
+  select.innerHTML = currentScripts.map(s => `<option value="${s.id}" ${s.id === selectedScriptId ? 'selected' : ''}>${escapeHtml(s.name)} (${s.slug})</option>`).join("");
   if (currentScripts.length > 0) {
-    selectedScriptId = currentScripts[0].id;
+    if (!selectedScriptId) selectedScriptId = currentScripts[0].id;
+    select.value = selectedScriptId;
     loadLicensesForScript(selectedScriptId);
   }
 }
 
 async function loadLicensesForScript(scriptId) {
   if (!scriptId) return;
+  selectedScriptId = parseInt(scriptId);
+  selectedLicenseIds.clear();
+  updateBulkActionBar();
+
   try {
     const licenses = await apiCall(`/api/scripts/${scriptId}/licenses`);
     currentLicenses = licenses;
-    const tableBody = document.getElementById("licensesTableBody");
-    if (!tableBody) return;
+    renderLicenses(licenses);
+  } catch (err) {}
+}
 
-    if (licenses.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-key" style="margin-right:6px;"></i>No license keys generated for this script.</td></tr>`;
-      return;
-    }
+function renderLicenses(licenses) {
+  const tableBody = document.getElementById("licensesTableBody");
+  if (!tableBody) return;
 
-    tableBody.innerHTML = licenses.map(l => `
-      <tr>
+  if (licenses.length === 0) {
+    tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-key" style="margin-right:6px;"></i>No license keys generated for this hub.</td></tr>`;
+    return;
+  }
+
+  const script = currentScripts.find(s => s.id === selectedScriptId);
+  const slug = script ? script.slug : "";
+  const origin = window.location.origin;
+
+  tableBody.innerHTML = licenses.map(l => {
+    const isChecked = selectedLicenseIds.has(l.id);
+    const personalLoadstring = `getgenv().FleedKey = "${l.license_key}"\nloadstring(game:HttpGet("${origin}/v1/loader/${slug}?key=${l.license_key}"))()`;
+
+    return `
+      <tr class="${isChecked ? 'row-selected' : ''}">
         <td>
-          <span class="key-badge" onclick="copyText('${l.license_key}')">
+          <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleSelectLicense(${l.id}, this.checked)">
+        </td>
+        <td>
+          <span class="key-badge" onclick="copyText('${l.license_key}', 'Key copied!')" title="Click to copy key">
             ${l.license_key} <i class="fa-solid fa-copy"></i>
           </span>
         </td>
-        <td>${escapeHtml(l.note || "—")}</td>
+        <td>${escapeHtml(l.note || l.discord_id ? (l.discord_id ? `<@${l.discord_id}> ` : '') + (l.note || '') : "—")}</td>
         <td>
           <span style="font-family:var(--font-mono); font-size:11px;">
             ${l.hwid ? '<i class="fa-solid fa-fingerprint" style="color:var(--gold-primary); margin-right:4px;"></i>' + l.hwid.substring(0, 14) + '...' : '<span style="color:var(--text-zinc-500)">Unbound</span>'}
@@ -402,25 +520,170 @@ async function loadLicensesForScript(scriptId) {
         </td>
         <td>
           <div style="display:flex; gap:6px;">
-            <button class="btn btn-secondary btn-sm" onclick="resetHWID(${l.id})"><i class="fa-solid fa-arrows-rotate"></i> Reset HWID</button>
-            <button class="btn ${l.is_banned ? 'btn-secondary' : 'btn-danger'} btn-sm" onclick="toggleBanLicense(${l.id}, ${l.is_banned})">
-              ${l.is_banned ? '<i class="fa-solid fa-unlock"></i> Unban' : '<i class="fa-solid fa-ban"></i> Ban'}
+            <button class="btn btn-secondary btn-sm" onclick="copyText('${personalLoadstring.replace(/'/g, "\\'")}', 'Personalized buyer loadstring copied!')" title="Copy buyer loadstring"><i class="fa-solid fa-terminal"></i></button>
+            <button class="btn btn-secondary btn-sm" onclick="resetHWID(${l.id})" title="Reset bound device"><i class="fa-solid fa-arrows-rotate"></i></button>
+            <button class="btn ${l.is_banned ? 'btn-secondary' : 'btn-danger'} btn-sm" onclick="toggleBanLicense(${l.id}, ${l.is_banned})" title="${l.is_banned ? 'Unban key' : 'Ban key'}">
+              ${l.is_banned ? '<i class="fa-solid fa-unlock"></i>' : '<i class="fa-solid fa-ban"></i>'}
             </button>
-            <button class="btn btn-danger btn-sm" onclick="deleteLicense(${l.id})"><i class="fa-solid fa-trash"></i></button>
+            <button class="btn btn-danger btn-sm" onclick="deleteLicense(${l.id})" title="Delete key"><i class="fa-solid fa-trash"></i></button>
           </div>
         </td>
       </tr>
-    `).join("");
+    `;
+  }).join("");
+}
+
+function filterLicensesTable() {
+  const query = (document.getElementById("searchLicenseInput")?.value || "").toLowerCase().trim();
+  const statusFilter = document.getElementById("filterStatusSelect")?.value || "all";
+
+  let filtered = currentLicenses.filter(l => {
+    const matchesSearch = !query || 
+      l.license_key.toLowerCase().includes(query) ||
+      (l.note && l.note.toLowerCase().includes(query)) ||
+      (l.hwid && l.hwid.toLowerCase().includes(query)) ||
+      (l.discord_id && l.discord_id.includes(query));
+
+    if (!matchesSearch) return false;
+
+    if (statusFilter === "active") return l.is_banned === 0;
+    if (statusFilter === "banned") return l.is_banned === 1;
+    if (statusFilter === "bound") return Boolean(l.hwid);
+    if (statusFilter === "unbound") return !l.hwid;
+
+    return true;
+  });
+
+  renderLicenses(filtered);
+}
+
+// Checkbox selection & bulk actions
+function toggleSelectLicense(id, isChecked) {
+  if (isChecked) selectedLicenseIds.add(id);
+  else selectedLicenseIds.delete(id);
+  updateBulkActionBar();
+}
+
+function toggleSelectAll(isChecked) {
+  if (isChecked) {
+    currentLicenses.forEach(l => selectedLicenseIds.add(l.id));
+  } else {
+    selectedLicenseIds.clear();
+  }
+  renderLicenses(currentLicenses);
+  updateBulkActionBar();
+}
+
+function updateBulkActionBar() {
+  const bar = document.getElementById("bulkActionBar");
+  const countEl = document.getElementById("bulkSelectedCount");
+  if (!bar || !countEl) return;
+
+  const count = selectedLicenseIds.size;
+  if (count > 0) {
+    bar.style.display = "flex";
+    countEl.innerText = `${count} key${count > 1 ? 's' : ''} selected`;
+  } else {
+    bar.style.display = "none";
+  }
+}
+
+async function bulkAction(action) {
+  if (selectedLicenseIds.size === 0) return;
+  const ids = Array.from(selectedLicenseIds);
+
+  if (action === "copy") {
+    const keys = currentLicenses.filter(l => selectedLicenseIds.has(l.id)).map(l => l.license_key).join("\n");
+    copyText(keys, `Copied ${ids.length} keys to clipboard!`);
+    return;
+  }
+
+  if (action === "delete" && !confirm(`Are you sure you want to delete ${ids.length} selected license keys?`)) {
+    return;
+  }
+
+  try {
+    if (action === "resethwid") {
+      await Promise.all(ids.map(id => apiCall(`/api/licenses/${id}/resethwid`, "POST")));
+      showToast(`Reset HWID for ${ids.length} keys!`);
+    } else if (action === "ban") {
+      await Promise.all(ids.map(id => apiCall(`/api/licenses/${id}`, "PATCH", { is_banned: 1 })));
+      showToast(`Banned ${ids.length} keys!`);
+    } else if (action === "unban") {
+      await Promise.all(ids.map(id => apiCall(`/api/licenses/${id}`, "PATCH", { is_banned: 0 })));
+      showToast(`Unbanned ${ids.length} keys!`);
+    } else if (action === "delete") {
+      await Promise.all(ids.map(id => apiCall(`/api/licenses/${id}`, "DELETE")));
+      showToast(`Deleted ${ids.length} keys!`);
+    }
+
+    selectedLicenseIds.clear();
+    updateBulkActionBar();
+    loadLicensesForScript(selectedScriptId);
   } catch (err) {}
+}
+
+// Export utilities
+function exportKeys(format) {
+  if (currentLicenses.length === 0) return showToast("No keys to export", "info");
+
+  let content = "";
+  let filename = `fleed_keys_${selectedScriptId}_${new Date().toISOString().slice(0,10)}`;
+  let mimeType = "text/plain";
+
+  if (format === "txt") {
+    content = currentLicenses.map(l => l.license_key).join("\n");
+    filename += ".txt";
+  } else if (format === "json") {
+    content = JSON.stringify(currentLicenses, null, 2);
+    filename += ".json";
+    mimeType = "application/json";
+  } else if (format === "csv") {
+    const headers = ["License Key", "Note", "HWID", "Executions", "Max Executions", "Expires At", "Is Banned"];
+    const rows = currentLicenses.map(l => [
+      l.license_key,
+      `"${(l.note || '').replace(/"/g, '""')}"`,
+      l.hwid || "",
+      l.execution_count,
+      l.max_executions,
+      l.expires_at || "Lifetime",
+      l.is_banned ? "Banned" : "Active"
+    ]);
+    content = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    filename += ".csv";
+    mimeType = "text/csv";
+  }
+
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${currentLicenses.length} keys as ${format.toUpperCase()}`);
+}
+
+function copyAllKeys() {
+  if (currentLicenses.length === 0) return showToast("No keys to copy", "info");
+  const keys = currentLicenses.map(l => l.license_key).join("\n");
+  copyText(keys, `Copied all ${currentLicenses.length} keys!`);
 }
 
 function openBulkGenModal() {
   document.getElementById("modalBulkGen").classList.add("active");
 }
 
+function openSingleGenModal() {
+  document.getElementById("singleKeyString").value = `FLEED-${Math.random().toString(36).substring(2,6).toUpperCase()}-${Math.random().toString(36).substring(2,6).toUpperCase()}-${Math.random().toString(36).substring(2,6).toUpperCase()}`;
+  document.getElementById("modalSingleGen").classList.add("active");
+}
+
 async function handleBulkGenerate(e) {
   e.preventDefault();
-  const script_id = parseInt(document.getElementById("licenseScriptSelect").value);
+  const script_id = selectedScriptId;
   const count = parseInt(document.getElementById("genCount").value);
   const duration_days = parseInt(document.getElementById("genDuration").value) || null;
   const max_executions = parseInt(document.getElementById("genMaxExecs").value);
@@ -436,12 +699,40 @@ async function handleBulkGenerate(e) {
   } catch (err) {}
 }
 
+async function handleSingleGenerate(e) {
+  e.preventDefault();
+  const script = currentScripts.find(s => s.id === selectedScriptId);
+  if (!script) return;
+
+  const license_key = document.getElementById("singleKeyString").value.trim();
+  const note = document.getElementById("singleKeyNote").value.trim();
+  const duration_days = parseInt(document.getElementById("singleKeyDuration").value) || null;
+
+  let expires_at = null;
+  if (duration_days) {
+    const d = new Date();
+    d.setDate(d.getDate() + duration_days);
+    expires_at = d.toISOString();
+  }
+
+  try {
+    await apiCall("/api/licenses/create", "POST", {
+      slug: script.slug,
+      license_key,
+      note,
+      expires_at
+    });
+    showToast("License key created successfully!");
+    closeModal("modalSingleGen");
+    loadLicensesForScript(selectedScriptId);
+  } catch (err) {}
+}
+
 async function resetHWID(licenseId) {
   try {
     await apiCall(`/api/licenses/${licenseId}/resethwid`, "POST");
-    showToast("HWID unbound successfully!");
-    const scriptId = parseInt(document.getElementById("licenseScriptSelect").value);
-    loadLicensesForScript(scriptId);
+    showToast("HWID reset successfully!");
+    loadLicensesForScript(selectedScriptId);
   } catch (err) {}
 }
 
@@ -451,8 +742,7 @@ async function toggleBanLicense(licenseId, isBanned) {
   try {
     await apiCall(`/api/licenses/${licenseId}`, "PATCH", { is_banned: newBan, ban_reason: reason });
     showToast(newBan ? "License banned!" : "License unbanned!", newBan ? "error" : "success");
-    const scriptId = parseInt(document.getElementById("licenseScriptSelect").value);
-    loadLicensesForScript(scriptId);
+    loadLicensesForScript(selectedScriptId);
   } catch (err) {}
 }
 
@@ -461,35 +751,75 @@ async function deleteLicense(licenseId) {
   try {
     await apiCall(`/api/licenses/${licenseId}`, "DELETE");
     showToast("License deleted.");
-    const scriptId = parseInt(document.getElementById("licenseScriptSelect").value);
-    loadLicensesForScript(scriptId);
+    loadLicensesForScript(selectedScriptId);
   } catch (err) {}
 }
 
 // ----------------- Live Audit Logs & Threat Feed -----------------
 async function loadLiveLogs() {
+  const statusFilter = document.getElementById("logStatusFilter")?.value || "";
   try {
-    const logs = await apiCall("/api/logs?limit=50");
-    const tableBody = document.getElementById("logsTableBody");
-    if (!tableBody) return;
-
-    if (logs.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>No execution logs recorded yet.</td></tr>`;
-      return;
-    }
-
-    tableBody.innerHTML = logs.map(log => renderLogRow(log)).join("");
+    const url = statusFilter ? `/api/logs?limit=60&status_filter=${statusFilter}` : `/api/logs?limit=60`;
+    const logs = await apiCall(url);
+    currentLogs = logs;
+    renderLogs(logs);
   } catch (err) {}
+}
+
+function renderLogs(logs) {
+  const tableBody = document.getElementById("logsTableBody");
+  if (!tableBody) return;
+
+  if (logs.length === 0) {
+    tableBody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>No security events matching filter.</td></tr>`;
+    return;
+  }
+
+  tableBody.innerHTML = logs.map(log => renderLogRow(log)).join("");
+}
+
+function filterLogsTable(query) {
+  const q = (query || "").toLowerCase().trim();
+  if (!q) {
+    renderLogs(currentLogs);
+    return;
+  }
+
+  const filtered = currentLogs.filter(log => 
+    (log.roblox_username && log.roblox_username.toLowerCase().includes(q)) ||
+    (log.license_key && log.license_key.toLowerCase().includes(q)) ||
+    (log.ip_address && log.ip_address.includes(q)) ||
+    (log.game_name && log.game_name.toLowerCase().includes(q)) ||
+    (log.executor_name && log.executor_name.toLowerCase().includes(q)) ||
+    (log.script_name && log.script_name.toLowerCase().includes(q))
+  );
+  renderLogs(filtered);
+}
+
+function toggleAutoRefresh() {
+  isAutoRefreshOn = !isAutoRefreshOn;
+  const stateEl = document.getElementById("autoRefreshState");
+  const btn = document.getElementById("toggleAutoRefreshBtn");
+  if (stateEl && btn) {
+    if (isAutoRefreshOn) {
+      stateEl.innerText = "ON";
+      btn.innerHTML = '<i class="fa-solid fa-pause"></i> Auto-Refresh: <span id="autoRefreshState">ON</span>';
+    } else {
+      stateEl.innerText = "PAUSED";
+      btn.innerHTML = '<i class="fa-solid fa-play"></i> Auto-Refresh: <span id="autoRefreshState">PAUSED</span>';
+    }
+  }
 }
 
 async function loadBypassLogs() {
   try {
-    const logs = await apiCall("/api/logs?limit=50&status_filter=blocked");
+    const logs = await apiCall("/api/logs?limit=60&status_filter=blocked");
+    currentBypasses = logs;
     const tableBody = document.getElementById("bypassTableBody");
     if (!tableBody) return;
 
     if (logs.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-check" style="color:var(--success-color); margin-right:6px;"></i>No blocked bypass attempts recorded yet. Your system is safe.</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-check" style="color:var(--success-color); margin-right:6px;"></i>No threat activity detected. System is completely secure.</td></tr>`;
       return;
     }
 
@@ -503,10 +833,10 @@ async function loadBypassLogs() {
         threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-shield-virus"></i> HOOK/TAMPER DETECTED</span>`;
       } else if (log.status === 'HWID_MISMATCH') {
         threatBadge = `<span class="badge badge-danger" style="background:rgba(234,179,8,0.15); color:var(--gold-primary); border-color:rgba(234,179,8,0.4);"><i class="fa-solid fa-fingerprint"></i> HWID MISMATCH</span>`;
+      } else if (log.status === 'BYPASS_ATTEMPT') {
+        threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-skull-crossbones"></i> SCRAPER / DUMP TRAP</span>`;
       } else if (log.status === 'INVALID_KEY') {
         threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-key"></i> INVALID KEY</span>`;
-      } else if (log.status === 'RATE_LIMITED') {
-        threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-gauge-high"></i> RATE LIMITED</span>`;
       }
 
       return `
@@ -560,7 +890,6 @@ async function loadBypassLogs() {
 }
 
 function renderLogRow(log) {
-  // Roblox Avatar Headshot via local backend avatar resolver
   const avatarUrl = (log.roblox_user_id && log.roblox_user_id > 0)
     ? `/api/roblox/avatar/${log.roblox_user_id}`
     : `/api/roblox/avatar/1`;
@@ -581,7 +910,6 @@ function renderLogRow(log) {
     `;
   }
 
-  // Game / Place Display with link
   let gamePlaceHtml = `<span style="color:var(--text-zinc-500);">—</span>`;
   if (log.place_id && log.place_id > 0) {
     const placeUrl = `https://www.roblox.com/games/${log.place_id}`;
@@ -597,7 +925,6 @@ function renderLogRow(log) {
     gamePlaceHtml = `<span style="color:var(--text-zinc-300); font-size:13px;">${escapeHtml(log.game_name)}</span>`;
   }
 
-  // Status Badge
   let statusBadge = `<span class="badge badge-danger">${log.status}</span>`;
   if (log.status === 'SUCCESS') {
     statusBadge = `<span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> SUCCESS</span>`;
@@ -607,6 +934,8 @@ function renderLogRow(log) {
     statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-shield-virus"></i> TAMPER DETECTED</span>`;
   } else if (log.status === 'INVALID_KEY') {
     statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-key"></i> INVALID KEY</span>`;
+  } else if (log.status === 'BYPASS_ATTEMPT') {
+    statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-skull-crossbones"></i> BYPASS TRAP</span>`;
   } else if (log.status === 'EXPIRED') {
     statusBadge = `<span class="badge badge-zinc"><i class="fa-solid fa-clock"></i> EXPIRED</span>`;
   } else if (log.status === 'BANNED') {
@@ -639,6 +968,11 @@ function renderLogRow(log) {
           <i class="fa-solid fa-network-wired" style="font-size:10px; margin-right:4px;"></i>${log.ip_address ? escapeHtml(log.ip_address) : '—'}
         </div>
       </td>
+      <td>
+        ${log.license_id ? `
+          <button class="btn btn-secondary btn-sm" onclick="resetHWID(${log.license_id})" title="Reset user HWID"><i class="fa-solid fa-arrows-rotate"></i></button>
+        ` : '—'}
+      </td>
     </tr>
   `;
 }
@@ -659,9 +993,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     loadOverviewStats();
     loadProfileStats();
 
-    // Setup periodic log polling
+    // Auto-refresh polling loop
     if (!liveLogInterval) {
       liveLogInterval = setInterval(() => {
+        if (!isAutoRefreshOn) return;
         const activeTab = document.querySelector(".tab-btn.active")?.getAttribute("data-tab");
         if (activeTab === "logs") loadLiveLogs();
         if (activeTab === "bypasses") loadBypassLogs();

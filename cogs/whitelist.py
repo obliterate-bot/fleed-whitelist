@@ -54,6 +54,36 @@ def parse_whitelist_duration(time_str: Optional[str]) -> tuple[Optional[str], st
 
     return None, "lifetime"
 
+async def get_cloud_api_key(slug: str = None) -> Optional[str]:
+    """
+    Finds the active Railway cloud API key for syncing.
+    Checks:
+    1. Owner of the script with this slug
+    2. Admin account (role = 'admin')
+    3. Any active developer account with a valid api_key
+    """
+    async with db.get_db() as conn:
+        if slug:
+            cursor = await conn.execute("""
+                SELECT u.api_key FROM users u
+                JOIN scripts s ON s.user_id = u.id
+                WHERE s.slug = ? AND u.api_key IS NOT NULL AND u.is_active = 1
+            """, (slug.strip().lower(),))
+            row = await cursor.fetchone()
+            if row and row["api_key"]:
+                return row["api_key"]
+
+        # Fallback: Admin or linked developer account
+        cursor = await conn.execute("SELECT api_key FROM users WHERE (role = 'admin' OR discord_id IS NOT NULL) AND api_key IS NOT NULL AND is_active = 1 ORDER BY id DESC LIMIT 1")
+        row = await cursor.fetchone()
+        if row and row["api_key"]:
+            return row["api_key"]
+
+        # Ultimate fallback: Any account with an API key
+        cursor = await conn.execute("SELECT api_key FROM users WHERE api_key IS NOT NULL AND is_active = 1 ORDER BY id DESC LIMIT 1")
+        row = await cursor.fetchone()
+        return row["api_key"] if row else None
+
 async def check_script_permission(ctx, slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
     """
     Verifies that the Discord user is authorized to manage a specific script or platform.
@@ -248,20 +278,13 @@ class WhitelistControlPanelView(discord.ui.View):
                 # Sync to Railway cloud
                 pub_url = loader_generator.get_public_url()
                 if pub_url and pub_url.startswith("http"):
-                    # Look up the developer's API key for this script
-                    async with db.get_db() as conn:
-                        cursor = await conn.execute("""
-                            SELECT u.api_key FROM users u
-                            JOIN scripts s ON s.user_id = u.id
-                            WHERE s.slug = ? AND u.api_key IS NOT NULL
-                        """, (slug,))
-                        dev_row = await cursor.fetchone()
-                    if dev_row and dev_row["api_key"]:
+                    api_key = await get_cloud_api_key(slug)
+                    if api_key:
                         try:
                             async with aiohttp.ClientSession() as session:
                                 await session.post(
                                     f"{pub_url}/api/licenses/create",
-                                    headers={"X-API-Key": dev_row["api_key"]},
+                                    headers={"X-API-Key": api_key},
                                     json={
                                         "slug": slug,
                                         "license_key": key,
@@ -285,19 +308,13 @@ class WhitelistControlPanelView(discord.ui.View):
 
         # Always ensure the key exists on Railway cloud (catches pre-sync keys)
         if pub_url and pub_url.startswith("http"):
-            async with db.get_db() as conn:
-                cursor = await conn.execute("""
-                    SELECT u.api_key FROM users u
-                    JOIN scripts s ON s.user_id = u.id
-                    WHERE s.slug = ? AND u.api_key IS NOT NULL
-                """, (slug,))
-                dev_row = await cursor.fetchone()
-            if dev_row and dev_row["api_key"]:
+            api_key = await get_cloud_api_key(slug)
+            if api_key:
                 try:
                     async with aiohttp.ClientSession() as session:
                         await session.post(
                             f"{pub_url}/api/licenses/create",
-                            headers={"X-API-Key": dev_row["api_key"]},
+                            headers={"X-API-Key": api_key},
                             json={
                                 "slug": slug,
                                 "license_key": license_row["license_key"],
@@ -1234,19 +1251,13 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                     # Sync to Railway cloud
                     pub_url = loader_generator.get_public_url()
                     if pub_url and pub_url.startswith("http"):
-                        async with db.get_db() as conn:
-                            cursor = await conn.execute("""
-                                SELECT u.api_key FROM users u
-                                JOIN scripts s ON s.user_id = u.id
-                                WHERE s.slug = ? AND u.api_key IS NOT NULL
-                            """, (clean_slug,))
-                            dev_row = await cursor.fetchone()
-                        if dev_row and dev_row["api_key"]:
+                        api_key = await get_cloud_api_key(clean_slug)
+                        if api_key:
                             try:
                                 async with aiohttp.ClientSession() as session:
                                     await session.post(
                                         f"{pub_url}/api/licenses/create",
-                                        headers={"X-API-Key": dev_row["api_key"]},
+                                        headers={"X-API-Key": api_key},
                                         json={
                                             "slug": clean_slug,
                                             "license_key": key,
@@ -1266,6 +1277,26 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
         pub_url = loader_generator.get_public_url()
         for r in rows:
+            if pub_url and pub_url.startswith("http"):
+                api_key = await get_cloud_api_key(r.get("script_slug"))
+                if api_key:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            await session.post(
+                                f"{pub_url}/api/licenses/create",
+                                headers={"X-API-Key": api_key},
+                                json={
+                                    "slug": r.get("script_slug"),
+                                    "license_key": r["license_key"],
+                                    "discord_id": user_id_str,
+                                    "note": "synced via getscript",
+                                    "expires_at": None
+                                },
+                                timeout=aiohttp.ClientTimeout(total=5)
+                            )
+                    except Exception:
+                        pass
+
             loadstr = f'getgenv().FleedKey = "{r["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{r["script_slug"]}"))()'
             embed = fleed_embed(
                 title=f"{r['script_name']} — loadstring",

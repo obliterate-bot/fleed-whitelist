@@ -648,17 +648,29 @@ async def disable_2fa(req: Enable2FARequest, user: Dict = Depends(get_current_us
 # ----------------- Script Management API -----------------
 @app.get("/api/scripts")
 async def list_scripts(user: Dict = Depends(get_current_user)):
+    is_admin = user.get("role") == "admin"
     async with db.get_db() as conn:
-        cursor = await conn.execute("""
-            SELECT s.*, 
-                   COUNT(l.id) as total_licenses,
-                   SUM(CASE WHEN l.is_banned = 0 THEN 1 ELSE 0 END) as active_licenses
-            FROM scripts s
-            LEFT JOIN licenses l ON s.id = l.script_id
-            WHERE s.user_id = ?
-            GROUP BY s.id
-            ORDER BY s.id DESC
-        """, (user["id"],))
+        if is_admin:
+            cursor = await conn.execute("""
+                SELECT s.*, 
+                       COUNT(l.id) as total_licenses,
+                       SUM(CASE WHEN l.is_banned = 0 THEN 1 ELSE 0 END) as active_licenses
+                FROM scripts s
+                LEFT JOIN licenses l ON s.id = l.script_id
+                GROUP BY s.id
+                ORDER BY s.id DESC
+            """)
+        else:
+            cursor = await conn.execute("""
+                SELECT s.*, 
+                       COUNT(l.id) as total_licenses,
+                       SUM(CASE WHEN l.is_banned = 0 THEN 1 ELSE 0 END) as active_licenses
+                FROM scripts s
+                LEFT JOIN licenses l ON s.id = l.script_id
+                WHERE s.user_id = ?
+                GROUP BY s.id
+                ORDER BY s.id DESC
+            """, (user["id"],))
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
@@ -806,13 +818,21 @@ async def get_discord_user_info(user_id: str):
 # ----------------- License / Key Management API -----------------
 @app.get("/api/scripts/{script_id}/licenses")
 async def list_licenses(script_id: int, user: Dict = Depends(get_current_user)):
+    is_admin = user.get("role") == "admin"
     async with db.get_db() as conn:
-        cursor = await conn.execute("""
-            SELECT l.* FROM licenses l
-            JOIN scripts s ON l.script_id = s.id
-            WHERE l.script_id = ? AND s.user_id = ?
-            ORDER BY l.id DESC
-        """, (script_id, user["id"]))
+        if is_admin:
+            cursor = await conn.execute("""
+                SELECT l.* FROM licenses l
+                WHERE l.script_id = ?
+                ORDER BY l.id DESC
+            """, (script_id,))
+        else:
+            cursor = await conn.execute("""
+                SELECT l.* FROM licenses l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE l.script_id = ? AND s.user_id = ?
+                ORDER BY l.id DESC
+            """, (script_id, user["id"]))
         rows = await cursor.fetchall()
         result = []
         for r in rows:
@@ -831,13 +851,22 @@ async def list_licenses(script_id: int, user: Dict = Depends(get_current_user)):
 @app.get("/api/licenses/{license_id}/history")
 async def get_license_history(license_id: int, user: Dict = Depends(get_current_user)):
     """Deep forensic inspection for a single license key."""
+    is_admin = user.get("role") == "admin"
     async with db.get_db() as conn:
-        cursor = await conn.execute("""
-            SELECT l.*, s.name as script_name, s.slug as script_slug
-            FROM licenses l
-            JOIN scripts s ON l.script_id = s.id
-            WHERE l.id = ? AND s.user_id = ?
-        """, (license_id, user["id"]))
+        if is_admin:
+            cursor = await conn.execute("""
+                SELECT l.*, s.name as script_name, s.slug as script_slug
+                FROM licenses l
+                LEFT JOIN scripts s ON l.script_id = s.id
+                WHERE l.id = ?
+            """, (license_id,))
+        else:
+            cursor = await conn.execute("""
+                SELECT l.*, s.name as script_name, s.slug as script_slug
+                FROM licenses l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE l.id = ? AND s.user_id = ?
+            """, (license_id, user["id"]))
         lic = await cursor.fetchone()
         if not lic:
             raise HTTPException(status_code=404, detail="License not found")
@@ -1129,21 +1158,36 @@ async def delete_license(license_id: int, user: Dict = Depends(get_current_user)
 # ----------------- Analytics & Execution Logs API -----------------
 @app.get("/api/stats")
 async def get_dashboard_stats(user: Dict = Depends(get_current_user)):
+    is_admin = user.get("role") == "admin"
     async with db.get_db() as conn:
         # Total scripts
-        c1 = await conn.execute("SELECT COUNT(*) as cnt FROM scripts WHERE user_id = ?", (user["id"],))
+        if is_admin:
+            c1 = await conn.execute("SELECT COUNT(*) as cnt FROM scripts")
+        else:
+            c1 = await conn.execute("SELECT COUNT(*) as cnt FROM scripts WHERE user_id = ?", (user["id"],))
         scripts_cnt = (await c1.fetchone())["cnt"]
 
         # Total licenses & breakdown
-        c2 = await conn.execute("""
-            SELECT COUNT(*) as total,
-                   SUM(CASE WHEN is_banned = 0 AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) THEN 1 ELSE 0 END) as active,
-                   SUM(CASE WHEN is_banned = 1 THEN 1 ELSE 0 END) as banned,
-                   SUM(CASE WHEN is_banned = 0 AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now') THEN 1 ELSE 0 END) as expired,
-                   SUM(CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END) as lifetime,
-                   SUM(CASE WHEN hwid IS NOT NULL AND hwid != '' THEN 1 ELSE 0 END) as bound_hwids
-            FROM licenses WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
-        """, (user["id"],))
+        if is_admin:
+            c2 = await conn.execute("""
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN is_banned = 0 AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) THEN 1 ELSE 0 END) as active,
+                       SUM(CASE WHEN is_banned = 1 THEN 1 ELSE 0 END) as banned,
+                       SUM(CASE WHEN is_banned = 0 AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now') THEN 1 ELSE 0 END) as expired,
+                       SUM(CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END) as lifetime,
+                       SUM(CASE WHEN hwid IS NOT NULL AND hwid != '' THEN 1 ELSE 0 END) as bound_hwids
+                FROM licenses
+            """)
+        else:
+            c2 = await conn.execute("""
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN is_banned = 0 AND (expires_at IS NULL OR datetime(expires_at) > datetime('now')) THEN 1 ELSE 0 END) as active,
+                       SUM(CASE WHEN is_banned = 1 THEN 1 ELSE 0 END) as banned,
+                       SUM(CASE WHEN is_banned = 0 AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now') THEN 1 ELSE 0 END) as expired,
+                       SUM(CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END) as lifetime,
+                       SUM(CASE WHEN hwid IS NOT NULL AND hwid != '' THEN 1 ELSE 0 END) as bound_hwids
+                FROM licenses WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+            """, (user["id"],))
         lic_row = await c2.fetchone()
         total_licenses = lic_row["total"] if lic_row else 0
         active_licenses = lic_row["active"] if lic_row and lic_row["active"] else 0
@@ -1153,13 +1197,22 @@ async def get_dashboard_stats(user: Dict = Depends(get_current_user)):
         bound_hwids = lic_row["bound_hwids"] if lic_row and lic_row["bound_hwids"] else 0
 
         # Total executions & blocked
-        c3 = await conn.execute("""
-            SELECT COUNT(*) as total_execs,
-                   SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_execs,
-                   SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked_execs,
-                   COUNT(DISTINCT CASE WHEN roblox_user_id > 0 THEN roblox_user_id ELSE NULL END) as unique_players
-            FROM execution_logs WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
-        """, (user["id"],))
+        if is_admin:
+            c3 = await conn.execute("""
+                SELECT COUNT(*) as total_execs,
+                       SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_execs,
+                       SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked_execs,
+                       COUNT(DISTINCT CASE WHEN roblox_user_id > 0 THEN roblox_user_id ELSE NULL END) as unique_players
+                FROM execution_logs
+            """)
+        else:
+            c3 = await conn.execute("""
+                SELECT COUNT(*) as total_execs,
+                       SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_execs,
+                       SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked_execs,
+                       COUNT(DISTINCT CASE WHEN roblox_user_id > 0 THEN roblox_user_id ELSE NULL END) as unique_players
+                FROM execution_logs WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+            """, (user["id"],))
         exec_row = await c3.fetchone()
         total_execs = exec_row["total_execs"] if exec_row else 0
         success_execs = exec_row["success_execs"] if exec_row and exec_row["success_execs"] else 0
@@ -1167,51 +1220,90 @@ async def get_dashboard_stats(user: Dict = Depends(get_current_user)):
         unique_players = exec_row["unique_players"] if exec_row and exec_row["unique_players"] else 0
 
         # Active sessions in last 15 min
-        c4 = await conn.execute("""
-            SELECT COUNT(*) as cnt FROM execution_logs
-            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
-              AND timestamp >= datetime('now', '-15 minutes')
-        """, (user["id"],))
+        if is_admin:
+            c4 = await conn.execute("""
+                SELECT COUNT(*) as cnt FROM execution_logs
+                WHERE timestamp >= datetime('now', '-15 minutes')
+            """)
+        else:
+            c4 = await conn.execute("""
+                SELECT COUNT(*) as cnt FROM execution_logs
+                WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+                  AND timestamp >= datetime('now', '-15 minutes')
+            """, (user["id"],))
         active_15m = (await c4.fetchone())["cnt"]
 
         # Hourly activity (last 24 hours)
-        c5 = await conn.execute("""
-            SELECT strftime('%H:00', timestamp) as hr,
-                   SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_cnt,
-                   SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked_cnt,
-                   COUNT(*) as total_cnt
-            FROM execution_logs
-            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
-              AND timestamp >= datetime('now', '-24 hours')
-            GROUP BY strftime('%Y-%m-%d %H', timestamp)
-            ORDER BY timestamp ASC
-        """, (user["id"],))
+        if is_admin:
+            c5 = await conn.execute("""
+                SELECT strftime('%H:00', timestamp) as hr,
+                       SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_cnt,
+                       SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked_cnt,
+                       COUNT(*) as total_cnt
+                FROM execution_logs
+                WHERE timestamp >= datetime('now', '-24 hours')
+                GROUP BY strftime('%Y-%m-%d %H', timestamp)
+                ORDER BY timestamp ASC
+            """)
+        else:
+            c5 = await conn.execute("""
+                SELECT strftime('%H:00', timestamp) as hr,
+                       SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_cnt,
+                       SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as blocked_cnt,
+                       COUNT(*) as total_cnt
+                FROM execution_logs
+                WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+                  AND timestamp >= datetime('now', '-24 hours')
+                GROUP BY strftime('%Y-%m-%d %H', timestamp)
+                ORDER BY timestamp ASC
+            """, (user["id"],))
         hourly_rows = await c5.fetchall()
         hourly_activity = [{"hour": r["hr"], "success": r["success_cnt"] or 0, "blocked": r["blocked_cnt"] or 0, "total": r["total_cnt"]} for r in hourly_rows]
 
         # Top Executors
-        c6 = await conn.execute("""
-            SELECT COALESCE(NULLIF(executor_name, ''), 'Universal') as exec_name, COUNT(*) as cnt
-            FROM execution_logs
-            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
-            GROUP BY exec_name
-            ORDER BY cnt DESC
-            LIMIT 5
-        """, (user["id"],))
+        if is_admin:
+            c6 = await conn.execute("""
+                SELECT COALESCE(NULLIF(executor_name, ''), 'Universal') as exec_name, COUNT(*) as cnt
+                FROM execution_logs
+                GROUP BY exec_name
+                ORDER BY cnt DESC
+                LIMIT 5
+            """)
+        else:
+            c6 = await conn.execute("""
+                SELECT COALESCE(NULLIF(executor_name, ''), 'Universal') as exec_name, COUNT(*) as cnt
+                FROM execution_logs
+                WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+                GROUP BY exec_name
+                ORDER BY cnt DESC
+                LIMIT 5
+            """, (user["id"],))
         top_executors_rows = await c6.fetchall()
         top_executors = [{"name": r["exec_name"], "count": r["cnt"]} for r in top_executors_rows]
 
         # Top Games / Experiences
-        c7 = await conn.execute("""
-            SELECT game_name,
-                   place_id,
-                   COUNT(*) as cnt
-            FROM execution_logs
-            WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?) AND status = 'SUCCESS'
-            GROUP BY place_id, game_name
-            ORDER BY cnt DESC
-            LIMIT 15
-        """, (user["id"],))
+        if is_admin:
+            c7 = await conn.execute("""
+                SELECT game_name,
+                       place_id,
+                       COUNT(*) as cnt
+                FROM execution_logs
+                WHERE status = 'SUCCESS' OR place_id > 0
+                GROUP BY place_id, game_name
+                ORDER BY cnt DESC
+                LIMIT 15
+            """)
+        else:
+            c7 = await conn.execute("""
+                SELECT game_name,
+                       place_id,
+                       COUNT(*) as cnt
+                FROM execution_logs
+                WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?) AND (status = 'SUCCESS' OR place_id > 0)
+                GROUP BY place_id, game_name
+                ORDER BY cnt DESC
+                LIMIT 15
+            """, (user["id"],))
         top_games_rows = await c7.fetchall()
         top_games_dict = {}
         for r in top_games_rows:
@@ -1255,31 +1347,57 @@ async def get_dashboard_stats(user: Dict = Depends(get_current_user)):
 
 @app.get("/api/logs")
 async def get_logs(limit: int = 100, status_filter: Optional[str] = None, user: Dict = Depends(get_current_user)):
+    is_admin = user.get("role") == "admin"
     async with db.get_db() as conn:
-        if status_filter == "blocked":
-            cursor = await conn.execute("""
-                SELECT l.*, s.name as script_name
-                FROM execution_logs l
-                JOIN scripts s ON l.script_id = s.id
-                WHERE s.user_id = ? AND l.status != 'SUCCESS'
-                ORDER BY l.id DESC LIMIT ?
-            """, (user["id"], limit))
-        elif status_filter:
-            cursor = await conn.execute("""
-                SELECT l.*, s.name as script_name
-                FROM execution_logs l
-                JOIN scripts s ON l.script_id = s.id
-                WHERE s.user_id = ? AND l.status = ?
-                ORDER BY l.id DESC LIMIT ?
-            """, (user["id"], status_filter, limit))
+        if is_admin:
+            if status_filter == "blocked":
+                cursor = await conn.execute("""
+                    SELECT l.*, s.name as script_name
+                    FROM execution_logs l
+                    LEFT JOIN scripts s ON l.script_id = s.id
+                    WHERE l.status != 'SUCCESS'
+                    ORDER BY l.id DESC LIMIT ?
+                """, (limit,))
+            elif status_filter:
+                cursor = await conn.execute("""
+                    SELECT l.*, s.name as script_name
+                    FROM execution_logs l
+                    LEFT JOIN scripts s ON l.script_id = s.id
+                    WHERE l.status = ?
+                    ORDER BY l.id DESC LIMIT ?
+                """, (status_filter, limit))
+            else:
+                cursor = await conn.execute("""
+                    SELECT l.*, s.name as script_name
+                    FROM execution_logs l
+                    LEFT JOIN scripts s ON l.script_id = s.id
+                    ORDER BY l.id DESC LIMIT ?
+                """, (limit,))
         else:
-            cursor = await conn.execute("""
-                SELECT l.*, s.name as script_name
-                FROM execution_logs l
-                JOIN scripts s ON l.script_id = s.id
-                WHERE s.user_id = ?
-                ORDER BY l.id DESC LIMIT ?
-            """, (user["id"], limit))
+            if status_filter == "blocked":
+                cursor = await conn.execute("""
+                    SELECT l.*, s.name as script_name
+                    FROM execution_logs l
+                    JOIN scripts s ON l.script_id = s.id
+                    WHERE s.user_id = ? AND l.status != 'SUCCESS'
+                    ORDER BY l.id DESC LIMIT ?
+                """, (user["id"], limit))
+            elif status_filter:
+                cursor = await conn.execute("""
+                    SELECT l.*, s.name as script_name
+                    FROM execution_logs l
+                    JOIN scripts s ON l.script_id = s.id
+                    WHERE s.user_id = ? AND l.status = ?
+                    ORDER BY l.id DESC LIMIT ?
+                """, (user["id"], status_filter, limit))
+            else:
+                cursor = await conn.execute("""
+                    SELECT l.*, s.name as script_name
+                    FROM execution_logs l
+                    JOIN scripts s ON l.script_id = s.id
+                    WHERE s.user_id = ?
+                    ORDER BY l.id DESC LIMIT ?
+                """, (user["id"], limit))
         rows = await cursor.fetchall()
         result = []
         for r in rows:

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Developer Console — FleedGuard</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23FACC15'><path d='M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z'/></svg>">
 </head>
@@ -14,28 +15,31 @@
     <!-- Navbar -->
     <header class="navbar">
       <div class="brand-badge">
-        <div class="brand-shield">🛡️</div>
+        <div class="brand-shield"><i class="fa-solid fa-shield-halved"></i></div>
         <span>Fleed<span style="color:var(--gold-primary);">Guard</span> Console</span>
       </div>
 
       <div class="nav-links">
         <span id="2FAStatusBadge" class="badge badge-zinc">Checking 2FA...</span>
         <button id="btnSetup2FA" class="btn btn-secondary btn-sm" onclick="open2FAModal()" style="display: none;">
-          🔐 Enable 2FA
+          <i class="fa-solid fa-lock"></i> Enable 2FA
         </button>
         <div style="height: 24px; width: 1px; background: var(--border-subtle); margin: 0 4px;"></div>
         <span id="profileUsername" style="font-weight: 600; color: var(--text-white); font-size: 13px;">User</span>
-        <button class="btn btn-danger btn-sm" onclick="handleLogout()">Logout</button>
+        <button class="btn btn-danger btn-sm" onclick="handleLogout()">
+          <i class="fa-solid fa-right-from-bracket"></i> Logout
+        </button>
       </div>
     </header>
 
     <!-- Navigation Tabs -->
     <nav class="tabs-nav">
-      <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 Overview & Metrics</button>
-      <button class="tab-btn" data-tab="scripts" onclick="switchTab('scripts')">📜 Script Hub</button>
-      <button class="tab-btn" data-tab="licenses" onclick="switchTab('licenses')">🔑 License Keys</button>
-      <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">🛡️ Live Security Audit</button>
-      <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">⚙️ 2FA & API Tokens</button>
+      <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')"><i class="fa-solid fa-chart-line"></i> Overview & Metrics</button>
+      <button class="tab-btn" data-tab="scripts" onclick="switchTab('scripts')"><i class="fa-solid fa-code"></i> Script Hub</button>
+      <button class="tab-btn" data-tab="licenses" onclick="switchTab('licenses')"><i class="fa-solid fa-key"></i> License Keys</button>
+      <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')"><i class="fa-solid fa-shield"></i> Live Security Audit</button>
+      <button class="tab-btn" data-tab="bypasses" onclick="switchTab('bypasses')"><i class="fa-solid fa-triangle-exclamation" style="color:var(--danger-color);"></i> Bypass Attempts</button>
+      <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')"><i class="fa-solid fa-sliders"></i> 2FA & API Tokens</button>
     </nav>
 
     <!-- VIEW 1: Overview & Metrics -->
@@ -53,8 +57,8 @@
           <div class="stat-label">Total Handshakes</div>
           <div id="statExecutions" class="stat-value">0</div>
         </div>
-        <div class="card stat-box">
-          <div class="stat-label">Blocked Bypass Attempts</div>
+        <div class="card stat-box" style="border-color: rgba(239, 68, 68, 0.35);">
+          <div class="stat-label" style="color:var(--danger-color);">Blocked Bypass Attempts</div>
           <div id="statBlockedAttacks" class="stat-value" style="color:var(--danger-color);">0</div>
         </div>
       </div>
@@ -62,33 +66,34 @@
       <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
         <div class="card">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
-            <h3 style="color:var(--text-white); font-size: 16px;">Quick Actions</h3>
+            <h3 style="color:var(--text-white); font-size: 16px;"><i class="fa-solid fa-bolt" style="color:var(--gold-primary); margin-right:8px;"></i>Quick Actions</h3>
           </div>
           <div style="display:flex; gap:12px; flex-wrap: wrap;">
-            <button class="btn btn-primary" onclick="switchTab('scripts'); openCreateScriptModal();">+ New Script Hub</button>
-            <button class="btn btn-secondary" onclick="switchTab('licenses'); openBulkGenModal();">🔑 Bulk Generate Keys</button>
-            <button class="btn btn-secondary" onclick="switchTab('logs');">🔍 View Real-Time Audit Log</button>
+            <button class="btn btn-primary" onclick="switchTab('scripts'); openCreateScriptModal();"><i class="fa-solid fa-plus"></i> New Script Hub</button>
+            <button class="btn btn-secondary" onclick="switchTab('licenses'); openBulkGenModal();"><i class="fa-solid fa-key"></i> Bulk Generate Keys</button>
+            <button class="btn btn-secondary" onclick="switchTab('logs');"><i class="fa-solid fa-list-check"></i> View Live Audit</button>
+            <button class="btn btn-danger" onclick="switchTab('bypasses');"><i class="fa-solid fa-shield-virus"></i> View Threat Feed</button>
           </div>
         </div>
 
         <div class="card">
-          <h3 style="color:var(--text-white); font-size: 16px; margin-bottom: 12px;">Anti-Crack Engine Status</h3>
+          <h3 style="color:var(--text-white); font-size: 16px; margin-bottom: 12px;"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:8px;"></i>Anti-Crack Engine Status</h3>
           <div style="font-size: 13px; display:flex; flex-direction:column; gap:8px;">
-            <div style="display:flex; justify-content:space-between;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
               <span style="color:var(--text-zinc-400);">HMAC Challenge-Response</span>
-              <span class="badge badge-success">ACTIVE</span>
+              <span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> ACTIVE</span>
             </div>
-            <div style="display:flex; justify-content:space-between;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
               <span style="color:var(--text-zinc-400);">In-Memory VM Decryption</span>
-              <span class="badge badge-success">ARMORED</span>
+              <span class="badge badge-success"><i class="fa-solid fa-lock"></i> ARMORED</span>
             </div>
-            <div style="display:flex; justify-content:space-between;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
               <span style="color:var(--text-zinc-400);">HWID Auto-Locking</span>
-              <span class="badge badge-success">ENABLED</span>
+              <span class="badge badge-success"><i class="fa-solid fa-fingerprint"></i> ENABLED</span>
             </div>
-            <div style="display:flex; justify-content:space-between;">
-              <span style="color:var(--text-zinc-400);">Global loadstring Hook Guard</span>
-              <span class="badge badge-success">ENGAGED</span>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <span style="color:var(--text-zinc-400);">Anti-Hook Compiler Guard</span>
+              <span class="badge badge-success"><i class="fa-solid fa-shield-cat"></i> ENGAGED</span>
             </div>
           </div>
         </div>
@@ -98,8 +103,8 @@
     <!-- VIEW 2: Scripts Hub -->
     <section id="view-scripts" class="tab-view" style="display: none;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
-        <h2 style="color:var(--text-white); font-size: 20px;">Script Hubs & Loaders</h2>
-        <button class="btn btn-primary" onclick="openCreateScriptModal()">+ Create Script</button>
+        <h2 style="color:var(--text-white); font-size: 20px;"><i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Script Hubs & Loaders</h2>
+        <button class="btn btn-primary" onclick="openCreateScriptModal()"><i class="fa-solid fa-plus"></i> Create Script</button>
       </div>
 
       <div id="scriptsList">
@@ -116,7 +121,7 @@
             <!-- Injected via JavaScript -->
           </select>
         </div>
-        <button class="btn btn-primary" onclick="openBulkGenModal()">+ Generate Keys</button>
+        <button class="btn btn-primary" onclick="openBulkGenModal()"><i class="fa-solid fa-plus"></i> Generate Keys</button>
       </div>
 
       <div class="card" style="padding: 0; overflow: hidden;">
@@ -145,10 +150,10 @@
     <section id="view-logs" class="tab-view" style="display: none;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
         <div>
-          <h2 style="color:var(--text-white); font-size: 20px;">Live Security Audit Stream</h2>
+          <h2 style="color:var(--text-white); font-size: 20px;"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:8px;"></i>Live Security Audit Stream</h2>
           <p style="color:var(--text-zinc-500); font-size: 13px;">Real-time incoming execution handshakes, HWID validations, and tamper events.</p>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="loadLiveLogs()">🔄 Refresh Now</button>
+        <button class="btn btn-secondary btn-sm" onclick="loadLiveLogs()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Now</button>
       </div>
 
       <div class="card" style="padding: 0; overflow: hidden;">
@@ -173,6 +178,39 @@
         </div>
       </div>
     </section>
+
+    <!-- VIEW 4.5: Bypass Attempts Dedicated Threat Audit -->
+    <section id="view-bypasses" class="tab-view" style="display: none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+        <div>
+          <h2 style="color:var(--danger-color); font-size: 20px;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:8px;"></i>Blocked Bypass Attempts & Threat Feed</h2>
+          <p style="color:var(--text-zinc-500); font-size: 13px;">Intercepted tamper signatures, hooked compiler attempts, HWID mismatches, and replay attacks.</p>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="loadBypassLogs()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Threats</button>
+      </div>
+
+      <div class="card" style="padding: 0; overflow: hidden; border-color: rgba(239, 68, 68, 0.25);">
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Threat Type</th>
+                <th>Roblox Player</th>
+                <th>Game / Place</th>
+                <th>Attempted Key</th>
+                <th>Attack Details</th>
+                <th>Attacker HWID & IP</th>
+              </tr>
+            </thead>
+            <tbody id="bypassTableBody">
+              <!-- Injected via JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
 
     <!-- VIEW 5: 2FA & API Settings -->
     <section id="view-settings" class="tab-view" style="display: none;">
@@ -221,7 +259,7 @@
   <div id="modal2FA" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <h3 class="modal-title">🔐 Setup Two-Factor Authentication</h3>
+        <h3 class="modal-title"><i class="fa-solid fa-lock" style="color:var(--gold-primary); margin-right:8px;"></i>Setup Two-Factor Authentication</h3>
         <button class="modal-close" onclick="closeModal('modal2FA')">&times;</button>
       </div>
       <div class="qr-card">
@@ -240,7 +278,7 @@
         <input type="text" id="verify2FACode" class="form-input" placeholder="123456" maxlength="6">
       </div>
 
-      <button class="btn btn-primary" style="width: 100%;" onclick="confirmEnable2FA()">Verify & Activate 2FA</button>
+      <button class="btn btn-primary" style="width: 100%;" onclick="confirmEnable2FA()"><i class="fa-solid fa-shield-check"></i> Verify & Activate 2FA</button>
     </div>
   </div>
 
@@ -248,7 +286,7 @@
   <div id="modalScript" class="modal-overlay">
     <div class="modal-content" style="max-width: 720px;">
       <div class="modal-header">
-        <h3 id="scriptModalTitle" class="modal-title">Create New Script</h3>
+        <h3 id="scriptModalTitle" class="modal-title"><i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Create New Script</h3>
         <button class="modal-close" onclick="closeModal('modalScript')">&times;</button>
       </div>
 
@@ -273,8 +311,8 @@
           <div class="form-group">
             <label class="form-label">Protection Mode</label>
             <select id="scriptMode" class="form-select">
-              <option value="1">🔒 Armored VM Mode (Anti-Dump & Encrypted)</option>
-              <option value="0">📄 Unobfuscated Mode (Raw Script + Server Whitelist)</option>
+              <option value="1">Armored VM Mode (Anti-Dump & Encrypted)</option>
+              <option value="0">Unobfuscated Mode (Raw Script + Server Whitelist)</option>
             </select>
           </div>
         </div>
@@ -284,7 +322,7 @@
           <textarea id="scriptSource" class="form-textarea" placeholder="-- Enter your raw Lua script here..." style="min-height: 220px;" required></textarea>
         </div>
 
-        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;">Save & Deploy to FleedGuard →</button>
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-cloud-arrow-up"></i> Save & Deploy to FleedGuard</button>
       </form>
     </div>
   </div>
@@ -293,7 +331,7 @@
   <div id="modalBulkGen" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <h3 class="modal-title">🔑 Generate License Keys</h3>
+        <h3 class="modal-title"><i class="fa-solid fa-key" style="color:var(--gold-primary); margin-right:8px;"></i>Generate License Keys</h3>
         <button class="modal-close" onclick="closeModal('modalBulkGen')">&times;</button>
       </div>
 
@@ -323,7 +361,7 @@
           <input type="text" id="genNote" class="form-input" placeholder="VIP Customer / Discord Giveaway">
         </div>
 
-        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;">Generate Keys Now</button>
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-plus"></i> Generate Keys Now</button>
       </form>
     </div>
   </div>

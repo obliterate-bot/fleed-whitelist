@@ -604,17 +604,35 @@ async def get_dashboard_stats(user: Dict = Depends(get_current_user)):
         }
 
 @app.get("/api/logs")
-async def get_logs(limit: int = 50, user: Dict = Depends(get_current_user)):
+async def get_logs(limit: int = 100, status_filter: Optional[str] = None, user: Dict = Depends(get_current_user)):
     async with db.get_db() as conn:
-        cursor = await conn.execute("""
-            SELECT l.*, s.name as script_name
-            FROM execution_logs l
-            JOIN scripts s ON l.script_id = s.id
-            WHERE s.user_id = ?
-            ORDER BY l.id DESC LIMIT ?
-        """, (user["id"], limit))
+        if status_filter == "blocked":
+            cursor = await conn.execute("""
+                SELECT l.*, s.name as script_name
+                FROM execution_logs l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE s.user_id = ? AND l.status != 'SUCCESS'
+                ORDER BY l.id DESC LIMIT ?
+            """, (user["id"], limit))
+        elif status_filter:
+            cursor = await conn.execute("""
+                SELECT l.*, s.name as script_name
+                FROM execution_logs l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE s.user_id = ? AND l.status = ?
+                ORDER BY l.id DESC LIMIT ?
+            """, (user["id"], status_filter, limit))
+        else:
+            cursor = await conn.execute("""
+                SELECT l.*, s.name as script_name
+                FROM execution_logs l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE s.user_id = ?
+                ORDER BY l.id DESC LIMIT ?
+            """, (user["id"], limit))
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
 
 # ----------------- Rate Limiting & Anti-Brute Force Engine -----------------
 handshake_rate_limit: Dict[str, List[float]] = {}

@@ -18,7 +18,10 @@ function showToast(message, type = "success") {
   if (!container) return;
   const toast = document.createElement("div");
   toast.className = `toast toast-${type}`;
-  toast.innerHTML = `<span>${type === 'success' ? '✓' : '⚠'}</span> <span>${message}</span>`;
+  let icon = '<i class="fa-solid fa-circle-check"></i>';
+  if (type === 'error') icon = '<i class="fa-solid fa-triangle-exclamation"></i>';
+  if (type === 'info') icon = '<i class="fa-solid fa-circle-info"></i>';
+  toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
   container.appendChild(toast);
   setTimeout(() => {
     toast.style.opacity = '0';
@@ -167,6 +170,7 @@ function switchTab(tabName) {
   if (tabName === "scripts") loadScripts();
   if (tabName === "licenses") loadLicensesView();
   if (tabName === "logs") loadLiveLogs();
+  if (tabName === "bypasses") loadBypassLogs();
   if (tabName === "settings") loadProfileStats();
 }
 
@@ -244,18 +248,18 @@ async function loadScripts() {
           <div>
             <h3 style="color:var(--text-white); font-size:18px; margin-bottom:4px;">${escapeHtml(s.name)} 
               <span class="badge ${s.is_obfuscated_mode ? 'badge-gold' : 'badge-zinc'}">
-                ${s.is_obfuscated_mode ? '🔒 VM Protected' : '📄 Unobfuscated'}
+                <i class="${s.is_obfuscated_mode ? 'fa-solid fa-lock' : 'fa-solid fa-file-code'}"></i> ${s.is_obfuscated_mode ? 'VM Protected' : 'Unobfuscated'}
               </span>
-              ${s.killswitch_active ? '<span class="badge badge-danger">⚡ KILLSWITCH ACTIVE</span>' : ''}
+              ${s.killswitch_active ? '<span class="badge badge-danger"><i class="fa-solid fa-bolt"></i> KILLSWITCH ACTIVE</span>' : ''}
             </h3>
             <p style="color:var(--text-zinc-400); font-size:13px;">Slug: <code>${s.slug}</code> | Version: v${s.version} | Licenses: ${s.active_licenses || 0}</p>
           </div>
           <div style="display:flex; gap:8px;">
-            <button class="btn btn-secondary btn-sm" onclick="openEditScriptModal(${s.id})">Edit Source</button>
+            <button class="btn btn-secondary btn-sm" onclick="openEditScriptModal(${s.id})"><i class="fa-solid fa-pen-to-square"></i> Edit Source</button>
             <button class="btn ${s.killswitch_active ? 'btn-primary' : 'btn-danger'} btn-sm" onclick="toggleKillswitch(${s.id}, ${s.killswitch_active})">
-              ${s.killswitch_active ? 'Disable Killswitch' : 'Trigger Killswitch'}
+              <i class="fa-solid fa-bolt"></i> ${s.killswitch_active ? 'Disable Killswitch' : 'Trigger Killswitch'}
             </button>
-            <button class="btn btn-danger btn-sm" onclick="deleteScript(${s.id})">Delete</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteScript(${s.id})"><i class="fa-solid fa-trash"></i></button>
           </div>
         </div>
 
@@ -264,7 +268,7 @@ async function loadScripts() {
             loadstring(game:HttpGet("${currentOrigin}/v1/loader/${s.slug}"))()
           </code>
           <button class="btn btn-secondary btn-sm" onclick="copyText('loadstring(game:HttpGet(&quot;${currentOrigin}/v1/loader/${s.slug}&quot;))()', 'Loadstring copied!')">
-            Copy Loadstring
+            <i class="fa-solid fa-copy"></i> Copy Loadstring
           </button>
         </div>
       </div>
@@ -274,7 +278,7 @@ async function loadScripts() {
 }
 
 function openCreateScriptModal() {
-  document.getElementById("scriptModalTitle").innerText = "Create New Script";
+  document.getElementById("scriptModalTitle").innerHTML = '<i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Create New Script';
   document.getElementById("scriptEditId").value = "";
   document.getElementById("scriptName").value = "";
   document.getElementById("scriptSlug").value = "";
@@ -288,7 +292,7 @@ async function openEditScriptModal(id) {
   const script = currentScripts.find(s => s.id === id);
   if (!script) return;
 
-  document.getElementById("scriptModalTitle").innerText = "Edit Script: " + script.name;
+  document.getElementById("scriptModalTitle").innerHTML = `<i class="fa-solid fa-pen-to-square" style="color:var(--gold-primary); margin-right:8px;"></i>Edit Script: ${escapeHtml(script.name)}`;
   document.getElementById("scriptEditId").value = script.id;
   document.getElementById("scriptName").value = script.name;
   document.getElementById("scriptSlug").value = script.slug;
@@ -364,7 +368,7 @@ async function loadLicensesForScript(scriptId) {
     if (!tableBody) return;
 
     if (licenses.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 30px; color:var(--text-zinc-500);">No license keys generated for this script.</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-key" style="margin-right:6px;"></i>No license keys generated for this script.</td></tr>`;
       return;
     }
 
@@ -372,29 +376,29 @@ async function loadLicensesForScript(scriptId) {
       <tr>
         <td>
           <span class="key-badge" onclick="copyText('${l.license_key}')">
-            ${l.license_key} 📋
+            ${l.license_key} <i class="fa-solid fa-copy"></i>
           </span>
         </td>
         <td>${escapeHtml(l.note || "—")}</td>
         <td>
           <span style="font-family:var(--font-mono); font-size:11px;">
-            ${l.hwid ? l.hwid.substring(0, 16) + '...' : '<span style="color:var(--text-zinc-500)">Unbound</span>'}
+            ${l.hwid ? '<i class="fa-solid fa-fingerprint" style="color:var(--gold-primary); margin-right:4px;"></i>' + l.hwid.substring(0, 14) + '...' : '<span style="color:var(--text-zinc-500)">Unbound</span>'}
           </span>
         </td>
-        <td>${l.execution_count} / ${l.max_executions === -1 ? '∞' : l.max_executions}</td>
-        <td>${l.expires_at ? new Date(l.expires_at).toLocaleDateString() : '<span class="badge badge-gold">Lifetime</span>'}</td>
+        <td>${l.execution_count} / ${l.max_executions === -1 ? '<i class="fa-solid fa-infinity"></i>' : l.max_executions}</td>
+        <td>${l.expires_at ? new Date(l.expires_at).toLocaleDateString() : '<span class="badge badge-gold"><i class="fa-solid fa-infinity"></i> Lifetime</span>'}</td>
         <td>
           <span class="badge ${l.is_banned ? 'badge-danger' : 'badge-success'}">
-            ${l.is_banned ? 'Banned' : 'Active'}
+            <i class="${l.is_banned ? 'fa-solid fa-ban' : 'fa-solid fa-circle-check'}"></i> ${l.is_banned ? 'Banned' : 'Active'}
           </span>
         </td>
         <td>
           <div style="display:flex; gap:6px;">
-            <button class="btn btn-secondary btn-sm" onclick="resetHWID(${l.id})">Reset HWID</button>
+            <button class="btn btn-secondary btn-sm" onclick="resetHWID(${l.id})"><i class="fa-solid fa-arrows-rotate"></i> Reset HWID</button>
             <button class="btn ${l.is_banned ? 'btn-secondary' : 'btn-danger'} btn-sm" onclick="toggleBanLicense(${l.id}, ${l.is_banned})">
-              ${l.is_banned ? 'Unban' : 'Ban'}
+              ${l.is_banned ? '<i class="fa-solid fa-unlock"></i> Unban' : '<i class="fa-solid fa-ban"></i> Ban'}
             </button>
-            <button class="btn btn-danger btn-sm" onclick="deleteLicense(${l.id})">✕</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteLicense(${l.id})"><i class="fa-solid fa-trash"></i></button>
           </div>
         </td>
       </tr>
@@ -454,7 +458,7 @@ async function deleteLicense(licenseId) {
   } catch (err) {}
 }
 
-// ----------------- Live Audit Logs -----------------
+// ----------------- Live Audit Logs & Threat Feed -----------------
 async function loadLiveLogs() {
   try {
     const logs = await apiCall("/api/logs?limit=50");
@@ -462,88 +466,173 @@ async function loadLiveLogs() {
     if (!tableBody) return;
 
     if (logs.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 30px; color:var(--text-zinc-500);">No execution logs recorded yet.</td></tr>`;
+      tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>No execution logs recorded yet.</td></tr>`;
+      return;
+    }
+
+    tableBody.innerHTML = logs.map(log => renderLogRow(log)).join("");
+  } catch (err) {}
+}
+
+async function loadBypassLogs() {
+  try {
+    const logs = await apiCall("/api/logs?limit=50&status_filter=blocked");
+    const tableBody = document.getElementById("bypassTableBody");
+    if (!tableBody) return;
+
+    if (logs.length === 0) {
+      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 30px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-check" style="color:var(--success-color); margin-right:6px;"></i>No blocked bypass attempts recorded yet. Your system is safe.</td></tr>`;
       return;
     }
 
     tableBody.innerHTML = logs.map(log => {
-      // Roblox Player Display with direct profile link
-      let rbxPlayerHtml = `<span style="color:var(--text-zinc-500);">—</span>`;
-      if (log.roblox_username && log.roblox_username !== "Unknown") {
-        const profileUrl = log.roblox_user_id ? `https://www.roblox.com/users/${log.roblox_user_id}/profile` : `https://www.roblox.com/search/users?keyword=${encodeURIComponent(log.roblox_username)}`;
-        rbxPlayerHtml = `
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div style="width:28px; height:28px; border-radius:50%; background:var(--bg-card); border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:center; font-size:12px;">👤</div>
-            <div>
-              <a href="${profileUrl}" target="_blank" style="color:var(--gold-light); font-weight:600; text-decoration:none; display:block; font-size:13px;">
-                ${escapeHtml(log.roblox_username)} ↗
-              </a>
-              <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${log.roblox_user_id || '—'}</span>
-            </div>
-          </div>
-        `;
-      }
+      const avatarUrl = log.roblox_user_id && log.roblox_user_id > 0
+        ? `https://www.roblox.com/headshot-thumbnail/image?userId=${log.roblox_user_id}&width=150&height=150&format=png`
+        : `https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png`;
 
-      // Game / Place Display with link to Roblox Place
-      let gamePlaceHtml = `<span style="color:var(--text-zinc-500);">—</span>`;
-      if (log.place_id && log.place_id > 0) {
-        const placeUrl = `https://www.roblox.com/games/${log.place_id}`;
-        gamePlaceHtml = `
-          <div>
-            <a href="${placeUrl}" target="_blank" style="color:var(--text-white); font-weight:500; font-size:13px; text-decoration:none; display:block;">
-              ${escapeHtml(log.game_name || "Roblox Game")} ↗
-            </a>
-            <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${log.place_id}</span>
-          </div>
-        `;
-      } else if (log.game_name) {
-        gamePlaceHtml = `<span style="color:var(--text-zinc-300); font-size:13px;">${escapeHtml(log.game_name)}</span>`;
-      }
-
-      // Status Badge Style
-      let statusBadge = `<span class="badge badge-danger">${log.status}</span>`;
-      if (log.status === 'SUCCESS') {
-        statusBadge = `<span class="badge badge-success">✓ SUCCESS</span>`;
+      let threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> ${log.status}</span>`;
+      if (log.status === 'TAMPER_DETECTED') {
+        threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-shield-virus"></i> HOOK/TAMPER DETECTED</span>`;
       } else if (log.status === 'HWID_MISMATCH') {
-        statusBadge = `<span class="badge badge-danger">⚠️ HWID MISMATCH</span>`;
-      } else if (log.status === 'TAMPER_DETECTED') {
-        statusBadge = `<span class="badge badge-danger">🛡️ TAMPER DETECTED</span>`;
+        threatBadge = `<span class="badge badge-danger" style="background:rgba(234,179,8,0.15); color:var(--gold-primary); border-color:rgba(234,179,8,0.4);"><i class="fa-solid fa-fingerprint"></i> HWID MISMATCH</span>`;
       } else if (log.status === 'INVALID_KEY') {
-        statusBadge = `<span class="badge badge-danger">✕ INVALID KEY</span>`;
-      } else if (log.status === 'EXPIRED') {
-        statusBadge = `<span class="badge badge-zinc">⏱️ EXPIRED</span>`;
-      } else if (log.status === 'BANNED') {
-        statusBadge = `<span class="badge badge-danger">🚫 BANNED</span>`;
+        threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-key"></i> INVALID KEY</span>`;
+      } else if (log.status === 'RATE_LIMITED') {
+        threatBadge = `<span class="badge badge-danger"><i class="fa-solid fa-gauge-high"></i> RATE LIMITED</span>`;
       }
 
       return `
-        <tr>
-          <td style="white-space:nowrap; font-size:12px; color:var(--text-zinc-400);">${new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
-          <td><strong style="color:var(--text-white);">${escapeHtml(log.script_name || "Unknown")}</strong></td>
-          <td>${rbxPlayerHtml}</td>
-          <td>${gamePlaceHtml}</td>
-          <td>
-            ${log.license_key ? `<span class="key-badge" style="font-size:11px;" onclick="copyText('${log.license_key}')">${log.license_key.substring(0, 14)}... 📋</span>` : '<span style="color:var(--text-zinc-500);">N/A</span>'}
+        <tr style="background: rgba(239, 68, 68, 0.03);">
+          <td style="white-space:nowrap; font-size:12px; color:var(--text-zinc-400); font-family:var(--font-mono);">
+            ${new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
           </td>
-          <td>${statusBadge}</td>
+          <td>${threatBadge}</td>
+          <td>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <img src="${avatarUrl}" alt="Roblox Avatar" style="width:34px; height:34px; border-radius:50%; border:1px solid rgba(239,68,68,0.4); background:var(--bg-elevated); object-fit:cover;" onerror="this.src='https://tr.rbxcdn.com/30DAY-AvatarHeadshot-1.png'">
+              <div>
+                <a href="${log.roblox_user_id ? `https://www.roblox.com/users/${log.roblox_user_id}/profile` : '#'}" target="_blank" style="color:var(--text-white); font-weight:600; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:13px;">
+                  ${escapeHtml(log.roblox_username || "Unknown")} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>
+                </a>
+                <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${log.roblox_user_id || '—'}</span>
+              </div>
+            </div>
+          </td>
+          <td>
+            ${log.place_id && log.place_id > 0 ? `
+              <div>
+                <a href="https://www.roblox.com/games/${log.place_id}" target="_blank" style="color:var(--text-white); font-weight:500; font-size:13px; text-decoration:none; display:flex; align-items:center; gap:4px;">
+                  ${escapeHtml(log.game_name || "Roblox Experience")} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>
+                </a>
+                <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${log.place_id}</span>
+              </div>
+            ` : `<span style="color:var(--text-zinc-500); font-size:13px;">${escapeHtml(log.game_name || "—")}</span>`}
+          </td>
+          <td>
+            ${log.license_key ? `<span class="key-badge" style="font-size:11px; border-color:rgba(239,68,68,0.3); color:var(--danger-color);" onclick="copyText('${log.license_key}')">${log.license_key.substring(0, 14)}... <i class="fa-solid fa-copy"></i></span>` : '<span style="color:var(--text-zinc-500);">N/A</span>'}
+          </td>
           <td>
             <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
-              <span class="badge badge-gold" style="font-size:11px;">${escapeHtml(log.executor_name || "Universal")}</span>
+              <span class="badge badge-zinc" style="font-size:10px; text-transform:uppercase;">${escapeHtml(log.executor_name || "Unknown Executor")}</span>
             </div>
-            <span style="color:var(--text-zinc-400); font-size:12px;">${escapeHtml(log.details || "—")}</span>
+            <span style="color:var(--text-zinc-400); font-size:12px;">${escapeHtml(log.details || "Bypass blocked by security armor")}</span>
           </td>
           <td>
             <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-300);">
-              ${log.hwid ? log.hwid.substring(0, 10) + '...' : '—'}
+              <i class="fa-solid fa-fingerprint" style="color:var(--gold-primary); font-size:10px; margin-right:4px;"></i>${log.hwid ? log.hwid.substring(0, 12) + '...' : '—'}
             </div>
-            <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-500);">
-              ${log.ip_address ? escapeHtml(log.ip_address) : '—'}
+            <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-500); margin-top:2px;">
+              <i class="fa-solid fa-network-wired" style="font-size:10px; margin-right:4px;"></i>${log.ip_address ? escapeHtml(log.ip_address) : '—'}
             </div>
           </td>
         </tr>
       `;
     }).join("");
   } catch (err) {}
+}
+
+function renderLogRow(log) {
+  // Roblox Avatar Headshot via official Roblox thumbnail CDN
+  const avatarUrl = log.roblox_user_id && log.roblox_user_id > 0
+    ? `https://www.roblox.com/headshot-thumbnail/image?userId=${log.roblox_user_id}&width=150&height=150&format=png`
+    : `https://www.roblox.com/headshot-thumbnail/image?userId=1&width=150&height=150&format=png`;
+
+  let rbxPlayerHtml = `<span style="color:var(--text-zinc-500);">—</span>`;
+  if (log.roblox_username && log.roblox_username !== "Unknown") {
+    const profileUrl = log.roblox_user_id ? `https://www.roblox.com/users/${log.roblox_user_id}/profile` : `https://www.roblox.com/search/users?keyword=${encodeURIComponent(log.roblox_username)}`;
+    rbxPlayerHtml = `
+      <div style="display:flex; align-items:center; gap:10px;">
+        <img src="${avatarUrl}" alt="Avatar" style="width:34px; height:34px; border-radius:50%; border:1px solid var(--border-subtle); background:var(--bg-elevated); object-fit:cover;" onerror="this.src='https://tr.rbxcdn.com/30DAY-AvatarHeadshot-1.png'">
+        <div>
+          <a href="${profileUrl}" target="_blank" style="color:var(--gold-light); font-weight:600; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:13px;">
+            ${escapeHtml(log.roblox_username)} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>
+          </a>
+          <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${log.roblox_user_id || '—'}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  // Game / Place Display with link
+  let gamePlaceHtml = `<span style="color:var(--text-zinc-500);">—</span>`;
+  if (log.place_id && log.place_id > 0) {
+    const placeUrl = `https://www.roblox.com/games/${log.place_id}`;
+    gamePlaceHtml = `
+      <div>
+        <a href="${placeUrl}" target="_blank" style="color:var(--text-white); font-weight:500; font-size:13px; text-decoration:none; display:flex; align-items:center; gap:4px;">
+          ${escapeHtml(log.game_name || "Roblox Game")} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:10px; opacity:0.6;"></i>
+        </a>
+        <span style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${log.place_id}</span>
+      </div>
+    `;
+  } else if (log.game_name) {
+    gamePlaceHtml = `<span style="color:var(--text-zinc-300); font-size:13px;">${escapeHtml(log.game_name)}</span>`;
+  }
+
+  // Status Badge
+  let statusBadge = `<span class="badge badge-danger">${log.status}</span>`;
+  if (log.status === 'SUCCESS') {
+    statusBadge = `<span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> SUCCESS</span>`;
+  } else if (log.status === 'HWID_MISMATCH') {
+    statusBadge = `<span class="badge badge-danger" style="background:rgba(234,179,8,0.15); color:var(--gold-primary);"><i class="fa-solid fa-fingerprint"></i> HWID MISMATCH</span>`;
+  } else if (log.status === 'TAMPER_DETECTED') {
+    statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-shield-virus"></i> TAMPER DETECTED</span>`;
+  } else if (log.status === 'INVALID_KEY') {
+    statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-key"></i> INVALID KEY</span>`;
+  } else if (log.status === 'EXPIRED') {
+    statusBadge = `<span class="badge badge-zinc"><i class="fa-solid fa-clock"></i> EXPIRED</span>`;
+  } else if (log.status === 'BANNED') {
+    statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-ban"></i> BANNED</span>`;
+  }
+
+  return `
+    <tr>
+      <td style="white-space:nowrap; font-size:12px; color:var(--text-zinc-400); font-family:var(--font-mono);">
+        ${new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+      </td>
+      <td><strong style="color:var(--text-white);">${escapeHtml(log.script_name || "Unknown")}</strong></td>
+      <td>${rbxPlayerHtml}</td>
+      <td>${gamePlaceHtml}</td>
+      <td>
+        ${log.license_key ? `<span class="key-badge" style="font-size:11px;" onclick="copyText('${log.license_key}')">${log.license_key.substring(0, 14)}... <i class="fa-solid fa-copy"></i></span>` : '<span style="color:var(--text-zinc-500);">N/A</span>'}
+      </td>
+      <td>${statusBadge}</td>
+      <td>
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
+          <span class="badge badge-gold" style="font-size:11px;">${escapeHtml(log.executor_name || "Universal")}</span>
+        </div>
+        <span style="color:var(--text-zinc-400); font-size:12px;">${escapeHtml(log.details || "—")}</span>
+      </td>
+      <td>
+        <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-300);">
+          <i class="fa-solid fa-fingerprint" style="color:var(--gold-primary); font-size:10px; margin-right:4px;"></i>${log.hwid ? log.hwid.substring(0, 12) + '...' : '—'}
+        </div>
+        <div style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-500); margin-top:2px;">
+          <i class="fa-solid fa-network-wired" style="font-size:10px; margin-right:4px;"></i>${log.ip_address ? escapeHtml(log.ip_address) : '—'}
+        </div>
+      </td>
+    </tr>
+  `;
 }
 
 // Helper: Escape HTML
@@ -567,6 +656,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       liveLogInterval = setInterval(() => {
         const activeTab = document.querySelector(".tab-btn.active")?.getAttribute("data-tab");
         if (activeTab === "logs") loadLiveLogs();
+        if (activeTab === "bypasses") loadBypassLogs();
         if (activeTab === "overview") loadOverviewStats();
       }, 5000);
     }

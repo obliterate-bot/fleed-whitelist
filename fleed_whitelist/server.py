@@ -706,7 +706,7 @@ async def serve_raw_loader(slug: str, request: Request):
         cursor = await conn.execute("SELECT name, slug FROM scripts WHERE slug = ?", (slug,))
         script = await cursor.fetchone()
         if not script:
-            return "-- [FleedGuard] ERROR: Script not found or removed."
+            return f'error("[FleedGuard] ERROR: Script \'{slug}\' was not found on this server. Please check your slug.")'
 
     base_url = str(request.base_url)
     if request.headers.get("X-Forwarded-Proto") and request.headers.get("X-Forwarded-Host"):

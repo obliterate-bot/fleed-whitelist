@@ -318,34 +318,50 @@ for i = 1, decoded_len do
     cipher_bytes[i] = _string_byte(decoded_str, i)
 end
 
-local key_bytes = session_key .. nonce
-
 -- 9. Anti-Dumping, Anti-Decompiler & Sandboxed Execution Guard
--- Verify compiler and execution environment
-if not isNative(_loadstring) or detectMetatableTamper() then
+local function securityKick(reason)
     if game and game.Players and game.Players.LocalPlayer then
-        game.Players.LocalPlayer:Kick("[FleedGuard Security] Hooked compiler or metamethod manipulation detected.")
+        pcall(function()
+            game.Players.LocalPlayer:Kick("[FleedGuard Security] " .. _tostring(reason))
+        end)
     end
+end
+
+-- Trap 1: Verify compiler and execution environment
+if not isNative(_loadstring) or detectMetatableTamper() then
+    securityKick("Critical runtime environment or compiler hook detected.")
     return
 end
 
--- Anti-Dumper Trap: Detect if global clipboard/file dumping functions are hooked to capture payload
+-- Trap 2: Anti-Dumper Traps (Detect if global clipboard, file dumping, or memory scanning functions are hooked)
 if setclipboard and not isNative(setclipboard) then
-    if game and game.Players and game.Players.LocalPlayer then
-        game.Players.LocalPlayer:Kick("[FleedGuard Security] Memory dumper hook detected.")
-    end
+    securityKick("Memory dumper / clipboard hook detected.")
     return
 end
 
 if writefile and not isNative(writefile) then
-    if game and game.Players and game.Players.LocalPlayer then
-        game.Players.LocalPlayer:Kick("[FleedGuard Security] File interceptor hook detected.")
-    end
+    securityKick("File interceptor hook detected.")
+    return
+end
+
+if appendfile and not isNative(appendfile) then
+    securityKick("File logging hook detected.")
+    return
+end
+
+if getgc and not isNative(getgc) then
+    securityKick("GC memory scanner detected.")
     return
 end
 
 -- Decrypt source code in ephemeral memory
 local source_code = stream_decrypt(cipher_bytes, key_bytes)
+
+-- Trap 3: Integrity verification on decrypted payload buffer
+if not source_code or #source_code == 0 then
+    securityKick("Payload verification error.")
+    return
+end
 
 -- Attempt Luau Bytecode compilation or Loadstring
 local exec_fn = nil
@@ -364,7 +380,8 @@ if not exec_fn then
 end
 
 if not exec_fn then
-    return warn("[FleedGuard] Failed to parse script payload: " .. _tostring(syntax_err))
+    securityKick("Tampered payload execution failed.")
+    return
 end
 
 -- Isolate environment to prevent external variable scraping / getrenv / getgc constant scraping
@@ -387,6 +404,7 @@ decoded_str = nil
 -- Execute securely
 print("[FleedGuard] Successfully authenticated " .. _tostring(SCRIPT_SLUG) .. "! Launching...")
 task.spawn(exec_fn)
+
 '''
 
         if obfuscate:

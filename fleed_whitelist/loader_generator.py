@@ -373,6 +373,27 @@ if getgc and not isNative(getgc) then
     return
 end
 
+if getprotos and not isNative(getprotos) then
+    securityKick("Prototype extractor detected.")
+    return
+end
+
+if getconstants and not isNative(getconstants) then
+    securityKick("Constant extractor detected.")
+    return
+end
+
+if getupvalues and not isNative(getupvalues) then
+    securityKick("Upvalue reflection hook detected.")
+    return
+end
+
+if decompile and not isNative(decompile) then
+    securityKick("Decompiler hook detected.")
+    return
+end
+
+
 -- Decrypt source code in ephemeral memory
 local source_code = stream_decrypt(cipher_bytes, key_bytes)
 

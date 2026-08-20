@@ -425,8 +425,8 @@ local function hmac_sha256_hex(key, msg)
     return sha256_hex(_table_concat(k_opad) .. inner_bin)
 end
 
--- High-Performance Zero-Allocation RC4 Decrypt (Chunked in 2048-byte batches)
-local function stream_decrypt(cipher_bytes, key_bytes)
+-- High-Performance Direct String RC4 Decrypt (Chunked in 2048-byte batches)
+local function stream_decrypt_str(cipher_str, key_bytes)
     local S = table.create(256)
     for i = 0, 255 do S[i] = i end
     local j = 0
@@ -436,7 +436,7 @@ local function stream_decrypt(cipher_bytes, key_bytes)
         S[i], S[j] = S[j], S[i]
     end
     local i, j2 = 0, 0
-    local len = #cipher_bytes
+    local len = #cipher_str
     local CHUNK_SIZE = 2048
     local num_chunks = _math_floor((len + CHUNK_SIZE - 1) / CHUNK_SIZE)
     local chunks = table.create(num_chunks)
@@ -450,7 +450,7 @@ local function stream_decrypt(cipher_bytes, key_bytes)
         j2 = (j2 + S[i]) % 256
         S[i], S[j2] = S[j2], S[i]
         local k = S[(S[i] + S[j2]) % 256]
-        c_buf[c_pos] = _bxor(cipher_bytes[idx], k)
+        c_buf[c_pos] = _bxor(_string_byte(cipher_str, idx), k)
         c_pos = c_pos + 1
         
         if c_pos > CHUNK_SIZE then
@@ -560,17 +560,15 @@ else
     return
 end
 
--- 8. In-Memory Decryption, AEAD Tag Verification & Stream Parsing
+-- 8. In-Memory Decryption & Direct Stream Parsing
 local decoded_str = base64_decode_safe(verify_data.payload)
-local decoded_len = #decoded_str
-local cipher_bytes = table.create(decoded_len)
-for i = 1, decoded_len do
-    cipher_bytes[i] = _string_byte(decoded_str, i)
+if not decoded_str or #decoded_str == 0 then
+    securityKick("Payload verification error: empty response.")
+    return
 end
 
 -- 8.5 Ciphertext Stream Parsing & In-Memory Decryption
 local expected_tag = verify_data.auth_tag
-
 
 -- 9. Anti-Dumping, Anti-Decompiler & Sandboxed Execution Guard
 -- (securityKick already defined at top of loader — reuse it)
@@ -584,8 +582,6 @@ end
 -- Trap 2: Anti-Dumper Traps (clipboard, file, memory scanning hooks)
 local dump_checks = {{
     {{setclipboard, "setclipboard"}},
-    {{writefile, "writefile"}},
-    {{appendfile, "appendfile"}},
     {{getgc, "getgc"}},
     {{getprotos, "getprotos"}},
     {{getconstants, "getconstants"}},
@@ -618,8 +614,7 @@ for _, check in _rawget(hook_tools, 1) and pairs(hook_tools) or next, hook_tools
     end
 end
 
--- Trap 4: debug.setupvalue / debug.getupvalue / debug.getinfo reflection attacks
--- Attackers can use debug.setupvalue to replace source_code variable with a dumper BEFORE we nil it
+-- Trap 4: debug reflection hook checks
 if debug then
     if debug.setupvalue and not isNative(debug.setupvalue) then
         securityKick("Debug reflection hook (setupvalue) detected.")
@@ -639,52 +634,32 @@ if debug then
     end
 end
 
--- Trap 5: getrenv / getgenv scraping (attackers scan entire env for string references)
+-- Trap 5: getrenv scraping check
 if getrenv and not isNative(getrenv) then
     securityKick("Registry environment scraper detected.")
     return
 end
 
--- Decrypt source code in ephemeral memory
+-- Decrypt source code in ephemeral memory directly from decoded ciphertext
 local key_bytes = session_key .. nonce
-local source_code = stream_decrypt(cipher_bytes, key_bytes)
+local source_code = stream_decrypt_str(decoded_str, key_bytes)
 
 -- Trap 6: Integrity verification on decrypted payload buffer
 if not source_code or #source_code == 0 then
-    securityKick("Payload verification error.")
+    securityKick("Payload decryption error.")
     return
 end
 
--- Attempt Luau Bytecode compilation or Loadstring
-local exec_fn = nil
-local syntax_err = nil
-
-local _loadbytecode = loadbytecode or (crypt and crypt.luau_load)
-if _loadbytecode and crypt and crypt.luau_compile and isNative(_loadbytecode) then
-    local compiled_ok, bc = _pcall(function() return crypt.luau_compile(source_code) end)
-    if compiled_ok and bc then
-        exec_fn = _loadbytecode(bc)
-    end
-end
-
+-- Fast-path JIT loadstring compilation
+local exec_fn, syntax_err = _loadstring(source_code)
 if not exec_fn then
-    exec_fn, syntax_err = _loadstring(source_code)
-end
-
-if not exec_fn then
-    securityKick("Tampered payload execution failed.")
+    securityKick("Tampered payload execution failed: " .. _tostring(syntax_err))
     return
 end
-
--- Isolate environment to prevent external variable scraping / getrenv / getgc constant scraping
-local sandbox_env = _getfenv(exec_fn)
-sandbox_env.script = nil
-_setfenv(exec_fn, sandbox_env)
 
 -- Scramble and zero ALL memory references immediately to foil GC scrapers (getgc / getprotos)
 source_code = nil
 verify_data = nil
-cipher_bytes = nil
 key_bytes = nil
 session_key = nil
 sig_payload = nil
@@ -692,25 +667,6 @@ client_sig = nil
 init_resp = nil
 verify_resp = nil
 decoded_str = nil
-raw_b64 = nil
-decode_func = nil
-decoded_str = nil
-
--- Trap 7: Post-execution continuous integrity monitor
--- Spawns a background thread that continuously checks for late-hook attempts
--- (attacker hooks writefile/setclipboard AFTER FleedGuard loads but BEFORE script runs)
-task.spawn(function()
-    while true do
-        task.wait(2)
-        if (writefile and not isNative(writefile)) or
-           (setclipboard and not isNative(setclipboard)) or
-           (hookfunction and not isNative(hookfunction)) or
-           detectMetatableTamper() then
-            securityKick("Post-load hook injection detected.")
-            return
-        end
-    end
-end)
 
 -- Execute securely
 print("[FleedGuard] Successfully authenticated " .. _tostring(SCRIPT_SLUG) .. "! Launching...")

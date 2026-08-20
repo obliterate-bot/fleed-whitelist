@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FleedGuard Whitelist & Security API",
-    version="2.0.3",
+    version="2.0.4",
     description="Enterprise-grade Roblox script whitelisting and protection service.",
     lifespan=lifespan
 )
@@ -76,7 +76,7 @@ async def health_check():
     return {
         "status": "healthy",
         "service": "FleedGuard Whitelist API",
-        "version": "2.0.3",
+        "version": "2.0.4",
         "timestamp": int(time.time())
     }
 

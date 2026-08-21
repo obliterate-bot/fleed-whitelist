@@ -1027,7 +1027,8 @@ class Utility(commands.Cog):
                 res.append(chr(base + (ord(ch) - base + shift) % 26))
                 k_idx += 1
             else: res.append(ch)
-        await ctx.send(embed=fleed_embed(title='vigenère encrypted', description=f'```{''.join(res)}```', author=ctx.author))
+        res_str = "".join(res)
+        await ctx.send(embed=fleed_embed(title='vigenère encrypted', description=f"```{res_str}```", author=ctx.author))
 
     @commands.command(name="vigenere_decrypt", help="Decrypt text using classical Vigenère polyalphabetic cipher")
     async def vigenere_decrypt_cmd(self, ctx, key: str, *, ciphertext: str):
@@ -1042,7 +1043,8 @@ class Utility(commands.Cog):
                 res.append(chr(base + (ord(ch) - base - shift) % 26))
                 k_idx += 1
             else: res.append(ch)
-        await ctx.send(embed=fleed_embed(title='vigenère decrypted', description=f'```{''.join(res)}```', author=ctx.author))
+        res_str = "".join(res)
+        await ctx.send(embed=fleed_embed(title='vigenère decrypted', description=f"```{res_str}```", author=ctx.author))
 
     @commands.command(name="is_ip_private", help="Check if an IP address belongs to RFC 1918 private range")
     async def is_ip_private_cmd(self, ctx, ip_address: str):

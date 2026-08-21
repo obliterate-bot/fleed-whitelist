@@ -239,6 +239,10 @@ class DiscordWebhookCreateRequest(BaseModel):
     webhook_url: str
     is_enabled: Optional[int] = 1
 
+class TestWebhookRequest(BaseModel):
+    webhook_url: Optional[str] = None
+
+
 async def send_discord_security_alert(webhook_url: str, title: str, description: str, fields: List[Dict], color: int = 0xEF4444):
     """Sends a rich, non-blocking Discord security alert embed."""
     if not webhook_url or not str(webhook_url).startswith("https://discord.com/api/webhooks/"):

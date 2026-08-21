@@ -4,11 +4,137 @@ import datetime
 import secrets
 import aiohttp
 import re
+import io
+from PIL import Image
 from typing import Optional, Union
 import config
 from utils import fleed_embed, success_embed, error_embed, warn_embed, find_role, send_group_help
 from fleed_whitelist.database import db
 from fleed_whitelist.loader_generator import loader_generator
+
+# FontAwesome / VoiceMaster Application Emojis
+VM_APP_EMOJIS = {
+    "lock": "<:vm_lock:1539043578247127093>",
+    "unlock": "<:vm_unlock:1539043580897787934>",
+    "ghost": "<:vm_ghost:1539043585176109067>",
+    "reveal": "<:vm_reveal:1539043590116868146>",
+    "rename": "<:vm_rename:1539043592692170813>",
+    "claim": "<:vm_claim:1539043595414278314>",
+    "increase": "<:vm_plus:1539043598123667517>",
+    "decrease": "<:vm_minus:1539043601118396436>",
+    "delete": "<:vm_delete:1539043604054409287>",
+    "info": "<:vm_info:1539043607057666148>",
+    "yes": "<:yes:1539039322693435433>",
+    "no": "<:no:1539038121088385175>",
+}
+
+FA_ICONS = {
+    "plus": discord.PartialEmoji.from_str("<:vm_plus:1539043598123667517>"),
+    "info": discord.PartialEmoji.from_str("<:vm_info:1539043607057666148>"),
+    "claim": discord.PartialEmoji.from_str("<:vm_claim:1539043595414278314>"),
+    "lock": discord.PartialEmoji.from_str("<:vm_lock:1539043578247127093>"),
+    "unlock": discord.PartialEmoji.from_str("<:vm_unlock:1539043580897787934>"),
+    "rename": discord.PartialEmoji.from_str("<:vm_rename:1539043592692170813>"),
+    "delete": discord.PartialEmoji.from_str("<:vm_delete:1539043604054409287>"),
+    "yes": discord.PartialEmoji.from_str("<:yes:1539039322693435433>"),
+    "no": discord.PartialEmoji.from_str("<:no:1539038121088385175>"),
+    "reveal": discord.PartialEmoji.from_str("<:vm_reveal:1539043590116868146>"),
+}
+
+async def get_server_icon_color(guild: Optional[discord.Guild]) -> int:
+    if not guild or not guild.icon:
+        return 0xFEE75C
+    try:
+        icon_bytes = await guild.icon.read()
+        im = Image.open(io.BytesIO(icon_bytes)).convert("RGBA")
+        im = im.resize((32, 32))
+        colors = im.getcolors(32 * 32)
+        if not colors:
+            return 0xFEE75C
+        best_color = None
+        best_score = -1
+        for count, (r, g, b, a) in colors:
+            if a < 128:
+                continue
+            delta = max(r, g, b) - min(r, g, b)
+            if 30 < (r + g + b) // 3 < 240:
+                score = count * (delta + 1)
+                if score > best_score:
+                    best_score = score
+                    best_color = (r, g, b)
+        if best_color:
+            return (best_color[0] << 16) + (best_color[1] << 8) + best_color[2]
+    except Exception:
+        pass
+    return 0xFEE75C
+
+async def create_staff_panel_embed(guild: Optional[discord.Guild], bot: commands.Bot, slug: str = "all") -> discord.Embed:
+    icon_url = guild.icon.url if guild and guild.icon else (bot.user.display_avatar.url if bot and bot.user else None)
+    color = await get_server_icon_color(guild) if guild else 0xFEE75C
+    
+    e_plus = VM_APP_EMOJIS["increase"]
+    e_info = VM_APP_EMOJIS["info"]
+    e_key = VM_APP_EMOJIS["claim"]
+    e_lock = VM_APP_EMOJIS["lock"]
+    e_guide = VM_APP_EMOJIS["rename"]
+
+    desc = (
+        "Manage your script whitelists and buyers by using the buttons below.\n\n"
+        "**Button Usage**\n"
+        f"{e_plus} — `Whitelist Member`\n"
+        f"{e_info} — `Manage / Reset Buyer`\n"
+        f"{e_key} — `Generate Key`\n"
+        f"{e_lock} — `Grant Manager Access`\n"
+        f"{e_guide} — `Commands Guide`"
+    )
+
+    embed = discord.Embed(
+        title="Whitelist Interface",
+        description=desc,
+        color=color
+    )
+    if guild and icon_url:
+        embed.set_author(name=guild.name, icon_url=icon_url)
+        embed.set_thumbnail(url=icon_url)
+    elif bot.user:
+        embed.set_author(name=bot.user.name)
+
+    return embed
+
+async def create_buyer_panel_embed(guild: Optional[discord.Guild], bot: commands.Bot, script_name: str, slug: str) -> discord.Embed:
+    icon_url = guild.icon.url if guild and guild.icon else (bot.user.display_avatar.url if bot and bot.user else None)
+    color = await get_server_icon_color(guild) if guild else 0xFEE75C
+
+    e_claim = VM_APP_EMOJIS["claim"]
+    e_info = VM_APP_EMOJIS["info"]
+    e_plus = VM_APP_EMOJIS["increase"]
+    e_unlock = VM_APP_EMOJIS["unlock"]
+    e_delete = VM_APP_EMOJIS["delete"]
+    e_stats = VM_APP_EMOJIS["reveal"]
+
+    desc = (
+        f"Manage your license and script access by using the buttons below.\n\n"
+        "**Button Usage**\n"
+        f"{e_claim} — `Redeem Key`\n"
+        f"{e_info} — `Get Script`\n"
+        f"{e_plus} — `Get Role`\n"
+        f"{e_unlock} — `Reset HWID`\n"
+        f"{e_delete} — `Unlink Key`\n"
+        f"{e_stats} — `Get Stats`"
+    )
+
+    embed = discord.Embed(
+        title=f"{script_name} Interface",
+        description=desc,
+        color=color
+    )
+    if guild and icon_url:
+        embed.set_author(name=guild.name, icon_url=icon_url)
+        embed.set_thumbnail(url=icon_url)
+    elif bot.user:
+        embed.set_author(name=bot.user.name)
+
+    return embed
 
 def parse_whitelist_duration(time_str: Optional[str]) -> tuple[Optional[str], str]:
     """
@@ -321,7 +447,7 @@ class WhitelistControlPanelView(discord.ui.View):
             self.unlink_btn.custom_id = f"fg_panel_unlink:{slug}"
             self.stats_btn.custom_id = f"fg_panel_stats:{slug}"
 
-    @discord.ui.button(label="Redeem Key", style=discord.ButtonStyle.success, row=0, custom_id="fg_panel_redeem:default")
+    @discord.ui.button(custom_id="fg_panel_redeem:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["claim"])
     async def redeem_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         async with db.get_db() as conn:
@@ -338,7 +464,7 @@ class WhitelistControlPanelView(discord.ui.View):
         )
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Get Script", style=discord.ButtonStyle.primary, row=0, custom_id="fg_panel_script:default")
+    @discord.ui.button(custom_id="fg_panel_script:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["info"])
     async def script_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         user_id_str = str(interaction.user.id)
@@ -439,7 +565,7 @@ class WhitelistControlPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Get Role", style=discord.ButtonStyle.primary, row=0, custom_id="fg_panel_role:default")
+    @discord.ui.button(custom_id="fg_panel_role:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["plus"])
     async def role_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         user_id_str = str(interaction.user.id)
@@ -491,7 +617,7 @@ class WhitelistControlPanelView(discord.ui.View):
                 ephemeral=True
             )
 
-    @discord.ui.button(label="Reset HWID", style=discord.ButtonStyle.success, row=1, custom_id="fg_panel_resethwid:default")
+    @discord.ui.button(custom_id="fg_panel_resethwid:default", style=discord.ButtonStyle.secondary, row=1, emoji=FA_ICONS["unlock"])
     async def resethwid_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         user_id_str = str(interaction.user.id)
@@ -525,7 +651,7 @@ class WhitelistControlPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Unlink Key", style=discord.ButtonStyle.danger, row=1, custom_id="fg_panel_unlink:default")
+    @discord.ui.button(custom_id="fg_panel_unlink:default", style=discord.ButtonStyle.secondary, row=1, emoji=FA_ICONS["delete"])
     async def unlink_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
         user_id_str = str(interaction.user.id)
@@ -563,7 +689,7 @@ class WhitelistControlPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @discord.ui.button(label="Get Stats", style=discord.ButtonStyle.success, row=1, custom_id="fg_panel_stats:default")
+    @discord.ui.button(custom_id="fg_panel_stats:default", style=discord.ButtonStyle.secondary, row=1, emoji=FA_ICONS["reveal"])
     async def stats_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1]
 
@@ -591,73 +717,6 @@ class WhitelistControlPanelView(discord.ui.View):
                         f"Total Executions: {exec_data['execs'] or 0}",
             author=interaction.user
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-# ------------------- Staff Whitelist Management Panel & Modals -------------------
-
-async def check_user_is_manager(user: Union[discord.Member, discord.User], guild: Optional[discord.Guild], slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
-    """
-    Verifies if an interacting user has whitelist manager permissions for an interaction / modal.
-    """
-    user_id_str = str(user.id)
-    clean_slug = slug.strip().lower() if slug and slug != "all" else None
-    guild_id_str = str(guild.id) if guild else None
-
-    # 1. Bot Owners
-    is_owner = False
-    if user.id == 539594512981295106 or user.id in getattr(config, "OWNER_IDS", []):
-        is_owner = True
-    if is_owner:
-        return True, None, None
-
-    # 2. Server Administrator or Server Owner
-    if guild and isinstance(user, discord.Member):
-        if user.guild_permissions.administrator or user.id == guild.owner_id:
-            return True, None, None
-
-    async with db.get_db() as conn:
-        # 3. Direct Website Linked Developer Account
-        cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (user_id_str,))
-        user_row = await cursor.fetchone()
-        if user_row:
-            if user_row["role"] == "admin":
-                return True, None, dict(user_row)
-            if clean_slug:
-                cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
-                script_row = await cursor.fetchone()
-                if script_row and script_row["user_id"] == user_row["id"]:
-                    return True, None, dict(user_row)
-            else:
-                return True, None, dict(user_row)
-
-        # 4. Whitelist Managers Table (User ID)
-        cursor = await conn.execute("""
-            SELECT * FROM whitelist_managers 
-            WHERE discord_user_id = ? AND is_role = 0
-              AND (script_slug = ? OR script_slug = 'all')
-              AND (guild_id = ? OR guild_id IS NULL)
-        """, (user_id_str, clean_slug or 'all', guild_id_str))
-        if await cursor.fetchone():
-            return True, None, None
-
-        # 5. Whitelist Managers Table (Role ID)
-        if guild and isinstance(user, discord.Member) and hasattr(user, "roles"):
-            role_ids = [str(r.id) for r in user.roles]
-            if role_ids:
-                placeholders = ",".join(["?"] * len(role_ids))
-                params = [clean_slug or 'all', guild_id_str] + role_ids
-                cursor = await conn.execute(f"""
-                    SELECT * FROM whitelist_managers
-                    WHERE is_role = 1
-                      AND (script_slug = ? OR script_slug = 'all')
-                      AND (guild_id = ? OR guild_id IS NULL)
-                      AND discord_user_id IN ({placeholders})
-                """, tuple(params))
-                if await cursor.fetchone():
-                    return True, None, None
-
-    return False, "you do not have whitelist manager permissions for this script.", None
-
 # ------------------- Staff Whitelist Dropdown Components & Interactive Views -------------------
 
 async def check_user_is_manager(user: Union[discord.Member, discord.User], guild: Optional[discord.Guild], slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
@@ -855,7 +914,7 @@ class StaffInteractiveWhitelistView(discord.ui.View):
         self.add_item(ScriptSelect(scripts=scripts, default_slug=default_slug, include_all=False, row=1))
         self.add_item(DurationSelect(row=2))
 
-    @discord.ui.button(label="Confirm Whitelist", style=discord.ButtonStyle.success, emoji="✅", row=3)
+    @discord.ui.button(label="confirm", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["yes"], row=3)
     async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self.selected_user:
             return await interaction.response.send_message(embed=error_embed("please select a buyer from the user dropdown first.", interaction.user), ephemeral=True)
@@ -954,7 +1013,7 @@ class StaffInteractiveWhitelistView(discord.ui.View):
             child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌", row=3)
+    @discord.ui.button(label="cancel", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["no"], row=3)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         for child in self.children:
             child.disabled = True
@@ -1001,7 +1060,7 @@ class StaffInteractiveBuyerManagerView(discord.ui.View):
         )
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Reset HWID", style=discord.ButtonStyle.success, emoji="🔄", row=1)
+    @discord.ui.button(label="reset hwid", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["unlock"], row=1)
     async def reset_hwid_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self.selected_license_id:
             return await interaction.response.send_message(embed=error_embed("please select a buyer from the dropdown first.", interaction.user), ephemeral=True)
@@ -1014,7 +1073,7 @@ class StaffInteractiveBuyerManagerView(discord.ui.View):
         await self.update_buyer_display(interaction)
         await interaction.followup.send(embed=success_embed("successfully reset hardware ID for this buyer.", interaction.user), ephemeral=True)
 
-    @discord.ui.button(label="Resend DM", style=discord.ButtonStyle.primary, emoji="📬", row=1)
+    @discord.ui.button(label="resend dm", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["info"], row=1)
     async def resend_dm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self.selected_license_id:
             return await interaction.response.send_message(embed=error_embed("please select a buyer from the dropdown first.", interaction.user), ephemeral=True)
@@ -1057,7 +1116,7 @@ class StaffInteractiveBuyerManagerView(discord.ui.View):
         except Exception:
             await interaction.response.send_message(embed=warn_embed(f"could not deliver to {target_member.mention}'s DMs (DMs are closed).", interaction.user), ephemeral=True)
 
-    @discord.ui.button(label="Toggle Ban", style=discord.ButtonStyle.secondary, emoji="🚫", row=1)
+    @discord.ui.button(label="toggle ban", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["lock"], row=1)
     async def toggle_ban_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self.selected_license_id:
             return await interaction.response.send_message(embed=error_embed("please select a buyer from the dropdown first.", interaction.user), ephemeral=True)
@@ -1077,7 +1136,7 @@ class StaffInteractiveBuyerManagerView(discord.ui.View):
         status_text = "banned" if new_status else "unbanned"
         await interaction.followup.send(embed=success_embed(f"license is now {status_text}.", interaction.user), ephemeral=True)
 
-    @discord.ui.button(label="Revoke Access", style=discord.ButtonStyle.danger, emoji="🗑️", row=1)
+    @discord.ui.button(label="revoke", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["delete"], row=1)
     async def revoke_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self.selected_license_id:
             return await interaction.response.send_message(embed=error_embed("please select a buyer from the dropdown first.", interaction.user), ephemeral=True)
@@ -1121,7 +1180,7 @@ class StaffInteractiveGenKeyView(discord.ui.View):
         self.add_item(ScriptSelect(scripts=scripts, default_slug=default_slug, include_all=False, row=0))
         self.add_item(DurationSelect(row=1))
 
-    @discord.ui.button(label="Generate Key", style=discord.ButtonStyle.primary, emoji="🚀", row=2)
+    @discord.ui.button(label="generate", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["claim"], row=2)
     async def generate_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         clean_slug = self.selected_slug.strip().lower()
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, clean_slug)
@@ -1179,7 +1238,7 @@ class StaffInteractiveGenKeyView(discord.ui.View):
             child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌", row=2)
+    @discord.ui.button(label="cancel", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["no"], row=2)
     async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         for child in self.children:
             child.disabled = True
@@ -1198,7 +1257,7 @@ class StaffInteractiveGrantManagerView(discord.ui.View):
         self.add_item(ManagerRoleSelect(placeholder="🛡️ Or select role to grant manager access...", row=1))
         self.add_item(ScriptSelect(scripts=scripts, default_slug=default_slug, include_all=True, row=2))
 
-    @discord.ui.button(label="Grant User Access", style=discord.ButtonStyle.success, emoji="👑", row=3)
+    @discord.ui.button(label="grant user", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["claim"], row=3)
     async def grant_user_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self.selected_user:
             return await interaction.response.send_message(embed=error_embed("please select a user from the user dropdown first.", interaction.user), ephemeral=True)
@@ -1262,7 +1321,7 @@ class StaffInteractiveGrantManagerView(discord.ui.View):
             child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Grant Role Access", style=discord.ButtonStyle.primary, emoji="🛡️", row=3)
+    @discord.ui.button(label="grant role", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["lock"], row=3)
     async def grant_role_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self.selected_role:
             return await interaction.response.send_message(embed=error_embed("please select a role from the role dropdown first.", interaction.user), ephemeral=True)
@@ -1324,7 +1383,7 @@ class StaffWhitelistPanelView(discord.ui.View):
         self.grant_btn.custom_id = f"fg_staff_grant:{slug}"
         self.guide_btn.custom_id = f"fg_staff_guide:{slug}"
 
-    @discord.ui.button(label="Whitelist Member", style=discord.ButtonStyle.success, emoji="➕", row=0, custom_id="fg_staff_add:default")
+    @discord.ui.button(custom_id="fg_staff_add:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["plus"])
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
@@ -1340,13 +1399,13 @@ class StaffWhitelistPanelView(discord.ui.View):
 
         view = StaffInteractiveWhitelistView(scripts=scripts, default_slug=slug if slug != "all" else scripts[0]["slug"], author=interaction.user)
         embed = fleed_embed(
-            title="➕ whitelist member — dropdown selector",
-            description="select the member, script hub, and duration from the dropdown menus below, then click **confirm whitelist**.",
+            title="whitelist member — dropdown selector",
+            description="select the member, script hub, and duration from the dropdown menus below, then click **confirm**.",
             author=interaction.user
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="Manage / Reset Buyer", style=discord.ButtonStyle.primary, emoji="🔍", row=0, custom_id="fg_staff_manage:default")
+    @discord.ui.button(custom_id="fg_staff_manage:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["info"])
     async def manage_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
@@ -1372,13 +1431,13 @@ class StaffWhitelistPanelView(discord.ui.View):
 
         view = StaffInteractiveBuyerManagerView(licenses=licenses, author=interaction.user, guild=interaction.guild)
         embed = fleed_embed(
-            title="🔍 manage buyers & hwids — dropdown selector",
+            title="manage buyers & hwids — dropdown selector",
             description="select any buyer from the dropdown menu below to view their profile, reset their HWID, resend their key, or revoke access.",
             author=interaction.user
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="Generate Key", style=discord.ButtonStyle.secondary, emoji="🔑", row=0, custom_id="fg_staff_genkey:default")
+    @discord.ui.button(custom_id="fg_staff_genkey:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["claim"])
     async def genkey_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
@@ -1394,13 +1453,13 @@ class StaffWhitelistPanelView(discord.ui.View):
 
         view = StaffInteractiveGenKeyView(scripts=scripts, default_slug=slug if slug != "all" else scripts[0]["slug"], author=interaction.user)
         embed = fleed_embed(
-            title="🔑 generate buyer key — dropdown selector",
-            description="select the script hub and duration from the dropdown menus below, then click **generate key**.",
+            title="generate buyer key — dropdown selector",
+            description="select the script hub and duration from the dropdown menus below, then click **generate**.",
             author=interaction.user
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="Grant Manager Access", style=discord.ButtonStyle.secondary, emoji="👑", row=1, custom_id="fg_staff_grant:default")
+    @discord.ui.button(custom_id="fg_staff_grant:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["lock"])
     async def grant_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         ok, err, _ = await is_script_owner_or_admin_interaction(interaction.user, interaction.guild, slug if slug != "all" else None)
@@ -1413,16 +1472,16 @@ class StaffWhitelistPanelView(discord.ui.View):
 
         view = StaffInteractiveGrantManagerView(scripts=scripts, default_slug=slug if slug != "all" else "all", author=interaction.user, guild=interaction.guild)
         embed = fleed_embed(
-            title="👑 grant whitelist manager access — dropdown selector",
+            title="grant whitelist manager access — dropdown selector",
             description="select a user or role from the dropdowns below to delegate whitelist management permissions.",
             author=interaction.user
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(label="Commands Guide", style=discord.ButtonStyle.secondary, emoji="📖", row=1, custom_id="fg_staff_guide:default")
+    @discord.ui.button(custom_id="fg_staff_guide:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["rename"])
     async def guide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         guide_text = (
-            "### 👑 Whitelist Manager Commands Guide\n\n"
+            "### Whitelist Manager Commands Guide\n\n"
             "**Key Management:**\n"
             "• `,whitelist add <@user> <slug> [duration] [note]` — Whitelist user & DM them loadstring\n"
             "• `,whitelist genkey <slug> [duration] [note]` — Generate unlinked buyer key\n"
@@ -2366,16 +2425,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                     await conn.execute("UPDATE scripts SET buyer_role_id = ?, guild_id = ? WHERE id = ?", (buyer_role_id, ctx.guild.id, script["id"]))
                     await conn.commit()
 
-        now_str = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
-        
-        embed = discord.Embed(
-            title=f"{script['name']} script hub",
-            description=f"this control panel is for the project: **{script['name']}**\n"
-                        f"if you're a buyer, click on the buttons below to redeem your key, get the script or get your role\n\n"
-                        f"sent by {ctx.author.name} • {now_str}",
-            color=0x2B2D31
-        )
-
+        embed = await create_buyer_panel_embed(ctx.guild, self.bot, script["name"], clean_slug)
         view = WhitelistControlPanelView(slug=clean_slug)
         await ctx.send(embed=embed, view=view)
 
@@ -2933,23 +2983,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                 return await ctx.send(embed=error_embed("i do not have permission to create channels in this server.", ctx.author))
 
         # Send interactive staff panel inside the private channel
-        scope_label = f"**{clean_slug}**" if clean_slug != "all" else "**All Scripts (Global)**"
-        panel_embed = discord.Embed(
-            title="🔒 FleedGuard — Whitelist Staff Control Panel",
-            description=f"Welcome to the private whitelist management hub for {scope_label}.\n\n"
-                        f"**Authorized Access Only:**\n"
-                        f"• Only server admins and authorized whitelist managers can view this channel.\n"
-                        f"• Use the interactive buttons below or run `,whitelist` commands directly here.\n\n"
-                        f"**Quick Actions:**\n"
-                        f"• Click **➕ Whitelist User** to grant a buyer access and auto-DM loadstring.\n"
-                        f"• Click **🔑 Generate Key** to create an unlinked license key.\n"
-                        f"• Click **🔍 Lookup Buyer** to view HWID, executions, and status.\n"
-                        f"• Click **🔄 Reset HWID** to unlock a buyer for a new device.\n"
-                        f"• Click **📖 Commands Guide** to view all syntax and shortcuts.",
-            color=0x2B2D31
-        )
-        panel_embed.set_footer(text="FleedGuard License & Whitelist Security • Active")
-
+        panel_embed = await create_staff_panel_embed(ctx.guild, self.bot, clean_slug)
         view = StaffWhitelistPanelView(slug=clean_slug)
         panel_msg = await channel.send(embed=panel_embed, view=view)
         try:
@@ -2974,17 +3008,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         if not ok:
             return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
-        scope_label = f"**{clean_slug}**" if clean_slug != "all" else "**All Scripts (Global)**"
-        panel_embed = discord.Embed(
-            title="🔒 FleedGuard — Whitelist Staff Control Panel",
-            description=f"Welcome to the private whitelist management hub for {scope_label}.\n\n"
-                        f"**Authorized Access Only:**\n"
-                        f"• Only server admins and authorized whitelist managers can use this panel.\n"
-                        f"• Click any button below to manage keys, buyers, or reset HWIDs.",
-            color=0x2B2D31
-        )
-        panel_embed.set_footer(text="FleedGuard License & Whitelist Security • Active")
-
+        panel_embed = await create_staff_panel_embed(ctx.guild, self.bot, clean_slug)
         view = StaffWhitelistPanelView(slug=clean_slug)
         await ctx.send(embed=panel_embed, view=view)
 

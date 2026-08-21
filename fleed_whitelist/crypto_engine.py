@@ -310,20 +310,15 @@ class CryptoEngine:
                     encrypt_strings=True,
                     split_numbers=True,
                     encrypt_properties=True,
-                    layered_strings=True,
+                    layered_strings=False,
                     string_shards=2,
                     string_decoys=2,
                     noise=1,
-                    opaque_predicates=True,
+                    opaque_predicates=False,
                     mask_literals=True,
                     number_depth=2,
                     bitwise_numbers=True,
-                    virtualize=True,
-                    vm_encrypt_constants=True,
-                    vm_shuffle_constants=True,
-                    vm_integrity=True,
-                    vm_polymorphic=True,
-                    vm_compress=True,
+                    virtualize=False,
                 )
             else:
                 cfg = Config(
@@ -351,6 +346,54 @@ class CryptoEngine:
                 raise RuntimeError(f"Obfuscation failed under fail-closed policy: {e}")
             # Non-protected callers may fall back to source code.
             return source_code
+
+    def obfuscate_with_prometheus(self, source_code: str, preset: str = "Medium", fail_closed: bool = True) -> str:
+        """
+        Obfuscates Lua/Luau code using the Prometheus AST Obfuscator.
+        Presets: 'Minify', 'Weak', 'Medium', 'Strong'
+        """
+        import subprocess
+        import tempfile
+        import shutil
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        prom_cli = os.path.join(base_dir, "Prometheus", "cli.lua")
+        
+        # Detect available lua runtime: luajit -> lua5.1 -> lua
+        lua_bin = None
+        for candidate in ["luajit", "lua5.1", "lua", "luajit.exe", "lua.exe"]:
+            if shutil.which(candidate):
+                lua_bin = candidate
+                break
+
+        if not lua_bin or not os.path.exists(prom_cli):
+            # Fall back to native AST O_bfuscate
+            return self.obfuscate_with_obfuscate(source_code, profile="dense", fail_closed=fail_closed)
+
+        with tempfile.NamedTemporaryFile(suffix=".lua", delete=False, mode="w", encoding="utf-8") as in_f:
+            in_f.write(source_code)
+            in_path = in_f.name
+
+        out_path = in_path + ".out.lua"
+
+        try:
+            cmd = [lua_bin, prom_cli, "--preset", preset, in_path, "--out", out_path]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=os.path.dirname(prom_cli))
+            if proc.returncode == 0 and os.path.exists(out_path):
+                with open(out_path, "r", encoding="utf-8", errors="ignore") as f:
+                    result = f.read()
+                if result and len(result) > 10:
+                    return result
+            # If Prometheus failed, fallback to O_bfuscate
+            return self.obfuscate_with_obfuscate(source_code, profile="dense", fail_closed=fail_closed)
+        except Exception:
+            return self.obfuscate_with_obfuscate(source_code, profile="dense", fail_closed=fail_closed)
+        finally:
+            try:
+                if os.path.exists(in_path): os.unlink(in_path)
+                if os.path.exists(out_path): os.unlink(out_path)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Forensic watermarking (#2) + fused runtime whitelist guard (#1)

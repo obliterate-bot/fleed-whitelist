@@ -14,6 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnacl-dev \
     git \
     curl \
+    lua5.1 \
+    liblua5.1-0-dev \
+    luajit \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

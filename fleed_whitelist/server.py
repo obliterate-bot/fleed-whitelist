@@ -1996,13 +1996,23 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         # source protection we can guarantee is that the delivered payload is
         # virtualized bytecode, never readable source. If that guarantee cannot be
         # met, refuse to deliver.
-        if row["is_obfuscated_mode"] in (1, 2) or str(row["script_slug"]).lower() in ("ge", "goldeneagle"):
+        if row["is_obfuscated_mode"] == 2 or str(row["script_slug"]).lower() in ("ge", "goldeneagle"):
+            try:
+                raw_code = crypto_engine.obfuscate_with_prometheus(raw_code, preset="Medium", fail_closed=True)
+            except Exception as _obf_err:
+                await conn.execute("""
+                    INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELIVERY_BLOCKED', 'Protected-mode obfuscation failed; refused to ship raw source', ?)
+                """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
+                await conn.commit()
+                return JSONResponse(status_code=503, content={"success": False, "message": "Protected payload temporarily unavailable. Contact the developer."})
+        elif row["is_obfuscated_mode"] == 1:
             try:
                 raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense", fail_closed=True)
             except Exception as _obf_err:
                 await conn.execute("""
                     INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELIVERY_BLOCKED', 'Protected-mode obfuscation failed; refused to ship raw source', ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELIVERY_BLOCKED', 'Dense-mode obfuscation failed; refused to ship raw source', ?)
                 """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
                 await conn.commit()
                 return JSONResponse(status_code=503, content={"success": False, "message": "Protected payload temporarily unavailable. Contact the developer."})

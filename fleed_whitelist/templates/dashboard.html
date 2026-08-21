@@ -119,6 +119,9 @@
       <button class="tab-btn" data-tab="announcements" onclick="switchTab('announcements')">
         <i class="fa-solid fa-bullhorn"></i> Broadcasts
       </button>
+      <button class="tab-btn" data-tab="remote-exec" onclick="switchTab('remote-exec')">
+        <i class="fa-solid fa-bolt" style="color:var(--gold-primary);"></i> Remote Luau <span id="badgeRemoteExecPending" class="tab-count-badge" style="background:rgba(234,179,8,0.2); color:var(--gold-primary); display:none;">0</span>
+      </button>
       <button class="tab-btn" data-tab="versions" onclick="switchTab('versions')">
         <i class="fa-solid fa-code-branch"></i> Versioning
       </button>
@@ -901,7 +904,8 @@ async function createLicense(slug, key, discordId, note) {
             <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Live monitoring of players executing your scripts in Roblox. Issue instant remote kicks with 1-click.</p>
           </div>
           <div style="display:flex; gap:10px;">
-            <button class="btn btn-danger btn-sm" onclick="openRemoteKickModal()"><i class="fa-solid fa-bolt"></i> Instant Remote Kick</button>
+            <button class="btn btn-primary btn-sm" onclick="openRemoteExecModal()"><i class="fa-solid fa-bolt"></i> Remote Luau Exec</button>
+            <button class="btn btn-danger btn-sm" onclick="openRemoteKickModal()"><i class="fa-solid fa-power-off"></i> Remote Kick</button>
             <button class="btn btn-secondary btn-sm" onclick="loadLiveSessions()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
           </div>
         </div>
@@ -1130,6 +1134,165 @@ game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = customSpeed
             </thead>
             <tbody id="announcementsTableBody">
               <tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Loading announcements...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- VIEW 14: LIVE REMOTE LUAU CONSOLE & DISPATCH ENGINE       -->
+    <!-- ======================================================== -->
+    <section id="view-remote-exec" class="tab-view" style="display:none;">
+      <!-- Main Dispatch Card & Terminal Grid -->
+      <div style="display:grid; grid-template-columns: 1.6fr 1fr; gap:18px; margin-bottom:18px;">
+        
+        <!-- Left: Code Editor & Target Dispatcher -->
+        <div class="card" style="display:flex; flex-direction:column;">
+          <div class="card-header" style="margin-bottom:14px;">
+            <div>
+              <h3 class="card-title" style="display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-terminal" style="color:var(--gold-primary);"></i> Live Remote Luau Console
+              </h3>
+              <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">
+                Dispatch and execute custom Luau scripts inside active Roblox game clients in real-time.
+              </p>
+            </div>
+            <span class="badge badge-gold"><i class="fa-solid fa-bolt"></i> Real-Time REPL</span>
+          </div>
+
+          <form onsubmit="handleDispatchRemoteExec(event)" style="display:flex; flex-direction:column; flex:1; gap:12px;">
+            <!-- Target Selection Row -->
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+              <div class="form-group" style="margin:0;">
+                <label class="form-label">Script Hub Context</label>
+                <select id="remoteExecScriptSlug" class="form-select" onchange="handleRemoteExecScriptChange(this.value)">
+                  <option value="all">All Scripts (Global Broadcast)</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin:0;">
+                <label class="form-label">Target Destination</label>
+                <select id="remoteExecTargetType" class="form-select" onchange="handleRemoteExecTargetTypeChange(this.value)">
+                  <option value="ALL">Broadcast to All Active Players</option>
+                  <option value="PLAYER">Specific Player (Username / UserID)</option>
+                  <option value="KEY">Specific License Key</option>
+                  <option value="SESSION">Specific Active Session ID</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Dynamic Target Value Input -->
+            <div class="form-group" id="remoteExecTargetValueGroup" style="display:none; margin:0;">
+              <label class="form-label" id="remoteExecTargetValueLabel">Target Identifier</label>
+              <div style="display:flex; gap:8px;">
+                <input type="text" id="remoteExecTargetValue" class="form-input" placeholder="e.g. Undix or 492019283" style="flex:1;">
+                <select id="remoteExecLivePlayersDropdown" class="form-select" style="width:200px; display:none;" onchange="selectLivePlayerForExec(this.value)">
+                  <option value="">Select Live Player...</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Quick Template Pills Bar -->
+            <div>
+              <label class="form-label" style="display:flex; justify-content:space-between;">
+                <span>Quick Preset Templates</span>
+                <span style="font-size:11px; color:var(--text-zinc-500); font-weight:400;">Click to load template</span>
+              </label>
+              <div class="filter-pills-bar" style="margin-top:4px;">
+                <button type="button" class="filter-pill-btn" onclick="insertLuauPreset('toast')"><i class="fa-solid fa-bell"></i> Toast Notification</button>
+                <button type="button" class="filter-pill-btn" onclick="insertLuauPreset('chat')"><i class="fa-solid fa-comment"></i> Send Chat Msg</button>
+                <button type="button" class="filter-pill-btn" onclick="insertLuauPreset('speed')"><i class="fa-solid fa-person-running"></i> Speed & Jump Buff</button>
+                <button type="button" class="filter-pill-btn" onclick="insertLuauPreset('teleport')"><i class="fa-solid fa-location-dot"></i> Teleport Character</button>
+                <button type="button" class="filter-pill-btn" onclick="insertLuauPreset('reload')"><i class="fa-solid fa-arrows-rotate"></i> Reload Script</button>
+                <button type="button" class="filter-pill-btn" onclick="insertLuauPreset('dump')"><i class="fa-solid fa-bug"></i> Dump Env to Console</button>
+                <button type="button" class="filter-pill-btn" onclick="insertLuauPreset('clear')"><i class="fa-solid fa-eraser"></i> Clear</button>
+              </div>
+            </div>
+
+            <!-- Luau Code Editor -->
+            <div class="form-group" style="flex:1; display:flex; flex-direction:column; margin:0;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                <label class="form-label" style="margin:0;">Luau Bytecode / Source Payload</label>
+                <span style="font-size:11px; color:var(--text-zinc-500); font-family:monospace;">Executed in protected task.spawn thread</span>
+              </div>
+              <div class="code-editor-container" style="flex:1; min-height:190px;">
+                <textarea id="remoteExecCode" class="code-editor-textarea" placeholder="-- Enter Luau code to run inside client...&#10;print('FleedGuard Remote Exec triggered!')&#10;game:GetService('StarterGui'):SetCore('SendNotification', {&#10;    Title = 'Developer Console',&#10;    Text = 'Live update received from dashboard!',&#10;    Duration = 6&#10;})" required></textarea>
+              </div>
+            </div>
+
+            <!-- Execution Note & Dispatch Button -->
+            <div style="display:flex; gap:10px; align-items:center;">
+              <input type="text" id="remoteExecDescription" class="form-input" placeholder="Task description (e.g. Patch aim calculation)" style="flex:1;">
+              <button type="submit" id="btnDispatchRemoteExec" class="btn btn-primary" style="padding:10px 24px; font-weight:700; white-space:nowrap;">
+                <i class="fa-solid fa-bolt"></i> Dispatch to Client
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Right: Execution Engine Reference & Status -->
+        <div class="card" style="display:flex; flex-direction:column;">
+          <div class="card-header">
+            <h3 class="card-title"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary);"></i> Execution Sandbox</h3>
+            <span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> Protected Pcall</span>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:12px; font-size:12px; color:var(--text-zinc-400); line-height:1.5;">
+            <div style="background:rgba(250, 204, 21, 0.05); border:1px solid var(--border-gold-subtle); padding:12px; border-radius:8px;">
+              <div style="font-weight:700; color:var(--gold-light); margin-bottom:4px; display:flex; align-items:center; gap:6px;">
+                <i class="fa-solid fa-shield-halved"></i> Zero-Crash Guarantee
+              </div>
+              All remote payloads are executed within protected <code class="mono-tag">pcall(loadstring(...))</code> subroutines. Syntax or runtime errors will never terminate the player's game or disconnect their session.
+            </div>
+
+            <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); padding:12px; border-radius:8px;">
+              <div style="font-weight:700; color:var(--text-white); margin-bottom:4px;"><i class="fa-solid fa-bolt"></i> Heartbeat Frequency</div>
+              Clients poll the rolling heartbeat stream every <strong>10–15 seconds</strong>. Once received, code executes immediately and results are acknowledged.
+            </div>
+
+            <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-subtle); padding:12px; border-radius:8px;">
+              <div style="font-weight:700; color:var(--text-white); margin-bottom:4px;"><i class="fa-solid fa-cube"></i> Available Environment Globals</div>
+              Payloads have full access to standard Roblox and executor globals:
+              <div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:4px;">
+                <span class="badge badge-zinc">game</span>
+                <span class="badge badge-zinc">workspace</span>
+                <span class="badge badge-zinc">getgenv()</span>
+                <span class="badge badge-zinc">task.spawn</span>
+                <span class="badge badge-zinc">hookmetamethod</span>
+                <span class="badge badge-zinc">CONFIG</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Execution Queue & Delivery History -->
+      <div class="card" style="padding:0; overflow:hidden;">
+        <div class="card-header" style="padding:16px 20px; border-bottom:1px solid var(--border-subtle); margin:0;">
+          <div>
+            <h3 class="card-title"><i class="fa-solid fa-clock-rotate-left" style="color:var(--gold-primary);"></i> Remote Dispatch Queue & Delivery Receipts</h3>
+            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Track past execution dispatches, delivery confirmations, and client execution counts.</p>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-secondary btn-sm" onclick="handleClearRemoteExecHistory()"><i class="fa-solid fa-trash-can"></i> Clear History</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadRemoteExecQueue()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table class="table">
+            <thead>
+              <tr>
+                <th style="width:14%;">Target</th>
+                <th style="width:16%;">Hub / Script</th>
+                <th style="width:34%;">Luau Code Payload</th>
+                <th style="width:12%;">Status</th>
+                <th style="width:14%;">Dispatched At</th>
+                <th style="width:10%; text-align:right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="remoteExecQueueTableBody">
+              <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Loading remote dispatch queue...</td></tr>
             </tbody>
           </table>
         </div>
@@ -1862,6 +2025,62 @@ game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = customSpeed
           <button type="button" class="btn btn-secondary" style="flex:1;" onclick="testWebhookFromModal()"><i class="fa-solid fa-paper-plane"></i> Test Webhook</button>
           <button type="submit" class="btn btn-primary" style="flex:1;"><i class="fa-solid fa-check"></i> Save Webhook</button>
         </div>
+  <!-- MODAL: Remote Luau Exec Quick Dispatch -->
+  <div id="modalRemoteExec" class="modal-overlay">
+    <div class="modal-content" style="max-width:680px;">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-bolt" style="color:var(--gold-primary);"></i> Quick Remote Luau Dispatch</h3>
+        <button class="modal-close" onclick="closeModal('modalRemoteExec')">&times;</button>
+      </div>
+      <form onsubmit="handleModalRemoteExecDispatch(event)">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">Script Hub Context</label>
+            <select id="modalExecScriptSlug" class="form-select"></select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">Target Destination</label>
+            <select id="modalExecTargetType" class="form-select" onchange="handleModalExecTargetTypeChange(this.value)">
+              <option value="PLAYER">Specific Player (Username/ID)</option>
+              <option value="KEY">Specific License Key</option>
+              <option value="ALL">Broadcast to All Active Players</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group" id="modalExecTargetValueGroup">
+          <label class="form-label" id="modalExecTargetValueLabel">Target Player / Key</label>
+          <input type="text" id="modalExecTargetValue" class="form-input" placeholder="e.g. Undix or FLEED-XXXX" required>
+        </div>
+
+        <!-- Quick Preset Pills in Modal -->
+        <div style="margin-bottom:10px;">
+          <label class="form-label" style="display:flex; justify-content:space-between;">
+            <span>Presets</span>
+            <span style="font-size:11px; color:var(--text-zinc-500);">Click to load snippet</span>
+          </label>
+          <div class="filter-pills-bar">
+            <button type="button" class="filter-pill-btn" onclick="insertModalLuauPreset('toast')"><i class="fa-solid fa-bell"></i> Toast</button>
+            <button type="button" class="filter-pill-btn" onclick="insertModalLuauPreset('chat')"><i class="fa-solid fa-comment"></i> Chat</button>
+            <button type="button" class="filter-pill-btn" onclick="insertModalLuauPreset('speed')"><i class="fa-solid fa-person-running"></i> Speed</button>
+            <button type="button" class="filter-pill-btn" onclick="insertModalLuauPreset('teleport')"><i class="fa-solid fa-location-dot"></i> TP</button>
+            <button type="button" class="filter-pill-btn" onclick="insertModalLuauPreset('reload')"><i class="fa-solid fa-arrows-rotate"></i> Reload</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Luau Payload</label>
+          <textarea id="modalExecCode" class="code-editor-textarea" style="min-height:140px;" placeholder="-- Enter Luau code to run in client..." required></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Description Note (Optional)</label>
+          <input type="text" id="modalExecDescription" class="form-input" placeholder="e.g. Live debugging on Undix's client">
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px; font-weight:700;">
+          <i class="fa-solid fa-bolt"></i> Dispatch Luau to Client Now
+        </button>
       </form>
     </div>
   </div>
@@ -1900,6 +2119,6 @@ game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = customSpeed
   <!-- Dynamic Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js?v=2.4.2"></script>
+  <script src="/static/app.js?v=2.5.0"></script>
 </body>
 </html>

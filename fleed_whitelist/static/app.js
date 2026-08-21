@@ -505,6 +505,7 @@ function switchTab(tabName) {
   if (tabName === "telemetry") loadTelemetryData();
   if (tabName === "flags") loadFeatureFlags();
   if (tabName === "announcements") loadAnnouncements();
+  if (tabName === "remote-exec") loadRemoteExecQueue();
   if (tabName === "versions") loadScriptVersions();
   if (tabName === "webhooks") loadDiscordWebhooks();
   if (tabName === "logs") loadLiveLogs();
@@ -2688,11 +2689,14 @@ async function loadLiveSessions() {
           <td><span style="font-size:12px; color:var(--text-zinc-400);">${formatTimeAgo(s.last_heartbeat)}</span></td>
           <td>
             <div style="display:flex; gap:6px;">
+              <button class="btn btn-primary btn-sm" onclick="openRemoteExecModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Execute Luau on this Player">
+                <i class="fa-solid fa-bolt"></i> Exec
+              </button>
               <button class="btn btn-secondary btn-sm" onclick="openTargetedBroadcastModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Send In-Game Message to this Player">
                 <i class="fa-solid fa-bullhorn" style="color:var(--gold-light);"></i>
               </button>
               <button class="btn btn-danger btn-sm" onclick="openRemoteKickModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.hwid)}', '${escapeHtml(s.roblox_username || '')}')" title="Kick Player from Game">
-                <i class="fa-solid fa-bolt"></i> Kick
+                <i class="fa-solid fa-power-off"></i>
               </button>
             </div>
           </td>
@@ -3457,4 +3461,409 @@ async function deleteWebhook(id) {
     loadDiscordWebhooks();
   } catch (err) {}
 }
+
+
+// =========================================================================
+// LIVE REMOTE LUAU CONSOLE & DISPATCH ENGINE
+// =========================================================================
+
+const LUAU_PRESETS = {
+  toast: `-- Send Luxury Notification Toast to Player's Screen
+pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "FleedGuard Remote Console",
+        Text = "Live update dispatched from developer dashboard!",
+        Duration = 7,
+        Icon = "rbxassetid://10804470355"
+    })
+end)`,
+
+  chat: `-- Send In-Game Chat Message on Behalf of Client
+pcall(function()
+    local text = "[FleedGuard]: Hello from the developer console!"
+    local tcs = game:GetService("TextChatService")
+    if tcs and tcs.ChatVersion == Enum.ChatVersion.TextChatService then
+        local channel = tcs.TextChannels:FindFirstChild("RBXGeneral")
+        if channel then channel:SendAsync(text) end
+    else
+        game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+            :FindFirstChild("SayMessageRequest"):FireServer(text, "All")
+    end
+end)`,
+
+  speed: `-- Boost Character WalkSpeed & JumpPower
+pcall(function()
+    local player = game:GetService("Players").LocalPlayer
+    if player and player.Character then
+        local hum = player.Character:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = 32
+            hum.JumpPower = 75
+            print("[FleedGuard]: Applied WalkSpeed=32, JumpPower=75")
+        end
+    end
+end)`,
+
+  teleport: `-- Teleport Character to Coordinates or Spawn
+pcall(function()
+    local player = game:GetService("Players").LocalPlayer
+    if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        local hrp = player.Character.HumanoidRootPart
+        hrp.CFrame = hrp.CFrame + Vector3.new(0, 15, 0)
+        print("[FleedGuard]: Teleported Character +15 studs up")
+    end
+end)`,
+
+  reload: `-- Reload / Refresh Script Hub Environment
+pcall(function()
+    print("[FleedGuard]: Hot-reloading script environment...")
+    local g = getgenv and getgenv()
+    if g and g.FleedReload then
+        g.FleedReload()
+    else
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "FleedGuard",
+            Text = "Script environment refresh triggered.",
+            Duration = 5
+        })
+    end
+end)`,
+
+  dump: `-- Dump Active Players & Diagnostics to Client Console
+pcall(function()
+    local players = game:GetService("Players"):GetPlayers()
+    print("========== FLEEDGUARD CLIENT DIAGNOSTICS ==========")
+    print("Local Player:", game:GetService("Players").LocalPlayer.Name)
+    print("Place ID:", game.PlaceId, "Job ID:", game.JobId)
+    print("Total Players in Server:", #players)
+    for i, p in ipairs(players) do
+        print(string.format("  [%d] %s (ID: %d)", i, p.Name, p.UserId))
+    end
+    print("==================================================")
+end)`,
+
+  clear: ""
+};
+
+let cachedLivePlayers = [];
+
+function insertLuauPreset(presetKey) {
+  const editor = document.getElementById("remoteExecCode");
+  if (!editor) return;
+  if (presetKey === "clear") {
+    editor.value = "";
+    return;
+  }
+  const snippet = LUAU_PRESETS[presetKey];
+  if (snippet) {
+    editor.value = snippet;
+    showToast(`Loaded ${presetKey.toUpperCase()} preset template`, "info");
+  }
+}
+
+function insertModalLuauPreset(presetKey) {
+  const editor = document.getElementById("modalExecCode");
+  if (!editor) return;
+  const snippet = LUAU_PRESETS[presetKey];
+  if (snippet) {
+    editor.value = snippet;
+    showToast(`Loaded ${presetKey.toUpperCase()} preset template`, "info");
+  }
+}
+
+function handleRemoteExecTargetTypeChange(type) {
+  const grp = document.getElementById("remoteExecTargetValueGroup");
+  const lbl = document.getElementById("remoteExecTargetValueLabel");
+  const input = document.getElementById("remoteExecTargetValue");
+  const dropdown = document.getElementById("remoteExecLivePlayersDropdown");
+
+  if (!grp) return;
+
+  if (type === "ALL") {
+    grp.style.display = "none";
+    if (input) input.required = false;
+  } else {
+    grp.style.display = "block";
+    if (input) input.required = true;
+    if (type === "PLAYER") {
+      if (lbl) lbl.innerText = "Roblox Username or User ID";
+      if (input) input.placeholder = "e.g. Undix or 48291039";
+      if (dropdown) dropdown.style.display = "block";
+    } else if (type === "KEY") {
+      if (lbl) lbl.innerText = "License Key";
+      if (input) input.placeholder = "e.g. FLEED-B3UZ-ZATY-9Z07";
+      if (dropdown) dropdown.style.display = "none";
+    } else if (type === "SESSION") {
+      if (lbl) lbl.innerText = "Active Session ID";
+      if (input) input.placeholder = "e.g. sess_abc123...";
+      if (dropdown) dropdown.style.display = "none";
+    }
+  }
+}
+
+function handleModalExecTargetTypeChange(type) {
+  const grp = document.getElementById("modalExecTargetValueGroup");
+  const lbl = document.getElementById("modalExecTargetValueLabel");
+  const input = document.getElementById("modalExecTargetValue");
+
+  if (!grp) return;
+
+  if (type === "ALL") {
+    grp.style.display = "none";
+    if (input) input.required = false;
+  } else {
+    grp.style.display = "block";
+    if (input) input.required = true;
+    if (type === "PLAYER") {
+      if (lbl) lbl.innerText = "Roblox Username or User ID";
+      if (input) input.placeholder = "e.g. Undix or 48291039";
+    } else if (type === "KEY") {
+      if (lbl) lbl.innerText = "License Key";
+      if (input) input.placeholder = "e.g. FLEED-B3UZ-ZATY-9Z07";
+    }
+  }
+}
+
+function selectLivePlayerForExec(val) {
+  if (!val) return;
+  const input = document.getElementById("remoteExecTargetValue");
+  if (input) input.value = val;
+}
+
+function handleRemoteExecScriptChange(slug) {
+  populateLivePlayersDropdown(slug);
+}
+
+async function populateLivePlayersDropdown(scriptSlug = "all") {
+  const dropdown = document.getElementById("remoteExecLivePlayersDropdown");
+  if (!dropdown) return;
+
+  try {
+    const sessions = await apiCall("/api/sessions?show_all=false");
+    cachedLivePlayers = sessions || [];
+    
+    let filtered = cachedLivePlayers;
+    if (scriptSlug && scriptSlug !== "all") {
+      filtered = cachedLivePlayers.filter(s => s.script_slug === scriptSlug);
+    }
+
+    if (filtered.length === 0) {
+      dropdown.innerHTML = `<option value="">No live players on this hub</option>`;
+      return;
+    }
+
+    dropdown.innerHTML = `<option value="">Select Live Player (${filtered.length} online)...</option>` + 
+      filtered.map(s => `
+        <option value="${escapeHtml(s.roblox_username || s.license_key)}">
+          ${escapeHtml(s.roblox_username || 'Unknown')} (${escapeHtml(s.script_slug || 'hub')})
+        </option>
+      `).join("");
+  } catch (err) {
+    dropdown.innerHTML = `<option value="">Select Live Player...</option>`;
+  }
+}
+
+async function loadRemoteExecQueue() {
+  if (currentScripts.length === 0) await loadScripts();
+
+  const selectMain = document.getElementById("remoteExecScriptSlug");
+  const selectModal = document.getElementById("modalExecScriptSlug");
+
+  const optionsHtml = `<option value="all">All Scripts (Global Broadcast)</option>` + 
+    currentScripts.map(s => `<option value="${escapeHtml(s.slug)}">${escapeHtml(s.name)} (${escapeHtml(s.slug)})</option>`).join("");
+
+  if (selectMain && selectMain.children.length <= 1) selectMain.innerHTML = optionsHtml;
+  if (selectModal) selectModal.innerHTML = optionsHtml;
+
+  populateLivePlayersDropdown();
+
+  try {
+    const queue = await apiCall("/api/remote-exec/queue");
+    const tbody = document.getElementById("remoteExecQueueTableBody");
+    const pendingBadge = document.getElementById("badgeRemoteExecPending");
+
+    if (pendingBadge) {
+      const pendingCount = (queue || []).filter(q => q.status === "PENDING").length;
+      if (pendingCount > 0) {
+        pendingBadge.style.display = "inline-block";
+        pendingBadge.innerText = pendingCount;
+      } else {
+        pendingBadge.style.display = "none";
+      }
+    }
+
+    if (!tbody) return;
+
+    if (!queue || queue.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-terminal" style="margin-right:6px;"></i>No remote execution commands queued yet. Enter code above to dispatch!</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = queue.map(q => {
+      let statusBadge = `<span class="exec-status-badge exec-status-pending"><span class="live-pulse"></span> PENDING (${q.execution_count} runs)</span>`;
+      if (q.status === "EXECUTED") {
+        statusBadge = `<span class="exec-status-badge exec-status-executed"><i class="fa-solid fa-circle-check"></i> DELIVERED (${q.execution_count}x)</span>`;
+      } else if (q.status === "EXPIRED" || q.status === "REVOKED") {
+        statusBadge = `<span class="exec-status-badge exec-status-expired"><i class="fa-solid fa-ban"></i> ${q.status}</span>`;
+      }
+
+      let targetHtml = `<span class="badge badge-gold">GLOBAL ALL</span>`;
+      if (q.target_type === "PLAYER") {
+        targetHtml = `<span class="badge badge-zinc"><i class="fa-solid fa-user"></i> ${escapeHtml(q.target_value || 'Player')}</span>`;
+      } else if (q.target_type === "KEY") {
+        targetHtml = `<span class="badge badge-zinc"><i class="fa-solid fa-key"></i> ${escapeHtml((q.target_value || '').substring(0, 16))}...</span>`;
+      } else if (q.target_type === "SESSION") {
+        targetHtml = `<span class="badge badge-zinc"><i class="fa-solid fa-gamepad"></i> ${escapeHtml((q.target_value || '').substring(0, 12))}...</span>`;
+      }
+
+      const codeSnippet = (q.luau_code || "").trim();
+      const codePreview = codeSnippet.length > 80 ? codeSnippet.substring(0, 80) + "..." : codeSnippet;
+
+      return `
+        <tr>
+          <td>${targetHtml}</td>
+          <td><span class="badge badge-zinc">${escapeHtml(q.script_name)}</span></td>
+          <td>
+            <div style="display:flex; flex-direction:column; gap:2px;">
+              <code class="mono-tag" style="font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; max-width:380px;">${escapeHtml(codePreview)}</code>
+              ${q.description ? `<span style="font-size:10px; color:var(--text-zinc-500);">${escapeHtml(q.description)}</span>` : ''}
+            </div>
+          </td>
+          <td>${statusBadge}</td>
+          <td><span style="font-size:12px; color:var(--text-zinc-400);">${formatTimeAgo(q.created_at)}</span></td>
+          <td style="text-align:right;">
+            <div style="display:flex; gap:6px; justify-content:flex-end;">
+              <button class="btn btn-secondary btn-sm" onclick="reRunRemoteExec('${escapeHtml(encodeURIComponent(q.luau_code))}', '${escapeHtml(q.target_type)}', '${escapeHtml(q.target_value || '')}', '${escapeHtml(q.script_slug)}')" title="Load & Re-run this snippet">
+                <i class="fa-solid fa-rotate-right"></i>
+              </button>
+              <button class="btn btn-danger btn-sm" onclick="deleteRemoteExecItem(${q.id})" title="Delete Task">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    const tbody = document.getElementById("remoteExecQueueTableBody");
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-terminal" style="margin-right:6px;"></i>No remote execution tasks found.</td></tr>`;
+  }
+}
+
+async function handleDispatchRemoteExec(e) {
+  e.preventDefault();
+  const script_slug = document.getElementById("remoteExecScriptSlug").value;
+  const target_type = document.getElementById("remoteExecTargetType").value;
+  const target_value = document.getElementById("remoteExecTargetValue")?.value.trim() || null;
+  const luau_code = document.getElementById("remoteExecCode").value.trim();
+  const description = document.getElementById("remoteExecDescription")?.value.trim() || "Live Console Exec";
+
+  if (!luau_code) {
+    return showToast("Luau code payload cannot be empty", "error");
+  }
+
+  const btn = document.getElementById("btnDispatchRemoteExec");
+  if (btn) btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Dispatching...`;
+
+  try {
+    const res = await apiCall("/api/remote-exec", "POST", {
+      script_slug,
+      target_type,
+      target_value,
+      luau_code,
+      description
+    });
+    showToast(res.message, "success");
+    loadRemoteExecQueue();
+  } catch (err) {
+  } finally {
+    if (btn) btn.innerHTML = `<i class="fa-solid fa-bolt"></i> Dispatch to Client`;
+  }
+}
+
+function openRemoteExecModal(targetKey = "", targetPlayer = "") {
+  loadRemoteExecQueue();
+  const modal = document.getElementById("modalRemoteExec");
+  if (!modal) return;
+
+  const targetTypeSelect = document.getElementById("modalExecTargetType");
+  const targetValInput = document.getElementById("modalExecTargetValue");
+
+  if (targetKey) {
+    if (targetTypeSelect) targetTypeSelect.value = "KEY";
+    if (targetValInput) targetValInput.value = targetKey;
+  } else if (targetPlayer) {
+    if (targetTypeSelect) targetTypeSelect.value = "PLAYER";
+    if (targetValInput) targetValInput.value = targetPlayer;
+  } else {
+    if (targetTypeSelect) targetTypeSelect.value = "ALL";
+    if (targetValInput) targetValInput.value = "";
+  }
+
+  handleModalExecTargetTypeChange(targetTypeSelect?.value || "ALL");
+  modal.classList.add("active");
+}
+
+async function handleModalRemoteExecDispatch(e) {
+  e.preventDefault();
+  const script_slug = document.getElementById("modalExecScriptSlug").value;
+  const target_type = document.getElementById("modalExecTargetType").value;
+  const target_value = document.getElementById("modalExecTargetValue")?.value.trim() || null;
+  const luau_code = document.getElementById("modalExecCode").value.trim();
+  const description = document.getElementById("modalExecDescription")?.value.trim() || "Quick Modal Exec";
+
+  if (!luau_code) {
+    return showToast("Luau code payload cannot be empty", "error");
+  }
+
+  try {
+    const res = await apiCall("/api/remote-exec", "POST", {
+      script_slug,
+      target_type,
+      target_value,
+      luau_code,
+      description
+    });
+    showToast(res.message, "success");
+    closeModal("modalRemoteExec");
+    loadRemoteExecQueue();
+  } catch (err) {}
+}
+
+function reRunRemoteExec(encodedCode, targetType, targetValue, scriptSlug) {
+  const code = decodeURIComponent(encodedCode);
+  switchTab("remote-exec");
+  const editor = document.getElementById("remoteExecCode");
+  const targetTypeSelect = document.getElementById("remoteExecTargetType");
+  const targetValInput = document.getElementById("remoteExecTargetValue");
+  const scriptSelect = document.getElementById("remoteExecScriptSlug");
+
+  if (editor) editor.value = code;
+  if (targetTypeSelect) {
+    targetTypeSelect.value = targetType;
+    handleRemoteExecTargetTypeChange(targetType);
+  }
+  if (targetValInput) targetValInput.value = targetValue;
+  if (scriptSelect && scriptSlug) scriptSelect.value = scriptSlug;
+
+  showToast("Loaded snippet into remote console ready to re-dispatch!", "info");
+}
+
+async function deleteRemoteExecItem(id) {
+  try {
+    const res = await apiCall(`/api/remote-exec/${id}`, "DELETE");
+    showToast(res.message, "success");
+    loadRemoteExecQueue();
+  } catch (err) {}
+}
+
+async function handleClearRemoteExecHistory() {
+  if (!confirm("Are you sure you want to clear completed execution history?")) return;
+  try {
+    const res = await apiCall("/api/remote-exec/clear", "POST");
+    showToast(res.message, "success");
+    loadRemoteExecQueue();
+  } catch (err) {}
+}
+
 

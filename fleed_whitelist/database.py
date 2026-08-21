@@ -411,6 +411,25 @@ class WhitelistDB:
                 )
             """)
 
+            # 15. Live Remote Luau Execution Console & Dispatch Queue
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS remote_luau_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    script_id INTEGER,
+                    target_type TEXT NOT NULL, -- 'ALL', 'KEY', 'PLAYER', 'SESSION'
+                    target_value TEXT,
+                    luau_code TEXT NOT NULL,
+                    description TEXT,
+                    status TEXT DEFAULT 'PENDING', -- 'PENDING', 'EXECUTED', 'EXPIRED', 'REVOKED'
+                    execution_count INTEGER DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+                )
+            """)
+
             # Indices for ultra-fast lookup
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_key ON licenses(license_key);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_licenses_script ON licenses(script_id);")
@@ -428,6 +447,7 @@ class WhitelistDB:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_announcements_script ON script_announcements(script_id);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_versions_script ON script_versions(script_id);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_webhooks_user ON discord_webhooks(user_id);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_remote_luau_status ON remote_luau_queue(status, target_type);")
             await conn.commit()
 
 db = WhitelistDB()

@@ -1470,4 +1470,72 @@ tr.row-selected td {
   animation: radar-pulse 2s infinite;
 }
 
+/* Code Editor & Remote Luau Console Styles */
+.code-editor-container {
+  position: relative;
+  background: #09090d;
+  border: 1px solid var(--border-gold-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,0.6);
+}
+
+.code-editor-textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 180px;
+  background: transparent;
+  color: #a5f3fc;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 12px 14px;
+  border: none;
+  outline: none;
+  resize: vertical;
+  tab-size: 4;
+}
+
+.code-editor-textarea:focus {
+  background: rgba(250, 204, 21, 0.015);
+}
+
+.mono-tag {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--gold-light);
+}
+
+.exec-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.exec-status-pending {
+  background: rgba(234, 179, 8, 0.15);
+  color: #facc15;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.exec-status-executed {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.exec-status-expired {
+  background: rgba(113, 113, 122, 0.15);
+  color: #a1a1aa;
+  border: 1px solid rgba(113, 113, 122, 0.3);
+}
+
+
 

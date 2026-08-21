@@ -237,6 +237,13 @@ class FeatureFlagToggleAllRequest(BaseModel):
     action: str = "enable" # "enable" or "disable"
     category: Optional[str] = None
 
+class RemoteExecRequest(BaseModel):
+    script_slug: Optional[str] = None
+    target_type: str = "ALL" # "ALL", "KEY", "PLAYER", "SESSION"
+    target_value: Optional[str] = None
+    luau_code: str
+    description: Optional[str] = "Live Remote Console Exec"
+    ttl_seconds: Optional[int] = 300
 
 class ScriptVersionCreateRequest(BaseModel):
     version_tag: str
@@ -2176,12 +2183,74 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
         except Exception:
             pass
 
+        # Check for pending live remote Luau execution payloads targeting this session/player/hub
+        remote_luau_payloads = []
+        try:
+            p_cur = await conn.execute("""
+                SELECT script_id, roblox_username, roblox_user_id, session_id
+                FROM live_sessions
+                WHERE UPPER(license_key) = UPPER(?)
+                ORDER BY last_heartbeat DESC LIMIT 1
+            """, (claims["key"],))
+            p_row = await p_cur.fetchone()
+
+            script_id_val = p_row["script_id"] if p_row else None
+            r_user = (p_row["roblox_username"] or "") if p_row else ""
+            r_uid = str(p_row["roblox_user_id"] or "") if p_row else ""
+            s_id = (p_row["session_id"] or "") if p_row else ""
+            now_iso = datetime.utcnow().isoformat()
+
+            exec_cur = await conn.execute("""
+                SELECT id, script_id, target_type, target_value, luau_code
+                FROM remote_luau_queue
+                WHERE status = 'PENDING'
+                  AND (expires_at IS NULL OR expires_at > ?)
+                  AND (
+                       (target_type = 'ALL' AND (script_id IS NULL OR script_id = ?))
+                    OR (target_type = 'KEY' AND UPPER(target_value) = UPPER(?))
+                    OR (target_type = 'PLAYER' AND (LOWER(target_value) = LOWER(?) OR target_value = ?))
+                    OR (target_type = 'SESSION' AND target_value = ?)
+                  )
+                ORDER BY id ASC
+                LIMIT 5
+            """, (now_iso, script_id_val, claims["key"], r_user, r_uid, s_id))
+            exec_rows = await exec_cur.fetchall()
+
+            for er in exec_rows:
+                remote_luau_payloads.append({
+                    "id": er["id"],
+                    "code": er["luau_code"]
+                })
+                # If targeted specifically to a single target, mark EXECUTED
+                if er["target_type"] in ('KEY', 'PLAYER', 'SESSION'):
+                    await conn.execute("""
+                        UPDATE remote_luau_queue
+                        SET status = 'EXECUTED', execution_count = execution_count + 1
+                        WHERE id = ?
+                    """, (er["id"],))
+                else:
+                    await conn.execute("""
+                        UPDATE remote_luau_queue
+                        SET execution_count = execution_count + 1
+                        WHERE id = ?
+                    """, (er["id"],))
+            if exec_rows:
+                await conn.commit()
+        except Exception as e:
+            logger.error(f"Error dispatching remote luau payloads: {e}")
+
     # Roll the execution token so the fused guard's background re-check keeps
     # validating without needing a long-lived token. Short TTL + rolling means a
     # stolen token is useless within seconds while legit sessions refresh
     # seamlessly in the background (never blocking the game).
     new_token = crypto_engine.generate_exec_token(claims["key"], claims["hwid"])
-    return {"success": True, "token": new_token, "broadcast": broadcast_payload, "flags": flags_dict}
+    return {
+        "success": True,
+        "token": new_token,
+        "broadcast": broadcast_payload,
+        "flags": flags_dict,
+        "remote_luau": remote_luau_payloads
+    }
 
 
 
@@ -3447,6 +3516,114 @@ async def delete_discord_webhook(webhook_id: int, user: Dict = Depends(get_curre
         await conn.execute("DELETE FROM discord_webhooks WHERE id = ? AND user_id = ?", (webhook_id, user["id"]))
         await conn.commit()
     return {"success": True, "message": "Webhook removed."}
+
+
+# ----------------- Live Remote Luau Execution Console API -----------------
+
+@app.post("/api/remote-exec")
+async def dispatch_remote_exec(req: RemoteExecRequest, user: Dict = Depends(get_current_user)):
+    """
+    Queue a custom Luau payload to be dispatched to live client session(s).
+    """
+    code = req.luau_code.strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Luau code payload cannot be empty.")
+
+    ttype = req.target_type.upper()
+    if ttype not in ('ALL', 'KEY', 'PLAYER', 'SESSION'):
+        raise HTTPException(status_code=400, detail="Invalid target type. Must be ALL, KEY, PLAYER, or SESSION.")
+
+    script_id = None
+    async with db.get_db() as conn:
+        if req.script_slug and req.script_slug != 'all':
+            s_cur = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND (user_id = ? OR ? = 1)",
+                                      (req.script_slug, user["id"], user.get("is_admin", 0)))
+            s_row = await s_cur.fetchone()
+            if s_row:
+                script_id = s_row["id"]
+
+        now_dt = datetime.utcnow()
+        now_iso = now_dt.isoformat()
+        ttl = max(30, min(req.ttl_seconds or 300, 86400))
+        expires_at = (now_dt + timedelta(seconds=ttl)).isoformat()
+
+        cur = await conn.execute("""
+            INSERT INTO remote_luau_queue (user_id, script_id, target_type, target_value, luau_code, description, status, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+        """, (user["id"], script_id, ttype, req.target_value, code, req.description or "Live Remote Console Exec", now_iso, expires_at))
+        await conn.commit()
+        queue_id = cur.lastrowid
+
+    target_display = f"{ttype}:{req.target_value}" if req.target_value else ttype
+    logger.info(f"Admin {user['username']} queued Remote Luau Exec #{queue_id} for target [{target_display}]")
+
+    return {
+        "success": True,
+        "id": queue_id,
+        "target": target_display,
+        "message": f"Luau payload queued successfully for [{target_display}]. Dispatched to client via protected heartbeat!"
+    }
+
+
+@app.get("/api/remote-exec/queue")
+async def get_remote_exec_queue(user: Dict = Depends(get_current_user)):
+    """
+    Fetch pending and recently executed remote Luau dispatch items.
+    """
+    async with db.get_db() as conn:
+        cur = await conn.execute("""
+            SELECT q.id, q.user_id, q.script_id, q.target_type, q.target_value, 
+                   q.luau_code, q.description, q.status, q.execution_count, 
+                   q.created_at, q.expires_at, s.name as script_name, s.slug as script_slug,
+                   u.username as creator_name
+            FROM remote_luau_queue q
+            LEFT JOIN scripts s ON q.script_id = s.id
+            LEFT JOIN users u ON q.user_id = u.id
+            ORDER BY q.id DESC
+            LIMIT 50
+        """)
+        rows = await cur.fetchall()
+
+        results = []
+        for r in rows:
+            results.append({
+                "id": r["id"],
+                "target_type": r["target_type"],
+                "target_value": r["target_value"],
+                "luau_code": r["luau_code"],
+                "description": r["description"],
+                "status": r["status"],
+                "execution_count": r["execution_count"],
+                "created_at": r["created_at"],
+                "expires_at": r["expires_at"],
+                "script_name": r["script_name"] or "Global (All Scripts)",
+                "script_slug": r["script_slug"] or "all",
+                "creator_name": r["creator_name"] or "Administrator"
+            })
+        return results
+
+
+@app.delete("/api/remote-exec/{exec_id}")
+async def delete_remote_exec_item(exec_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Cancel or delete a queued remote Luau execution item.
+    """
+    async with db.get_db() as conn:
+        await conn.execute("DELETE FROM remote_luau_queue WHERE id = ?", (exec_id,))
+        await conn.commit()
+    return {"success": True, "message": f"Remote Luau task #{exec_id} removed."}
+
+
+@app.post("/api/remote-exec/clear")
+async def clear_remote_exec_history(user: Dict = Depends(get_current_user)):
+    """
+    Clear executed and expired remote execution history.
+    """
+    async with db.get_db() as conn:
+        await conn.execute("DELETE FROM remote_luau_queue WHERE status != 'PENDING'")
+        await conn.commit()
+    return {"success": True, "message": "Remote Luau execution history cleared."}
+
 
 
 

@@ -278,7 +278,7 @@ async def send_discord_security_alert(webhook_url: str, title: str, description:
         return
     try:
         embed = {
-            "title": f"🚨 FleedGuard Security Alert: {title}",
+            "title": f"FleedGuard Security Alert: {title}",
             "description": description,
             "color": color,
             "fields": fields,
@@ -331,7 +331,7 @@ async def check_and_enforce_anomalies(conn, script: Dict, license_row: Dict, rob
                     {"name": "Trigger Reason", "value": "Multi-Account Distribution (>2 accounts in 24h)", "inline": False},
                     {"name": "Roblox Accounts Detected", "value": f"```{all_users.strip(', ')}```", "inline": False},
                     {"name": "Latest IP", "value": f"`{client_ip}`", "inline": True},
-                    {"name": "Action Taken", "value": "🚨 **Key Automatically Banned & Revoked**", "inline": False}
+                    {"name": "Action Taken", "value": "**Key Automatically Banned & Revoked**", "inline": False}
                 ]
                 await send_discord_security_alert(webhook_url, "Script Leak Detected (Auto-Banned)", f"License key `{clean_key}` has been automatically banned due to multi-user distribution.", fields, 0xEF4444)
             
@@ -365,7 +365,7 @@ async def check_and_enforce_anomalies(conn, script: Dict, license_row: Dict, rob
                 {"name": "Script Hub", "value": f"{script['name']} (`{script['slug']}`)", "inline": True},
                 {"name": "Trigger Reason", "value": "Multi-IP Proxy Sprawl (>3 IPs in 2h)", "inline": False},
                 {"name": "IPs Detected", "value": f"`{all_ips.strip(', ')}`", "inline": False},
-                {"name": "Action Taken", "value": "🚨 **Key Automatically Banned & Revoked**", "inline": False}
+                {"name": "Action Taken", "value": "**Key Automatically Banned & Revoked**", "inline": False}
             ]
             await send_discord_security_alert(webhook_url, "IP Sprawl / Proxy Leak Detected (Auto-Banned)", f"License key `{clean_key}` has been automatically banned.", fields, 0xEF4444)
 
@@ -811,7 +811,7 @@ async def test_script_webhook(script_id: int, req: TestWebhookRequest, user: Dic
 
         fields = [
             {"name": "Script Hub", "value": f"{script['name']} (`{script['slug']}`)", "inline": True},
-            {"name": "Status", "value": "🟢 Webhook Connection Active & Verified", "inline": True},
+            {"name": "Status", "value": "Webhook Connection Active & Verified", "inline": True},
             {"name": "Security VM", "value": "O_bfuscate 1.1 Virtualization Ready", "inline": True},
             {"name": "Timestamp", "value": f"<t:{int(time.time())}:R>", "inline": True}
         ]
@@ -2257,7 +2257,7 @@ async def ban_leaker(req: BanLeakerRequest, user: Dict = Depends(get_current_use
                 {"name": "License Key", "value": f"`{license_row['license_key']}`", "inline": True},
                 {"name": "Script", "value": license_row["script_name"], "inline": True},
                 {"name": "Reason", "value": ban_reason, "inline": False},
-                {"name": "Action Taken", "value": "🚨 **Manually Banned via Developer Console**", "inline": False}
+                {"name": "Action Taken", "value": "**Manually Banned via Developer Console**", "inline": False}
             ]
             await send_discord_security_alert(license_row["discord_webhook"], "License Banned (Forensic Trace)", f"License `{license_row['license_key']}` was revoked.", fields, 0xEF4444)
 
@@ -3227,7 +3227,7 @@ async def test_discord_webhook(req: TestWebhookRequest, user: Dict = Depends(get
         title="Webhook Test Event",
         description=f"This is a test notification from the FleedGuard Console sent by **{user['username']}**.",
         fields=[
-            {"name": "Status", "value": "🟢 Operational", "inline": True},
+            {"name": "Status", "value": "Operational", "inline": True},
             {"name": "Service", "value": "FleedGuard v2.2 Enterprise", "inline": True}
         ],
         color=0xFACC15

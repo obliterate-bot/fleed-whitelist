@@ -132,8 +132,8 @@ async def create_staff_panel_embed(guild: Optional[discord.Guild], bot: commands
         f"{e_key} — `Generate Key` — Create an unlinked license key\n"
         f"{e_lock} — `Grant Manager Access` — Delegate staff whitelist permissions\n"
         f"{e_guide} — `Commands Guide` — View all commands and syntax\n\n"
-        f"**👑 Authorized Whitelist Managers:**\n{managers_text}\n\n"
-        f"**👥 Recent Whitelisted Buyers:**\n{buyers_text}"
+        f"**Authorized Whitelist Managers:**\n{managers_text}\n\n"
+        f"**Recent Whitelisted Buyers:**\n{buyers_text}"
     )
 
     embed = discord.Embed(
@@ -855,7 +855,7 @@ async def is_script_owner_or_admin_interaction(user: Union[discord.Member, disco
 # ------------------- Dropdown Menus -------------------
 
 class BuyerUserSelect(discord.ui.UserSelect):
-    def __init__(self, placeholder: str = "👤 Select buyer from server members...", row: int = 0):
+    def __init__(self, placeholder: str = "Select buyer from server members...", row: int = 0):
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, row=row)
 
     async def callback(self, interaction: discord.Interaction):
@@ -863,7 +863,7 @@ class BuyerUserSelect(discord.ui.UserSelect):
         await interaction.response.defer()
 
 class ManagerRoleSelect(discord.ui.RoleSelect):
-    def __init__(self, placeholder: str = "🛡️ Select staff / reseller role...", row: int = 1):
+    def __init__(self, placeholder: str = "Select staff / reseller role...", row: int = 1):
         super().__init__(placeholder=placeholder, min_values=1, max_values=1, row=row)
 
     async def callback(self, interaction: discord.Interaction):
@@ -878,7 +878,6 @@ class ScriptSelect(discord.ui.Select):
                 label="All Scripts (Global)",
                 value="all",
                 description="Apply permission across every script hub",
-                emoji="🌐",
                 default=(default_slug == "all" or default_slug is None)
             ))
 
@@ -888,14 +887,13 @@ class ScriptSelect(discord.ui.Select):
                 label=s["name"][:100],
                 value=s["slug"],
                 description=f"Slug: {s['slug']} • v{s['version']}"[:100],
-                emoji="📜",
                 default=is_default
             ))
 
         if not options:
             options.append(discord.SelectOption(label="No scripts available", value="none"))
 
-        super().__init__(placeholder="📜 Select script hub...", min_values=1, max_values=1, options=options, row=row)
+        super().__init__(placeholder="Select script hub...", min_values=1, max_values=1, options=options, row=row)
 
     async def callback(self, interaction: discord.Interaction):
         self.view.selected_slug = self.values[0]
@@ -904,15 +902,15 @@ class ScriptSelect(discord.ui.Select):
 class DurationSelect(discord.ui.Select):
     def __init__(self, row: int = 2):
         options = [
-            discord.SelectOption(label="Lifetime (Permanent)", value="lifetime", description="Never expires", emoji="♾️", default=True),
-            discord.SelectOption(label="30 Days (1 Month)", value="30d", description="Expires after 30 days", emoji="📅"),
-            discord.SelectOption(label="14 Days (2 Weeks)", value="14d", description="Expires after 14 days", emoji="🗓️"),
-            discord.SelectOption(label="7 Days (1 Week)", value="7d", description="Expires after 7 days", emoji="⏱️"),
-            discord.SelectOption(label="3 Days", value="3d", description="Expires after 3 days", emoji="⏳"),
-            discord.SelectOption(label="1 Day (24 Hours)", value="1d", description="Expires after 24 hours", emoji="🕒"),
-            discord.SelectOption(label="1 Hour (Trial)", value="1h", description="Expires after 1 hour", emoji="⚡"),
+            discord.SelectOption(label="Lifetime (Permanent)", value="lifetime", description="Never expires", default=True),
+            discord.SelectOption(label="30 Days (1 Month)", value="30d", description="Expires after 30 days"),
+            discord.SelectOption(label="14 Days (2 Weeks)", value="14d", description="Expires after 14 days"),
+            discord.SelectOption(label="7 Days (1 Week)", value="7d", description="Expires after 7 days"),
+            discord.SelectOption(label="3 Days", value="3d", description="Expires after 3 days"),
+            discord.SelectOption(label="1 Day (24 Hours)", value="1d", description="Expires after 24 hours"),
+            discord.SelectOption(label="1 Hour (Trial)", value="1h", description="Expires after 1 hour"),
         ]
-        super().__init__(placeholder="⏳ Select duration...", min_values=1, max_values=1, options=options, row=row)
+        super().__init__(placeholder="Select duration...", min_values=1, max_values=1, options=options, row=row)
 
     async def callback(self, interaction: discord.Interaction):
         self.view.selected_duration = self.values[0]
@@ -951,7 +949,7 @@ class BuyerSelectDropdown(discord.ui.Select):
         if not options:
             options.append(discord.SelectOption(label="No buyer licenses found", value="none"))
 
-        super().__init__(placeholder="🔍 Select buyer to inspect or reset...", min_values=1, max_values=1, options=options, row=row)
+        super().__init__(placeholder="Select buyer to inspect or reset...", min_values=1, max_values=1, options=options, row=row)
 
     async def callback(self, interaction: discord.Interaction):
         selected_id = self.values[0]
@@ -1315,8 +1313,8 @@ class StaffInteractiveGrantManagerView(discord.ui.View):
         self.selected_role = None
         self.selected_slug = default_slug
 
-        self.add_item(BuyerUserSelect(placeholder="👤 Select user to grant manager access...", row=0))
-        self.add_item(ManagerRoleSelect(placeholder="🛡️ Or select role to grant manager access...", row=1))
+        self.add_item(BuyerUserSelect(placeholder="Select user to grant manager access...", row=0))
+        self.add_item(ManagerRoleSelect(placeholder="Or select role to grant manager access...", row=1))
         self.add_item(ScriptSelect(scripts=scripts, default_slug=default_slug, include_all=True, row=2))
 
     @discord.ui.button(label="grant user", style=discord.ButtonStyle.secondary, emoji=FA_ICONS["claim"], row=3)
@@ -2059,10 +2057,10 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             title="Bulk Whitelist — Complete",
             description=f"**Script:** {script['name']}\n"
                         f"**Duration:** {duration_label}\n\n"
-                        f"✅ **Added:** {added}\n"
-                        f"⏭️ **Skipped (already had key):** {skipped}\n"
-                        f"📬 **DMs sent:** {dm_sent}\n"
-                        f"🚫 **DMs failed (closed):** {dm_failed}",
+                        f"**Added:** {added}\n"
+                        f"**Skipped (already had key):** {skipped}\n"
+                        f"**DMs sent:** {dm_sent}\n"
+                        f"**DMs failed (closed):** {dm_failed}",
             author=ctx.author
         )
         await status_msg.edit(embed=result_embed)
@@ -3038,7 +3036,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
                 channel = await ctx.guild.create_text_channel(
                     name=clean_name,
                     overwrites=overwrites,
-                    topic="🔒 Private Whitelist Staff Hub — Authorized Managers & Admins Only",
+                    topic="Private Whitelist Staff Hub — Authorized Managers & Admins Only",
                     reason="FleedGuard Whitelist Staff Chat Setup"
                 )
             except discord.Forbidden:
@@ -3084,11 +3082,11 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             await conn.commit()
 
         embed = success_embed(
-            f"**📢 In-Game Broadcast Dispatched!**\n\n"
+            f"**In-Game Broadcast Dispatched**\n\n"
             f"**Message:** `{clean_msg}`\n"
-            f"**Target:** 🌐 All Active Players (Global)\n"
+            f"**Target:** All Active Players (Global)\n"
             f"**Delivering to:** `{active_cnt}` live connected Roblox client(s)\n"
-            f"**Sound:** 🔊 Audio Chime Enabled",
+            f"**Sound:** Audio Chime Enabled",
             ctx.author
         )
         await ctx.send(embed=embed)
@@ -3126,7 +3124,7 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             await conn.commit()
 
         embed = success_embed(
-            f"**📢 Script In-Game Broadcast Dispatched!**\n\n"
+            f"**Script In-Game Broadcast Dispatched**\n\n"
             f"**Script Hub:** `{clean_slug}`\n"
             f"**Message:** `{clean_msg}`\n"
             f"**Delivering to:** `{active_cnt}` live `{clean_slug}` player client(s)",

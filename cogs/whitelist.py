@@ -593,6 +593,475 @@ class WhitelistControlPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# ------------------- Staff Whitelist Management Panel & Modals -------------------
+
+async def check_user_is_manager(user: Union[discord.Member, discord.User], guild: Optional[discord.Guild], slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
+    """
+    Verifies if an interacting user has whitelist manager permissions for an interaction / modal.
+    """
+    user_id_str = str(user.id)
+    clean_slug = slug.strip().lower() if slug and slug != "all" else None
+    guild_id_str = str(guild.id) if guild else None
+
+    # 1. Bot Owners
+    is_owner = False
+    if user.id == 539594512981295106 or user.id in getattr(config, "OWNER_IDS", []):
+        is_owner = True
+    if is_owner:
+        return True, None, None
+
+    # 2. Server Administrator or Server Owner
+    if guild and isinstance(user, discord.Member):
+        if user.guild_permissions.administrator or user.id == guild.owner_id:
+            return True, None, None
+
+    async with db.get_db() as conn:
+        # 3. Direct Website Linked Developer Account
+        cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (user_id_str,))
+        user_row = await cursor.fetchone()
+        if user_row:
+            if user_row["role"] == "admin":
+                return True, None, dict(user_row)
+            if clean_slug:
+                cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+                script_row = await cursor.fetchone()
+                if script_row and script_row["user_id"] == user_row["id"]:
+                    return True, None, dict(user_row)
+            else:
+                return True, None, dict(user_row)
+
+        # 4. Whitelist Managers Table (User ID)
+        cursor = await conn.execute("""
+            SELECT * FROM whitelist_managers 
+            WHERE discord_user_id = ? AND is_role = 0
+              AND (script_slug = ? OR script_slug = 'all')
+              AND (guild_id = ? OR guild_id IS NULL)
+        """, (user_id_str, clean_slug or 'all', guild_id_str))
+        if await cursor.fetchone():
+            return True, None, None
+
+        # 5. Whitelist Managers Table (Role ID)
+        if guild and isinstance(user, discord.Member) and hasattr(user, "roles"):
+            role_ids = [str(r.id) for r in user.roles]
+            if role_ids:
+                placeholders = ",".join(["?"] * len(role_ids))
+                params = [clean_slug or 'all', guild_id_str] + role_ids
+                cursor = await conn.execute(f"""
+                    SELECT * FROM whitelist_managers
+                    WHERE is_role = 1
+                      AND (script_slug = ? OR script_slug = 'all')
+                      AND (guild_id = ? OR guild_id IS NULL)
+                      AND discord_user_id IN ({placeholders})
+                """, tuple(params))
+                if await cursor.fetchone():
+                    return True, None, None
+
+    return False, "you do not have whitelist manager permissions for this script.", None
+
+class StaffWhitelistAddModal(discord.ui.Modal, title="Whitelist Buyer"):
+    def __init__(self, default_slug: str = ""):
+        super().__init__()
+        self.user_input = discord.ui.TextInput(
+            label="Buyer Discord User ID or @Mention",
+            placeholder="e.g. 123456789012345678 or @username",
+            min_length=2,
+            max_length=64,
+            required=True
+        )
+        self.slug_input = discord.ui.TextInput(
+            label="Script Slug",
+            placeholder="e.g. hoopz-hub, golden-eagle-hub",
+            default=default_slug if default_slug and default_slug != "all" else "",
+            min_length=2,
+            max_length=64,
+            required=True
+        )
+        self.duration_input = discord.ui.TextInput(
+            label="Duration",
+            placeholder="e.g. lifetime, 7d, 30d, 1h (default: lifetime)",
+            default="lifetime",
+            min_length=1,
+            max_length=32,
+            required=False
+        )
+        self.note_input = discord.ui.TextInput(
+            label="Note / Buyer Details",
+            placeholder="e.g. Purchased via Staff Panel",
+            max_length=100,
+            required=False
+        )
+        self.add_item(self.user_input)
+        self.add_item(self.slug_input)
+        self.add_item(self.duration_input)
+        self.add_item(self.note_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        clean_slug = self.slug_input.value.strip().lower()
+        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, clean_slug)
+        if not is_allowed:
+            return await interaction.response.send_message(embed=error_embed(err or "you do not have permission to whitelist buyers for this script.", interaction.user), ephemeral=True)
+
+        target_raw = self.user_input.value.strip().strip("<@!>")
+        discord_id = target_raw
+
+        target_obj = None
+        if interaction.guild and discord_id.isdigit():
+            target_obj = interaction.guild.get_member(int(discord_id))
+        if not target_obj and discord_id.isdigit():
+            try:
+                target_obj = await interaction.client.fetch_user(int(discord_id))
+            except Exception:
+                pass
+
+        expires_at, duration_label = parse_whitelist_duration(self.duration_input.value.strip() or "lifetime")
+        user_note = self.note_input.value.strip() or f"whitelisted via staff panel by {interaction.user.name}"
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+            script = await cursor.fetchone()
+            if not script:
+                return await interaction.response.send_message(embed=error_embed(f"script `{clean_slug}` does not exist.", interaction.user), ephemeral=True)
+
+            cursor = await conn.execute("SELECT * FROM licenses WHERE discord_id = ? AND script_id = ?", (discord_id, script["id"]))
+            existing = await cursor.fetchone()
+            if existing:
+                return await interaction.response.send_message(
+                    embed=warn_embed(f"<@{discord_id}> is already whitelisted for **{script['name']}**.\nkey: `{existing['license_key']}`", interaction.user),
+                    ephemeral=True
+                )
+
+            key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+            await conn.execute("""
+                INSERT INTO licenses (script_id, license_key, discord_id, note, expires_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (script["id"], key, discord_id, user_note, expires_at, now_iso))
+            await conn.commit()
+
+        pub_url = loader_generator.get_public_url()
+        if pub_url and pub_url.startswith("http"):
+            api_key = await get_cloud_api_key(clean_slug)
+            if api_key:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        await session.post(
+                            f"{pub_url}/api/licenses/create",
+                            headers={"X-API-Key": api_key},
+                            json={
+                                "slug": clean_slug,
+                                "license_key": key,
+                                "discord_id": discord_id,
+                                "note": user_note,
+                                "expires_at": expires_at
+                            },
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        )
+                except Exception:
+                    pass
+
+        role_text = ""
+        if script["buyer_role_id"] and interaction.guild and target_obj and isinstance(target_obj, discord.Member):
+            role = interaction.guild.get_role(script["buyer_role_id"])
+            if role and interaction.guild.me.guild_permissions.manage_roles and interaction.guild.me.top_role > role:
+                try:
+                    await target_obj.add_roles(role, reason=f"whitelisted: {script['name']}")
+                    role_text = f"\ngranted role: {role.mention}"
+                except Exception:
+                    pass
+
+        loadstring_snippet = f'getgenv().FleedKey = "{key}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{clean_slug}?key={key}"))()'
+        dm_embed = fleed_embed(
+            title=f"{script['name']} — license & loadstring",
+            description=f"you have been whitelisted for **{script['name']}**.\n\n"
+                        f"**key:** `{key}`\n"
+                        f"**duration:** {duration_label}\n"
+                        f"**note:** {user_note}\n\n"
+                        f"**loadstring:**\n```lua\n{loadstring_snippet}\n```\n"
+                        f"execute this loadstring inside your roblox executor.",
+            author=interaction.user
+        )
+        dm_delivered = False
+        if target_obj:
+            try:
+                await target_obj.send(embed=dm_embed)
+                dm_delivered = True
+            except Exception:
+                dm_delivered = False
+
+        status_msg = "sent license key directly to their dms." if dm_delivered else "could not dm the user (dms closed)."
+        embed = success_embed(
+            f"whitelisted <@{discord_id}> for **{script['name']}** ({duration_label}).\n"
+            f"**key:** `{key}`{role_text}\n"
+            f"{status_msg}",
+            interaction.user
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class StaffGenKeyModal(discord.ui.Modal, title="Generate License Key"):
+    def __init__(self, default_slug: str = ""):
+        super().__init__()
+        self.slug_input = discord.ui.TextInput(
+            label="Script Slug",
+            placeholder="e.g. hoopz-hub, golden-eagle-hub",
+            default=default_slug if default_slug and default_slug != "all" else "",
+            min_length=2,
+            max_length=64,
+            required=True
+        )
+        self.duration_input = discord.ui.TextInput(
+            label="Duration",
+            placeholder="e.g. lifetime, 7d, 30d, 1h (default: lifetime)",
+            default="lifetime",
+            min_length=1,
+            max_length=32,
+            required=False
+        )
+        self.note_input = discord.ui.TextInput(
+            label="Key Note / Customer Name",
+            placeholder="e.g. Reseller Key / Batch 1",
+            max_length=100,
+            required=False
+        )
+        self.add_item(self.slug_input)
+        self.add_item(self.duration_input)
+        self.add_item(self.note_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        clean_slug = self.slug_input.value.strip().lower()
+        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, clean_slug)
+        if not is_allowed:
+            return await interaction.response.send_message(embed=error_embed(err or "you do not have permission to generate keys for this script.", interaction.user), ephemeral=True)
+
+        expires_at, duration_label = parse_whitelist_duration(self.duration_input.value.strip() or "lifetime")
+        user_note = self.note_input.value.strip() or f"generated by {interaction.user.name}"
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+            script = await cursor.fetchone()
+            if not script:
+                return await interaction.response.send_message(embed=error_embed(f"script `{clean_slug}` does not exist.", interaction.user), ephemeral=True)
+
+            key = f"FLEED-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+            await conn.execute("""
+                INSERT INTO licenses (script_id, license_key, discord_id, note, expires_at, created_at)
+                VALUES (?, ?, NULL, ?, ?, ?)
+            """, (script["id"], key, user_note, expires_at, now_iso))
+            await conn.commit()
+
+        pub_url = loader_generator.get_public_url()
+        if pub_url and pub_url.startswith("http"):
+            api_key = await get_cloud_api_key(clean_slug)
+            if api_key:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        await session.post(
+                            f"{pub_url}/api/licenses/create",
+                            headers={"X-API-Key": api_key},
+                            json={
+                                "slug": clean_slug,
+                                "license_key": key,
+                                "discord_id": None,
+                                "note": user_note,
+                                "expires_at": expires_at
+                            },
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        )
+                except Exception:
+                    pass
+
+        embed = success_embed(
+            f"generated unlinked license key for **{script['name']}** ({duration_label}).\n\n"
+            f"**key:** `{key}`\n"
+            f"**duration:** {duration_label}\n"
+            f"**note:** {user_note}\n\n"
+            f"buyers can redeem this via `,redeem {key}` or by clicking **Redeem Key** on the buyer control panel.",
+            interaction.user
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class StaffLookupModal(discord.ui.Modal, title="Lookup Buyer / Key"):
+    def __init__(self):
+        super().__init__()
+        self.query_input = discord.ui.TextInput(
+            label="Discord User ID / @Mention or License Key",
+            placeholder="e.g. 123456789012345678, @username, or FLEED-XXXX-XXXX-XXXX",
+            min_length=3,
+            max_length=64,
+            required=True
+        )
+        self.add_item(self.query_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, None)
+        if not is_allowed:
+            return await interaction.response.send_message(embed=error_embed(err or "you do not have permission to lookup keys.", interaction.user), ephemeral=True)
+
+        val = self.query_input.value.strip().strip("<@!>")
+        is_key = val.upper().startswith("FLEED-")
+
+        async with db.get_db() as conn:
+            if is_key:
+                cursor = await conn.execute("""
+                    SELECT l.*, s.name as script_name, s.slug as script_slug
+                    FROM licenses l
+                    JOIN scripts s ON l.script_id = s.id
+                    WHERE UPPER(l.license_key) = ?
+                """, (val.upper(),))
+                rows = await cursor.fetchall()
+            else:
+                cursor = await conn.execute("""
+                    SELECT l.*, s.name as script_name, s.slug as script_slug
+                    FROM licenses l
+                    JOIN scripts s ON l.script_id = s.id
+                    WHERE l.discord_id = ?
+                """, (val,))
+                rows = await cursor.fetchall()
+
+        if not rows:
+            return await interaction.response.send_message(embed=warn_embed(f"no whitelist records found for `{val}`.", interaction.user), ephemeral=True)
+
+        lines = [f"**query:** `{val}`\n"]
+        for r in rows:
+            status = "banned" if r["is_banned"] else "active"
+            hwid_val = f"`{r['hwid'][:16]}...`" if r["hwid"] else "`unbound`"
+            expires = f"`{r['expires_at'][:10]}`" if r["expires_at"] else "`lifetime`"
+            target_user = f"<@{r['discord_id']}>" if r["discord_id"] else "`unlinked (unredeemed)`"
+            lines.append(
+                f"**{r['script_name']}** (`{r['script_slug']}`)\n"
+                f"↳ **user:** {target_user}\n"
+                f"↳ **key:** `{r['license_key']}`\n"
+                f"↳ **status:** `{status}` • **hwid:** {hwid_val} • **execs:** `{r['execution_count']}` • **expires:** {expires}"
+            )
+
+        embed = fleed_embed(title="whitelist record lookup", description="\n\n".join(lines), author=interaction.user)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class StaffResetHWIDModal(discord.ui.Modal, title="Reset User HWID"):
+    def __init__(self, default_slug: str = ""):
+        super().__init__()
+        self.user_input = discord.ui.TextInput(
+            label="Discord User ID / @Mention or License Key",
+            placeholder="e.g. 123456789012345678, @username, or FLEED-XXXX",
+            min_length=3,
+            max_length=64,
+            required=True
+        )
+        self.slug_input = discord.ui.TextInput(
+            label="Script Slug",
+            placeholder="e.g. hoopz-hub (or leave blank if using key)",
+            default=default_slug if default_slug and default_slug != "all" else "",
+            max_length=64,
+            required=False
+        )
+        self.add_item(self.user_input)
+        self.add_item(self.slug_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        clean_slug = self.slug_input.value.strip().lower() if self.slug_input.value.strip() else None
+        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, clean_slug)
+        if not is_allowed:
+            return await interaction.response.send_message(embed=error_embed(err or "you do not have permission to reset hwids.", interaction.user), ephemeral=True)
+
+        target = self.user_input.value.strip().strip("<@!>")
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        async with db.get_db() as conn:
+            if target.upper().startswith("FLEED-"):
+                cursor = await conn.execute("""
+                    SELECT l.*, s.name as script_name FROM licenses l
+                    JOIN scripts s ON l.script_id = s.id
+                    WHERE UPPER(l.license_key) = ?
+                """, (target.upper(),))
+            else:
+                query = """
+                    SELECT l.*, s.name as script_name FROM licenses l
+                    JOIN scripts s ON l.script_id = s.id
+                    WHERE l.discord_id = ?
+                """
+                params = [target]
+                if clean_slug:
+                    query += " AND s.slug = ?"
+                    params.append(clean_slug)
+                cursor = await conn.execute(query, tuple(params))
+
+            rows = await cursor.fetchall()
+            if not rows:
+                return await interaction.response.send_message(embed=error_embed(f"no license found for `{target}`.", interaction.user), ephemeral=True)
+
+            for r in rows:
+                await conn.execute("UPDATE licenses SET hwid = NULL, ip_address = NULL, last_reset_at = ? WHERE id = ?", (now_iso, r["id"]))
+            await conn.commit()
+
+        embed = success_embed(f"force-reset hwid for **{len(rows)}** license record(s) for `{target}`.", interaction.user)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+class StaffWhitelistPanelView(discord.ui.View):
+    def __init__(self, slug: str = "all"):
+        super().__init__(timeout=None)
+        self.slug = slug
+        self.add_btn.custom_id = f"fg_staff_add:{slug}"
+        self.genkey_btn.custom_id = f"fg_staff_genkey:{slug}"
+        self.lookup_btn.custom_id = f"fg_staff_lookup:{slug}"
+        self.resethwid_btn.custom_id = f"fg_staff_resethwid:{slug}"
+        self.guide_btn.custom_id = f"fg_staff_guide:{slug}"
+
+    @discord.ui.button(label="Whitelist User", style=discord.ButtonStyle.success, emoji="➕", row=0, custom_id="fg_staff_add:default")
+    async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
+        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
+        if not is_allowed:
+            return await interaction.response.send_message(embed=error_embed(err or "you do not have whitelist manager permissions.", interaction.user), ephemeral=True)
+        await interaction.response.send_modal(StaffWhitelistAddModal(default_slug=slug))
+
+    @discord.ui.button(label="Generate Key", style=discord.ButtonStyle.primary, emoji="🔑", row=0, custom_id="fg_staff_genkey:default")
+    async def genkey_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
+        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
+        if not is_allowed:
+            return await interaction.response.send_message(embed=error_embed(err or "you do not have whitelist manager permissions.", interaction.user), ephemeral=True)
+        await interaction.response.send_modal(StaffGenKeyModal(default_slug=slug))
+
+    @discord.ui.button(label="Lookup Buyer", style=discord.ButtonStyle.secondary, emoji="🔍", row=0, custom_id="fg_staff_lookup:default")
+    async def lookup_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, None)
+        if not is_allowed:
+            return await interaction.response.send_message(embed=error_embed(err or "you do not have whitelist manager permissions.", interaction.user), ephemeral=True)
+        await interaction.response.send_modal(StaffLookupModal())
+
+    @discord.ui.button(label="Reset HWID", style=discord.ButtonStyle.secondary, emoji="🔄", row=1, custom_id="fg_staff_resethwid:default")
+    async def resethwid_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
+        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
+        if not is_allowed:
+            return await interaction.response.send_message(embed=error_embed(err or "you do not have whitelist manager permissions.", interaction.user), ephemeral=True)
+        await interaction.response.send_modal(StaffResetHWIDModal(default_slug=slug))
+
+    @discord.ui.button(label="Commands Guide", style=discord.ButtonStyle.secondary, emoji="📖", row=1, custom_id="fg_staff_guide:default")
+    async def guide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guide_text = (
+            "### 👑 Whitelist Manager Commands Guide\n\n"
+            "**Key Management:**\n"
+            "• `,whitelist add <@user> <slug> [duration] [note]` — Whitelist user & DM them loadstring\n"
+            "• `,whitelist genkey <slug> [duration] [note]` — Generate unlinked buyer key\n"
+            "• `,whitelist remove <@user> <slug>` — Revoke user whitelist & role\n"
+            "• `,whitelist check <@user>` — View user licenses, HWIDs & executions\n"
+            "• `,whitelist force-resethwid <@user> <slug>` — Force-reset a user's HWID\n"
+            "• `,whitelist bulkadd <slug> [duration]` — Auto-whitelist everyone with buyer role\n\n"
+            "**Access Delegation (Owners Only):**\n"
+            "• `,whitelist manager add <@user> [slug/all]` — Grant whitelist permissions to a user\n"
+            "• `,whitelist manager remove <@user> [slug/all]` — Revoke whitelist permissions\n"
+            "• `,whitelist manager role <@Role> [slug/all]` — Grant permissions to an entire staff role\n"
+            "• `,whitelist manager unrole <@Role> [slug/all]` — Revoke role permissions\n"
+            "• `,whitelist manager list [slug]` — View authorized managers\n\n"
+            "**Channel Setup:**\n"
+            "• `,whitelist setupchannel [name]` — Creates this private whitelist staff channel"
+        )
+        embed = fleed_embed(title="staff command documentation", description=guide_text, author=interaction.user)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 class WhitelistCog(commands.Cog, name="whitelist"):
     """
     FleedGuard Roblox Whitelist & License Security Cog
@@ -603,32 +1072,51 @@ class WhitelistCog(commands.Cog, name="whitelist"):
 
     async def cog_load(self):
         self.bot.add_view(WhitelistControlPanelView())
+        self.bot.add_view(StaffWhitelistPanelView())
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
         if not interaction.data or "custom_id" not in interaction.data:
             return
         custom_id = interaction.data["custom_id"]
-        if not custom_id.startswith("fg_panel_"):
-            return
 
-        parts = custom_id.split(":", 1)
-        action = parts[0]
-        slug = parts[1] if len(parts) > 1 else ""
+        # Buyer Control Panel Buttons
+        if custom_id.startswith("fg_panel_"):
+            parts = custom_id.split(":", 1)
+            action = parts[0]
+            slug = parts[1] if len(parts) > 1 else ""
 
-        view = WhitelistControlPanelView(slug=slug)
-        if action == "fg_panel_redeem":
-            await view.redeem_btn.callback(interaction)
-        elif action == "fg_panel_script":
-            await view.script_btn.callback(interaction)
-        elif action == "fg_panel_role":
-            await view.role_btn.callback(interaction)
-        elif action == "fg_panel_resethwid":
-            await view.resethwid_btn.callback(interaction)
-        elif action == "fg_panel_unlink":
-            await view.unlink_btn.callback(interaction)
-        elif action == "fg_panel_stats":
-            await view.stats_btn.callback(interaction)
+            view = WhitelistControlPanelView(slug=slug)
+            if action == "fg_panel_redeem":
+                await view.redeem_btn.callback(interaction)
+            elif action == "fg_panel_script":
+                await view.script_btn.callback(interaction)
+            elif action == "fg_panel_role":
+                await view.role_btn.callback(interaction)
+            elif action == "fg_panel_resethwid":
+                await view.resethwid_btn.callback(interaction)
+            elif action == "fg_panel_unlink":
+                await view.unlink_btn.callback(interaction)
+            elif action == "fg_panel_stats":
+                await view.stats_btn.callback(interaction)
+
+        # Staff Whitelist Panel Buttons
+        elif custom_id.startswith("fg_staff_"):
+            parts = custom_id.split(":", 1)
+            action = parts[0]
+            slug = parts[1] if len(parts) > 1 else "all"
+
+            view = StaffWhitelistPanelView(slug=slug)
+            if action == "fg_staff_add":
+                await view.add_btn.callback(interaction)
+            elif action == "fg_staff_genkey":
+                await view.genkey_btn.callback(interaction)
+            elif action == "fg_staff_lookup":
+                await view.lookup_btn.callback(interaction)
+            elif action == "fg_staff_resethwid":
+                await view.resethwid_btn.callback(interaction)
+            elif action == "fg_staff_guide":
+                await view.guide_btn.callback(interaction)
 
     # ------------------- Luarmor Core Whitelist Commands -------------------
 
@@ -1784,6 +2272,17 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             """, (discord_id, clean_slug, guild_id_str, str(ctx.author.id), now_iso))
             await conn.commit()
 
+        # Auto-update permissions on existing staff whitelist channels in this server
+        if ctx.guild and discord_id.isdigit():
+            member_obj = ctx.guild.get_member(int(discord_id))
+            if member_obj:
+                for ch in ctx.guild.text_channels:
+                    if ch.name in ["whitelist-staff", "staff-whitelist", "wl-staff"] or (ch.topic and "Private Whitelist Staff Hub" in ch.topic):
+                        try:
+                            await ch.set_permissions(member_obj, overwrite=discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True, view_channel=True))
+                        except Exception:
+                            pass
+
         # DM notification to the authorized manager
         target_obj = ctx.guild.get_member(int(discord_id)) if (ctx.guild and discord_id.isdigit()) else None
         if not target_obj and discord_id.isdigit():
@@ -1879,6 +2378,15 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             """, (str(role.id), clean_slug, guild_id_str, str(ctx.author.id), now_iso))
             await conn.commit()
 
+        # Auto-update permissions on existing staff whitelist channels in this server
+        if ctx.guild:
+            for ch in ctx.guild.text_channels:
+                if ch.name in ["whitelist-staff", "staff-whitelist", "wl-staff"] or (ch.topic and "Private Whitelist Staff Hub" in ch.topic):
+                    try:
+                        await ch.set_permissions(role, overwrite=discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True, view_channel=True))
+                    except Exception:
+                        pass
+
         embed = success_embed(
             f"successfully granted whitelist manager access to role {role.mention} for **{script_name}** (`{clean_slug}`).\n"
             f"all members with this role can now whitelist users and generate license keys.",
@@ -1961,6 +2469,144 @@ class WhitelistCog(commands.Cog, name="whitelist"):
     async def revoke_shortcut_cmd(self, ctx, target: Union[discord.Member, discord.User, str], slug: str = "all"):
         """Shortcut to revoke a user's whitelist permissions."""
         await self.manager_remove_cmd(ctx, target, slug)
+
+    @whitelist_group.command(name="setupchannel", aliases=["staffchat", "staffchannel", "setstaffchannel", "setupstaff"])
+    async def setup_staff_channel_cmd(self, ctx, channel_name: str = "whitelist-staff", slug: str = "all"):
+        """
+        Creates or configures a private whitelist staff chat that only authorized managers and admins can see.
+        Usage: ,whitelist setupchannel [channel_name] [slug]
+        """
+        if not ctx.guild:
+            return await ctx.send(embed=error_embed("this command can only be used inside a discord server.", ctx.author))
+
+        clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await is_script_owner_or_admin(ctx, clean_slug if clean_slug != "all" else None)
+        if not ok and not ctx.author.guild_permissions.administrator and ctx.author.id != ctx.guild.owner_id:
+            return await ctx.send(embed=error_embed(err_msg or "only server administrators or script owners can setup staff channels.", ctx.author))
+
+        clean_name = re.sub(r"[^a-zA-Z0-9_-]", "", channel_name.strip().lower()) or "whitelist-staff"
+
+        # Build Permission Overwrites
+        overwrites = {
+            ctx.guild.default_role: discord.PermissionOverwrite(
+                read_messages=False,
+                send_messages=False,
+                view_channel=False
+            ),
+            ctx.guild.me: discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True,
+                embed_links=True,
+                attach_files=True,
+                manage_channels=True,
+                manage_permissions=True,
+                view_channel=True
+            ),
+            ctx.author: discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True,
+                embed_links=True,
+                view_channel=True
+            )
+        }
+
+        # Query all authorized managers from database
+        guild_id_str = str(ctx.guild.id)
+        async with db.get_db() as conn:
+            cursor = await conn.execute("""
+                SELECT * FROM whitelist_managers 
+                WHERE (guild_id = ? OR guild_id IS NULL)
+                  AND (script_slug = ? OR script_slug = 'all')
+            """, (guild_id_str, clean_slug))
+            mgr_rows = await cursor.fetchall()
+
+        # Add manager roles & users to overwrites
+        for m in mgr_rows:
+            target_id = m["discord_user_id"]
+            if m["is_role"] == 1:
+                role = ctx.guild.get_role(int(target_id)) if target_id.isdigit() else None
+                if role:
+                    overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True, view_channel=True)
+            else:
+                member = ctx.guild.get_member(int(target_id)) if target_id.isdigit() else None
+                if member:
+                    overwrites[member] = discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True, view_channel=True)
+
+        # Check if existing channel exists
+        existing_channel = discord.utils.get(ctx.guild.text_channels, name=clean_name)
+        if existing_channel:
+            channel = existing_channel
+            try:
+                for target, overwrite in overwrites.items():
+                    await channel.set_permissions(target, overwrite=overwrite)
+            except Exception:
+                pass
+        else:
+            try:
+                channel = await ctx.guild.create_text_channel(
+                    name=clean_name,
+                    overwrites=overwrites,
+                    topic="🔒 Private Whitelist Staff Hub — Authorized Managers & Admins Only",
+                    reason="FleedGuard Whitelist Staff Chat Setup"
+                )
+            except discord.Forbidden:
+                return await ctx.send(embed=error_embed("i do not have permission to create channels in this server.", ctx.author))
+
+        # Send interactive staff panel inside the private channel
+        scope_label = f"**{clean_slug}**" if clean_slug != "all" else "**All Scripts (Global)**"
+        panel_embed = discord.Embed(
+            title="🔒 FleedGuard — Whitelist Staff Control Panel",
+            description=f"Welcome to the private whitelist management hub for {scope_label}.\n\n"
+                        f"**Authorized Access Only:**\n"
+                        f"• Only server admins and authorized whitelist managers can view this channel.\n"
+                        f"• Use the interactive buttons below or run `,whitelist` commands directly here.\n\n"
+                        f"**Quick Actions:**\n"
+                        f"• Click **➕ Whitelist User** to grant a buyer access and auto-DM loadstring.\n"
+                        f"• Click **🔑 Generate Key** to create an unlinked license key.\n"
+                        f"• Click **🔍 Lookup Buyer** to view HWID, executions, and status.\n"
+                        f"• Click **🔄 Reset HWID** to unlock a buyer for a new device.\n"
+                        f"• Click **📖 Commands Guide** to view all syntax and shortcuts.",
+            color=0x2B2D31
+        )
+        panel_embed.set_footer(text="FleedGuard License & Whitelist Security • Active")
+
+        view = StaffWhitelistPanelView(slug=clean_slug)
+        panel_msg = await channel.send(embed=panel_embed, view=view)
+        try:
+            await panel_msg.pin()
+        except Exception:
+            pass
+
+        await ctx.send(embed=success_embed(
+            f"successfully configured private whitelist staff chat in {channel.mention}.\n"
+            f"only authorized managers and admins have permission to view and send messages there.",
+            ctx.author
+        ))
+
+    @whitelist_group.command(name="staffpanel", aliases=["managerpanel"])
+    async def staff_panel_cmd(self, ctx, slug: str = "all"):
+        """
+        Sends the interactive staff whitelist control panel into the current channel.
+        Usage: ,whitelist staffpanel [slug]
+        """
+        clean_slug = slug.strip().lower()
+        ok, err_msg, _ = await check_script_permission(ctx, clean_slug if clean_slug != "all" else None)
+        if not ok:
+            return await ctx.send(embed=error_embed(err_msg, ctx.author))
+
+        scope_label = f"**{clean_slug}**" if clean_slug != "all" else "**All Scripts (Global)**"
+        panel_embed = discord.Embed(
+            title="🔒 FleedGuard — Whitelist Staff Control Panel",
+            description=f"Welcome to the private whitelist management hub for {scope_label}.\n\n"
+                        f"**Authorized Access Only:**\n"
+                        f"• Only server admins and authorized whitelist managers can use this panel.\n"
+                        f"• Click any button below to manage keys, buyers, or reset HWIDs.",
+            color=0x2B2D31
+        )
+        panel_embed.set_footer(text="FleedGuard License & Whitelist Security • Active")
+
+        view = StaffWhitelistPanelView(slug=clean_slug)
+        await ctx.send(embed=panel_embed, view=view)
 
 async def setup(bot):
     await bot.add_cog(WhitelistCog(bot))

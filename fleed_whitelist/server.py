@@ -1631,7 +1631,7 @@ async def serve_raw_loader(slug: str, request: Request, key: Optional[str] = Non
 
     # Generate ephemeral HMAC loader armor token bound to slug and short time window
     loader_token = crypto_engine.generate_loader_token(script_slug)
-    armored_loader = loader_generator.generate_client_loader(base_url, script_slug, script_name, loader_token=loader_token, obfuscate=True)
+    armored_loader = loader_generator.generate_client_loader(base_url, script_slug, script_name, loader_token=loader_token, obfuscate=True, key=clean_key)
     return PlainTextResponse(armored_loader, media_type="text/plain")
 
 @app.post("/v1/handshake/init")
@@ -2042,17 +2042,24 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
         except Exception:
             return JSONResponse(status_code=403, content={"success": False, "message": "License expiry invalid"})
 
-    # Live in-game kick check: if admin issued a kick for this key or HWID, terminate game session immediately
+    # Live in-game kick check: if admin issued a kick for this key or HWID within the last 60s, terminate game session immediately
     async with db.get_db() as conn:
+        now_iso = datetime.now(timezone.utc).isoformat()
         k_cur = await conn.execute("""
-            SELECT reason FROM session_kicks 
-            WHERE (target_type = 'KEY' AND UPPER(target_value) = UPPER(?))
-               OR (target_type = 'HWID' AND UPPER(target_value) = UPPER(?))
+            SELECT id, reason FROM session_kicks 
+            WHERE (is_consumed IS NULL OR is_consumed = 0)
+              AND created_at >= datetime('now', '-60 seconds')
+              AND (
+                  (target_type = 'KEY' AND UPPER(target_value) = UPPER(?))
+                  OR (target_type = 'HWID' AND UPPER(target_value) = UPPER(?))
+              )
             ORDER BY id DESC LIMIT 1
         """, (claims["key"], presented))
         kick_row = await k_cur.fetchone()
         if kick_row:
             try:
+                # Mark this kick as consumed immediately so future joins are NOT blocked
+                await conn.execute("UPDATE session_kicks SET is_consumed = 1, consumed_at = ? WHERE id = ?", (now_iso, kick_row["id"]))
                 await conn.execute("UPDATE live_sessions SET is_kicked = 1 WHERE UPPER(license_key) = UPPER(?)", (claims["key"],))
                 await conn.commit()
             except Exception:
@@ -2062,6 +2069,7 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
                 "action": "kick", 
                 "kick_reason": kick_row["reason"] or "FleedGuard: You have been kicked from the game by the administrator."
             })
+
 
         # Update real-time heartbeat timestamp
         now_iso = datetime.now(timezone.utc).isoformat()

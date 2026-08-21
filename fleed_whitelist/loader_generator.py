@@ -46,7 +46,7 @@ local _XK={fake_xor}
 
 
     @staticmethod
-    def generate_client_loader(server_url: str, script_slug: str, script_name: str, loader_token: str = "", obfuscate: bool = True) -> str:
+    def generate_client_loader(server_url: str, script_slug: str, script_name: str, loader_token: str = "", obfuscate: bool = True, key: str = "") -> str:
         """
         Generates the armored client loader that runs inside Roblox Executors.
         Features:
@@ -61,7 +61,8 @@ local _XK={fake_xor}
         - Ephemeral HMAC Loader Armor Token
         """
         import time
-        cache_key = (server_url, script_slug, loader_token, obfuscate)
+        clean_key = (key or "").strip().upper()
+        cache_key = (server_url, script_slug, loader_token, obfuscate, clean_key)
         if cache_key in LoaderGenerator._loader_cache:
             cached_code, cached_time = LoaderGenerator._loader_cache[cache_key]
             if time.time() - cached_time < 90:
@@ -108,7 +109,8 @@ local _rshift = (bit32 and bit32.rshift) or (bit and bit.rshift)
 local FLEED_SERVER = "{clean_url}"
 local SCRIPT_SLUG = "{script_slug}"
 local LOADER_ARMOR_TOKEN = "{loader_token}"
-local FLEED_KEY = getgenv().FleedKey or getgenv().Key or _G.FleedKey or _G.Key
+local FLEED_KEY = getgenv().FleedKey or getgenv().Key or _G.FleedKey or _G.Key or "{clean_key}"
+
 
 -- 1. Security Kick Enforcer
 local function securityKick(reason)

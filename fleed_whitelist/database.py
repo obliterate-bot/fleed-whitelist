@@ -259,12 +259,21 @@ class WhitelistDB:
                 ("roblox_username", "TEXT"),
                 ("roblox_user_id", "INTEGER"),
                 ("place_id", "INTEGER"),
-                ("game_name", "TEXT")
+                ("game_name", "TEXT"),
+                ("is_consumed", "INTEGER DEFAULT 0"),
+                ("consumed_at", "TEXT")
             ]:
                 try:
                     await conn.execute(f"ALTER TABLE session_kicks ADD COLUMN {col} {col_type};")
                 except Exception:
                     pass
+
+            # Mark all old stale kicks as consumed on startup so past tests don't lock out developers
+            try:
+                await conn.execute("UPDATE session_kicks SET is_consumed = 1 WHERE is_consumed = 0;")
+                await conn.execute("UPDATE live_sessions SET is_kicked = 0 WHERE is_kicked = 1;")
+            except Exception:
+                pass
 
             # 9. Delegated Whitelist Managers & Sub-Admins
             await conn.execute("""

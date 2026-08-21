@@ -361,8 +361,8 @@ class CryptoEngine:
         
         # Detect available lua runtime: luajit -> lua5.1 -> lua
         lua_bin = None
-        for candidate in ["luajit", "lua5.1", "lua", "luajit.exe", "lua.exe"]:
-            if shutil.which(candidate):
+        for candidate in ["luajit", "lua5.1", "/usr/bin/luajit", "/usr/bin/lua5.1", "/usr/local/bin/luajit", "lua", "luajit.exe", "lua.exe"]:
+            if shutil.which(candidate) or (os.path.isabs(candidate) and os.path.exists(candidate)):
                 lua_bin = candidate
                 break
 
@@ -377,7 +377,7 @@ class CryptoEngine:
         out_path = in_path + ".out.lua"
 
         try:
-            cmd = [lua_bin, prom_cli, "--preset", preset, in_path, "--out", out_path]
+            cmd = [lua_bin, prom_cli, "--preset", preset, "--out", out_path, in_path]
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=os.path.dirname(prom_cli))
             if proc.returncode == 0 and os.path.exists(out_path):
                 with open(out_path, "r", encoding="utf-8", errors="ignore") as f:

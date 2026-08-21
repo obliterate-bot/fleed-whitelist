@@ -242,6 +242,23 @@ class DiscordWebhookCreateRequest(BaseModel):
 class TestWebhookRequest(BaseModel):
     webhook_url: Optional[str] = None
 
+class WatermarkLookupRequest(BaseModel):
+    watermark_or_source: str
+
+class BanLeakerRequest(BaseModel):
+    license_id: int
+    reason: Optional[str] = "Banned via Forensic Watermark Trace"
+
+class KickPlayerRequest(BaseModel):
+    target_type: Optional[str] = None
+    target_value: Optional[str] = None
+    license_key: Optional[str] = None
+    hwid: Optional[str] = None
+    roblox_user_id: Optional[int] = None
+    roblox_username: Optional[str] = None
+    reason: Optional[str] = "Terminated by developer"
+
+
 
 async def send_discord_security_alert(webhook_url: str, title: str, description: str, fields: List[Dict], color: int = 0xEF4444):
     """Sends a rich, non-blocking Discord security alert embed."""

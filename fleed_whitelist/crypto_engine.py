@@ -310,15 +310,20 @@ class CryptoEngine:
                     encrypt_strings=True,
                     split_numbers=True,
                     encrypt_properties=True,
-                    layered_strings=False,
+                    layered_strings=True,
                     string_shards=2,
                     string_decoys=2,
                     noise=1,
-                    opaque_predicates=False,
+                    opaque_predicates=True,
                     mask_literals=True,
                     number_depth=2,
                     bitwise_numbers=True,
-                    virtualize=False,
+                    virtualize=True,
+                    vm_encrypt_constants=True,
+                    vm_shuffle_constants=True,
+                    vm_integrity=True,
+                    vm_polymorphic=True,
+                    vm_compress=True,
                 )
             else:
                 cfg = Config(

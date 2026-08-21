@@ -1,0 +1,214 @@
+do 
+local _WvwJAJx,_xl79MpI=108853,-121701;_WvwJAJx=_WvwJAJx+_xl79MpI-_xl79MpI end
+;
+local type_=type 
+local tostring_=tostring 
+local tonumber_=tonumber 
+local pcall_=pcall 
+local error_=error 
+local assert_=assert 
+local select_=select 
+local rawget_=rawget 
+local rawset_=rawset 
+local setmetatable_=setmetatable 
+local getmetatable_=getmetatable 
+local str_byte=string["byte"]
+local str_char=string["char"]
+local str_format=string["format"]
+local str_gsub=string["gsub"]
+local str_sub=string["sub"]
+local str_find=string["find"]
+local str_len=string["len"]
+local tbl_concat=table["concat"]
+local math_random=math["random"]
+local math_floor=math["floor"]
+local os_time=os["time"]
+local loadstring_=loadstring 
+local getfenv_=getfenv 
+local setfenv_=setfenv 
+local bit_bxor=(bit32 and bit32["bxor"])or(bit and bit["bxor"])
+local bit_band=(bit32 and bit32["band"])or(bit and bit["band"])
+local bit_rshift=(bit32 and bit32["rshift"])or(bit and bit["rshift"])
+local BASE_URL="https://fleed-whitelist-production.up.railway.app"
+local SLUG="ge"
+local LOADER_TOKEN="19858636:fb793462f4d9d6b93f179a08"
+local licenseKey=getgenv()["FleedKey"]or getgenv()["Key"]or _G["FleedKey"]or _G["Key"]or "FLEED-2380CD7D-CE855B0B-5F13E6BD"
+local function kickPlayer(reason)
+if game and game["Players"]and game["Players"]["LocalPlayer"]then pcall_(function()game["Players"]["LocalPlayer"]:Kick("[FleedGuard Security] "..tostring_(reason))end
+)end
+ end
+ 
+if not licenseKey or type_(licenseKey)~="string"or#licenseKey<4then kickPlayer("No license key provided. Set getgenv().FleedKey = 'YOUR_KEY'")return end
+ 
+if getgenv and(type_(getgenv()["Bypass"])~="nil"or type_(getgenv()["FleedFetcher"])~="nil"or type_(getgenv()["Decoded"])~="nil")then kickPlayer("Extractor / dumper environment detected.")return end
+ 
+local function isUntamperedCFunction(fn)
+if not fn or type_(fn)~="function"then return(1==0)end
+ 
+if islclosure then 
+local l_l=(0>1)
+local O_l=pcall_(function()l_l=islclosure(fn)end
+)
+if O_l and l_l then return(2~=2)end
+ end
+ 
+if iscclosure then 
+local __l=(1==1)
+local I0l=pcall_(function()__l=iscclosure(fn)end
+)
+if I0l and not __l then return(1==0)end
+ end
+ 
+if debug and debug["info"]then 
+local l0l=nillocal O0l=pcall_(function()l0l=debug["info"](fn,"s")end
+)
+if O0l and l0l then 
+if l0l~="[C]"and not str_find(l0l,"builtin")and not str_find(l0l,"native")then return(1==0)end
+ end
+ end
+ return(1==1)end
+ 
+local function gameMetatableHooked()
+if getrawmetatable and checkcaller then 
+local I1l,l1l=pcall_(getrawmetatable,game)
+if I1l and l1l and type_(l1l)=="table"then 
+local O1l=rawget_(l1l,"__namecall")
+local _1l=rawget_(l1l,"__index")
+if O1l and not isUntamperedCFunction(O1l)then return(1==1)end
+ 
+if _1l and not isUntamperedCFunction(_1l)then return(2~=3)end
+ end
+ end
+ return(2~=2)end
+ 
+if not isUntamperedCFunction(str_byte)or not isUntamperedCFunction(str_char)or not isUntamperedCFunction(pcall_)or not isUntamperedCFunction(tostring_)or gameMetatableHooked()then kickPlayer("Critical runtime environment tampering detected.")return end
+ 
+local HttpService=game:GetService("HttpService")
+local PlayersService=game:GetService("Players")
+local localPlayer=PlayersService["LocalPlayer"]or PlayersService["PlayerAdded"]:Wait()
+local httpRequest=(syn and syn["request"])or(http and http["request"])or http_request or request or(fluxus and fluxus["request"])
+if not httpRequest or not isUntamperedCFunction(httpRequest)then kickPlayer("Unsupported or hooked HTTP executor environment.")return end
+ 
+local function collectHwid()
+local hwid=nilif gethwid and isUntamperedCFunction(gethwid)then pcall_(function()hwid=gethwid()end
+)end
+ 
+if not hwid and syn and syn["get_hwid"]and isUntamperedCFunction(syn["get_hwid"])then pcall_(function()hwid=syn["get_hwid"]()end
+)end
+ 
+if not hwid and identifyexecutor then 
+local execName=identifyexecutor()
+local clientId=game:GetService("RbxAnalyticsService"):GetClientId()hwid=execName.."_"..clientId end
+ 
+if not hwid then hwid=game:GetService("RbxAnalyticsService"):GetClientId()end
+ return tostring_(hwid or "UNKNOWN_HWID")end
+ 
+local HWID=collectHwid()
+if getgenv then getgenv()["__FG_HWID"]=HWID end
+ 
+local EXECUTOR=(identifyexecutor and identifyexecutor())or(syn and "Synapse")or "Universal"
+local USERNAME=(localPlayer and localPlayer["Name"])or "Unknown"
+local USERID=(localPlayer and localPlayer["UserId"])or 0local PLACE_ID=game["PlaceId"]or 0local JOB_ID=tostring_(game["JobId"]or "")
+local GAME_NAME="Roblox Experience"pcall_(function()
+local MarketplaceService=game:GetService("MarketplaceService")
+local productInfo=MarketplaceService:GetProductInfo(game["PlaceId"])
+if productInfo and productInfo["Name"]then GAME_NAME=tostring_(productInfo["Name"])end
+ end
+)
+local function sha256(input)
+if crypt and crypt["hash"]and isUntamperedCFunction(crypt["hash"])then return crypt["hash"](input,"sha256")elseif syn and syn["crypt"]and syn["crypt"]["hash"]and isUntamperedCFunction(syn["crypt"]["hash"])then return syn["crypt"]["hash"]("sha256",input)end
+ 
+local acc=2166136261for i=1,#input do acc=bit_bxor(acc,str_byte(input,i))acc=bit_band(acc*16777619,4294967295)end
+ return str_format("%08x",acc)end
+ 
+local function rc4(dataBytes,key)
+local S=table["create"](256)for i=0,255do S[i]=i end
+ 
+local j=0local keyLen=#key for i=0,255do j=(j+S[i]+str_byte(key,(i%keyLen)+1))%256II_[i],S[j]=S[j],S[i]end
+ 
+local i2,j2=0,0local dataLen=#dataBytes 
+local out=table["create"](dataLen)for n=1,dataLen do i2=(i2+1)%256Ol_=(j2+S[i2])%256II_[i2],S[j2]=S[j2],S[i2]
+local k=S[(S[i2]+S[j2])%256]out[n]=str_char(bit_bxor(dataBytes[n],k))end
+ return tbl_concat(out)end
+ 
+local clientChallenge=sha256(tostring_(os_time()).."_"..tostring_(math_random(10000000,99999999)))
+local initResponse=httpRequest({["Url"]=BASE_URL.."/v1/handshake/init",["Method"]="POST",["Headers"]={["Content-Type"]="application/json",["User-Agent"]="FleedGuard/"..EXECUTOR},["Body"]=HttpService:JSONEncode({["slug"]=SLUG,["key"]=licenseKey,["hwid"]=HWID,["client_challenge"]=clientChallenge,["loader_token"]=LOADER_TOKEN,["executor"]=EXECUTOR,["roblox_username"]=USERNAME,["roblox_user_id"]=USERID,["place_id"]=PLACE_ID,["job_id"]=JOB_ID,["game_name"]=GAME_NAME})})
+if initResponse["StatusCode"]~=200then 
+local okDecode=pcall_(function()return HttpService:JSONDecode(initResponse["Body"])end
+)
+local errMsg=(type_(okDecode)=="table"and okDecode["message"])or initResponse["Body"]or "Connection error"kickPlayer("Authentication Failed: "..tostring_(errMsg))return end
+ 
+local initBody=HttpService:JSONDecode(initResponse["Body"])
+if not initBody["success"]then kickPlayer("Access Denied: "..tostring_(initBody["message"]))return end
+ 
+local serverChallenge=initBody["server_challenge"]
+local nonce=initBody["nonce"]
+local signatureInput=clientChallenge..":"..serverChallenge..":"..nonce..":"..licenseKey..":"..HWID 
+local signature=sha256(signatureInput)
+local verifyResponse=httpRequest({["Url"]=BASE_URL.."/v1/handshake/verify",["Method"]="POST",["Headers"]={["Content-Type"]="application/json",["User-Agent"]="FleedGuard/"..EXECUTOR},["Body"]=HttpService:JSONEncode({["nonce"]=nonce,["signature"]=signature,["client_challenge"]=clientChallenge,["hwid"]=HWID})})
+if verifyResponse["StatusCode"]~=200then 
+local verifyErr="Error "..tostring_(verifyResponse["StatusCode"])pcall_(function()
+local verifyErrBody=HttpService:JSONDecode(verifyResponse["Body"])
+if verifyErrBody and verifyErrBody["message"]then verifyErr=tostring_(verifyErrBody["message"])end
+ end
+)kickPlayer("Security Payload Rejection: "..tostring_(verifyErr))return end
+ 
+local verifyBody=HttpService:JSONDecode(verifyResponse["Body"])
+if not verifyBody["success"]then kickPlayer("Execution Error: "..tostring_(verifyBody["message"]))return end
+ 
+local sessionHash=sha256(clientChallenge..":"..serverChallenge..":"..nonce..":"..licenseKey..":"..HWID)
+local payloadB64=verifyBody["payload"]
+local base64decode=(crypt and crypt["base64decode"]and isUntamperedCFunction(crypt["base64decode"])and crypt["base64decode"])or(syn and syn["crypt"]and syn["crypt"]["base64_decode"]and isUntamperedCFunction(syn["crypt"]["base64_decode"])and syn["crypt"]["base64_decode"])
+local payloadRaw=""
+if base64decode then payloadRaw=base64decode(payloadB64)else 
+local B64_ALPHABET="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"payloadB64=str_gsub(payloadB64,"[^"..B64_ALPHABET .."=]","")payloadRaw=(payloadB64:gsub("=",""):gsub("..",function(chunk)
+local bitsVal=0for p=1,2do bitsVal=bitsVal*64+(B64_ALPHABET:find(chunk:sub(p,p))-1)end
+ return str_char(bit_rshift(bitsVal,4),bit_band(bit_rshift(bitsVal,2),255))end
+))end
+ 
+local payloadLen=#payloadRaw 
+local payloadBytes=table["create"](payloadLen)for i=1,payloadLen do payloadBytes[i]=str_byte(payloadRaw,i)end
+ 
+if not isUntamperedCFunction(loadstring_)or gameMetatableHooked()then kickPlayer("Critical runtime environment or compiler hook detected.")return end
+ 
+local DUMPER_FUNCS={{setclipboard,"setclipboard"},{writefile,"writefile"},{appendfile,"appendfile"},{getgc,"getgc"},{getprotos,"getprotos"},{getconstants,"getconstants"},{getupvalues,"getupvalues"},{decompile,"decompile"},{saveinstance,"saveinstance"},{getscriptclosure,"getscriptclosure"},}for _,entry in rawget_(DUMPER_FUNCS,1)and pairs(DUMPER_FUNCS)or next,DUMPER_FUNCS do 
+local fnRef,fnName=entry[1],entry[2]
+if fnRef and not isUntamperedCFunction(fnRef)then kickPlayer("Hooked function detected: "..tostring_(fnName))return end
+ end
+ 
+local HOOK_FUNCS={{hookfunction,"hookfunction"},{hookmetamethod,"hookmetamethod"},{newcclosure,"newcclosure"},{clonefunction,"clonefunction"},}for _,entry2 in rawget_(HOOK_FUNCS,1)and pairs(HOOK_FUNCS)or next,HOOK_FUNCS do 
+local fnRef2,fnName2=entry2[1],entry2[2]
+if fnRef2 and not isUntamperedCFunction(fnRef2)then kickPlayer("Hook injection tool tampered: "..tostring_(fnName2))return end
+ end
+ 
+if debug then 
+if debug["setupvalue"]and not isUntamperedCFunction(debug["setupvalue"])then kickPlayer("Debug reflection hook (setupvalue) detected.")return end
+ 
+if debug["getupvalue"]and not isUntamperedCFunction(debug["getupvalue"])then kickPlayer("Debug reflection hook (getupvalue) detected.")return end
+ 
+if debug["getinfo"]and not isUntamperedCFunction(debug["getinfo"])then kickPlayer("Debug reflection hook (getinfo) detected.")return end
+ 
+if debug["setmetatable"]and not isUntamperedCFunction(debug["setmetatable"])then kickPlayer("Debug metatable hook detected.")return end
+ end
+ 
+if getrenv and not isUntamperedCFunction(getrenv)then kickPlayer("Registry environment scraper detected.")return end
+ 
+local rc4Key=sessionHash ..nonce 
+local decryptedSource=rc4(payloadBytes,rc4Key)
+if not decryptedSource or#decryptedSource==0then kickPlayer("Payload verification error.")return end
+ 
+local chunkFn=nillocal loadErr=nillocal bytecodeLoader=loadbytecode or(crypt and crypt["luau_load"])
+if bytecodeLoader and crypt and crypt["luau_compile"]and isUntamperedCFunction(bytecodeLoader)then 
+local okCompile,bytecode=pcall_(function()return crypt["luau_compile"](decryptedSource)end
+)
+if okCompile and bytecode then chunkFn=bytecodeLoader(bytecode)end
+ end
+ 
+if not chunkFn then chunkFn,loadErr=loadstring_(decryptedSource)end
+ 
+if not chunkFn then kickPlayer("Tampered payload execution failed.")return end
+ 
+local env=getfenv_(chunkFn)env["script"]=nillIl(chunkFn,env)decryptedSource=nil_1_=nillO0=nil_00=nilII0=nilO0_=nil_0_=nilI__=nilI1_=nil_I0=nillI0=nilOI0=nil_I0=niltask["spawn"](function()while(0<1)do task["wait"](2)if(writefile and not isUntamperedCFunction(writefile))or(setclipboard and not isUntamperedCFunction(setclipboard))or(hookfunction and not isUntamperedCFunction(hookfunction))or gameMetatableHooked()then kickPlayer("Post-load hook injection detected.")return end
+ end
+ end
+)task["spawn"](chunkFn)

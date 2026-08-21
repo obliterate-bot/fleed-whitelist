@@ -658,63 +658,217 @@ async def check_user_is_manager(user: Union[discord.Member, discord.User], guild
 
     return False, "you do not have whitelist manager permissions for this script.", None
 
-class StaffWhitelistAddModal(discord.ui.Modal, title="Whitelist Buyer"):
-    def __init__(self, default_slug: str = ""):
-        super().__init__()
-        self.user_input = discord.ui.TextInput(
-            label="Buyer Discord User ID or @Mention",
-            placeholder="e.g. 123456789012345678 or @username",
-            min_length=2,
-            max_length=64,
-            required=True
-        )
-        self.slug_input = discord.ui.TextInput(
-            label="Script Slug",
-            placeholder="e.g. hoopz-hub, golden-eagle-hub",
-            default=default_slug if default_slug and default_slug != "all" else "",
-            min_length=2,
-            max_length=64,
-            required=True
-        )
-        self.duration_input = discord.ui.TextInput(
-            label="Duration",
-            placeholder="e.g. lifetime, 7d, 30d, 1h (default: lifetime)",
-            default="lifetime",
-            min_length=1,
-            max_length=32,
-            required=False
-        )
-        self.note_input = discord.ui.TextInput(
-            label="Note / Buyer Details",
-            placeholder="e.g. Purchased via Staff Panel",
-            max_length=100,
-            required=False
-        )
-        self.add_item(self.user_input)
-        self.add_item(self.slug_input)
-        self.add_item(self.duration_input)
-        self.add_item(self.note_input)
+# ------------------- Staff Whitelist Dropdown Components & Interactive Views -------------------
 
-    async def on_submit(self, interaction: discord.Interaction):
-        clean_slug = self.slug_input.value.strip().lower()
+async def check_user_is_manager(user: Union[discord.Member, discord.User], guild: Optional[discord.Guild], slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
+    """
+    Verifies if an interacting user has whitelist manager permissions for an interaction.
+    """
+    user_id_str = str(user.id)
+    clean_slug = slug.strip().lower() if slug and slug != "all" else None
+    guild_id_str = str(guild.id) if guild else None
+
+    # 1. Bot Owners
+    if user.id == 539594512981295106 or user.id in getattr(config, "OWNER_IDS", []):
+        return True, None, None
+
+    # 2. Server Administrator or Server Owner
+    if guild and isinstance(user, discord.Member):
+        if user.guild_permissions.administrator or user.id == guild.owner_id:
+            return True, None, None
+
+    async with db.get_db() as conn:
+        # 3. Direct Website Linked Developer Account
+        cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (user_id_str,))
+        user_row = await cursor.fetchone()
+        if user_row:
+            if user_row["role"] == "admin":
+                return True, None, dict(user_row)
+            if clean_slug:
+                cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+                script_row = await cursor.fetchone()
+                if script_row and script_row["user_id"] == user_row["id"]:
+                    return True, None, dict(user_row)
+            else:
+                return True, None, dict(user_row)
+
+        # 4. Whitelist Managers Table (User ID)
+        cursor = await conn.execute("""
+            SELECT * FROM whitelist_managers 
+            WHERE discord_user_id = ? AND is_role = 0
+              AND (script_slug = ? OR script_slug = 'all')
+              AND (guild_id = ? OR guild_id IS NULL)
+        """, (user_id_str, clean_slug or 'all', guild_id_str))
+        if await cursor.fetchone():
+            return True, None, None
+
+        # 5. Whitelist Managers Table (Role ID)
+        if guild and isinstance(user, discord.Member) and hasattr(user, "roles"):
+            role_ids = [str(r.id) for r in user.roles]
+            if role_ids:
+                placeholders = ",".join(["?"] * len(role_ids))
+                params = [clean_slug or 'all', guild_id_str] + role_ids
+                cursor = await conn.execute(f"""
+                    SELECT * FROM whitelist_managers
+                    WHERE is_role = 1
+                      AND (script_slug = ? OR script_slug = 'all')
+                      AND (guild_id = ? OR guild_id IS NULL)
+                      AND discord_user_id IN ({placeholders})
+                """, tuple(params))
+                if await cursor.fetchone():
+                    return True, None, None
+
+    return False, "you do not have whitelist manager permissions for this script.", None
+
+async def is_script_owner_or_admin_interaction(user: Union[discord.Member, discord.User], guild: Optional[discord.Guild], slug: str = None) -> tuple[bool, Optional[str], Optional[dict]]:
+    user_id_str = str(user.id)
+    clean_slug = slug.strip().lower() if slug and slug != "all" else None
+
+    if user.id == 539594512981295106 or user.id in getattr(config, "OWNER_IDS", []):
+        return True, None, None
+
+    if guild and isinstance(user, discord.Member):
+        if user.guild_permissions.administrator or user.id == guild.owner_id:
+            return True, None, None
+
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT * FROM users WHERE discord_id = ? AND is_active = 1", (user_id_str,))
+        user_row = await cursor.fetchone()
+        if not user_row:
+            return False, "you must be linked to a website developer account to manage permissions.", None
+        if user_row["role"] == "admin":
+            return True, None, dict(user_row)
+        if clean_slug:
+            cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
+            script_row = await cursor.fetchone()
+            if script_row and script_row["user_id"] == user_row["id"]:
+                return True, None, dict(user_row)
+        return True, None, dict(user_row)
+
+# ------------------- Dropdown Menus -------------------
+
+class BuyerUserSelect(discord.ui.UserSelect):
+    def __init__(self, placeholder: str = "👤 Select buyer from server members...", row: int = 0):
+        super().__init__(placeholder=placeholder, min_values=1, max_values=1, row=row)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.selected_user = self.values[0]
+        await interaction.response.defer()
+
+class ManagerRoleSelect(discord.ui.RoleSelect):
+    def __init__(self, placeholder: str = "🛡️ Select staff / reseller role...", row: int = 1):
+        super().__init__(placeholder=placeholder, min_values=1, max_values=1, row=row)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.selected_role = self.values[0]
+        await interaction.response.defer()
+
+class ScriptSelect(discord.ui.Select):
+    def __init__(self, scripts: list, default_slug: str = None, include_all: bool = False, row: int = 1):
+        options = []
+        if include_all:
+            options.append(discord.SelectOption(
+                label="All Scripts (Global)",
+                value="all",
+                description="Apply permission across every script hub",
+                emoji="🌐",
+                default=(default_slug == "all" or default_slug is None)
+            ))
+
+        for s in scripts[:24]:
+            is_default = (s["slug"] == default_slug) and not include_all
+            options.append(discord.SelectOption(
+                label=s["name"][:100],
+                value=s["slug"],
+                description=f"Slug: {s['slug']} • v{s['version']}"[:100],
+                emoji="📜",
+                default=is_default
+            ))
+
+        if not options:
+            options.append(discord.SelectOption(label="No scripts available", value="none"))
+
+        super().__init__(placeholder="📜 Select script hub...", min_values=1, max_values=1, options=options, row=row)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.selected_slug = self.values[0]
+        await interaction.response.defer()
+
+class DurationSelect(discord.ui.Select):
+    def __init__(self, row: int = 2):
+        options = [
+            discord.SelectOption(label="Lifetime (Permanent)", value="lifetime", description="Never expires", emoji="♾️", default=True),
+            discord.SelectOption(label="30 Days (1 Month)", value="30d", description="Expires after 30 days", emoji="📅"),
+            discord.SelectOption(label="14 Days (2 Weeks)", value="14d", description="Expires after 14 days", emoji="🗓️"),
+            discord.SelectOption(label="7 Days (1 Week)", value="7d", description="Expires after 7 days", emoji="⏱️"),
+            discord.SelectOption(label="3 Days", value="3d", description="Expires after 3 days", emoji="⏳"),
+            discord.SelectOption(label="1 Day (24 Hours)", value="1d", description="Expires after 24 hours", emoji="🕒"),
+            discord.SelectOption(label="1 Hour (Trial)", value="1h", description="Expires after 1 hour", emoji="⚡"),
+        ]
+        super().__init__(placeholder="⏳ Select duration...", min_values=1, max_values=1, options=options, row=row)
+
+    async def callback(self, interaction: discord.Interaction):
+        self.view.selected_duration = self.values[0]
+        await interaction.response.defer()
+
+class BuyerSelectDropdown(discord.ui.Select):
+    def __init__(self, licenses: list, row: int = 0):
+        options = []
+        for lic in licenses[:25]:
+            user_label = f"User: {lic['discord_id']}" if lic["discord_id"] else "Unlinked Key"
+            script_label = lic["script_name"][:20]
+            key_preview = lic["license_key"][:14]
+            hwid_label = "HWID Bound" if lic["hwid"] else "Unbound"
+            status_label = "BANNED" if lic["is_banned"] else "Active"
+            
+            options.append(discord.SelectOption(
+                label=f"{user_label} ({script_label})"[:100],
+                value=str(lic["id"]),
+                description=f"Key: {key_preview}... • {hwid_label} • {status_label}"[:100],
+                emoji="👤" if not lic["is_banned"] else "🚫"
+            ))
+
+        if not options:
+            options.append(discord.SelectOption(label="No buyer licenses found", value="none"))
+
+        super().__init__(placeholder="🔍 Select buyer to inspect or reset...", min_values=1, max_values=1, options=options, row=row)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_id = self.values[0]
+        if selected_id == "none":
+            return await interaction.response.defer()
+
+        self.view.selected_license_id = int(selected_id)
+        await self.view.update_buyer_display(interaction)
+
+# ------------------- Interactive Sub-Views -------------------
+
+class StaffInteractiveWhitelistView(discord.ui.View):
+    def __init__(self, scripts: list, default_slug: str, author: Union[discord.Member, discord.User]):
+        super().__init__(timeout=180)
+        self.author = author
+        self.selected_user = None
+        self.selected_slug = default_slug
+        self.selected_duration = "lifetime"
+
+        self.add_item(BuyerUserSelect(row=0))
+        self.add_item(ScriptSelect(scripts=scripts, default_slug=default_slug, include_all=False, row=1))
+        self.add_item(DurationSelect(row=2))
+
+    @discord.ui.button(label="Confirm Whitelist", style=discord.ButtonStyle.success, emoji="✅", row=3)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.selected_user:
+            return await interaction.response.send_message(embed=error_embed("please select a buyer from the user dropdown first.", interaction.user), ephemeral=True)
+
+        clean_slug = self.selected_slug.strip().lower()
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, clean_slug)
         if not is_allowed:
             return await interaction.response.send_message(embed=error_embed(err or "you do not have permission to whitelist buyers for this script.", interaction.user), ephemeral=True)
 
-        target_raw = self.user_input.value.strip().strip("<@!>")
-        discord_id = target_raw
-
-        target_obj = None
-        if interaction.guild and discord_id.isdigit():
-            target_obj = interaction.guild.get_member(int(discord_id))
-        if not target_obj and discord_id.isdigit():
-            try:
-                target_obj = await interaction.client.fetch_user(int(discord_id))
-            except Exception:
-                pass
-
-        expires_at, duration_label = parse_whitelist_duration(self.duration_input.value.strip() or "lifetime")
-        user_note = self.note_input.value.strip() or f"whitelisted via staff panel by {interaction.user.name}"
+        target_member = self.selected_user
+        discord_id = str(target_member.id)
+        expires_at, duration_label = parse_whitelist_duration(self.selected_duration)
+        user_note = f"whitelisted via dropdown panel by {interaction.user.name}"
 
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
@@ -761,11 +915,11 @@ class StaffWhitelistAddModal(discord.ui.Modal, title="Whitelist Buyer"):
                     pass
 
         role_text = ""
-        if script["buyer_role_id"] and interaction.guild and target_obj and isinstance(target_obj, discord.Member):
+        if script["buyer_role_id"] and interaction.guild and isinstance(target_member, discord.Member):
             role = interaction.guild.get_role(script["buyer_role_id"])
             if role and interaction.guild.me.guild_permissions.manage_roles and interaction.guild.me.top_role > role:
                 try:
-                    await target_obj.add_roles(role, reason=f"whitelisted: {script['name']}")
+                    await target_member.add_roles(role, reason=f"whitelisted: {script['name']}")
                     role_text = f"\ngranted role: {role.mention}"
                 except Exception:
                     pass
@@ -782,59 +936,200 @@ class StaffWhitelistAddModal(discord.ui.Modal, title="Whitelist Buyer"):
             author=interaction.user
         )
         dm_delivered = False
-        if target_obj:
-            try:
-                await target_obj.send(embed=dm_embed)
-                dm_delivered = True
-            except Exception:
-                dm_delivered = False
+        try:
+            await target_member.send(embed=dm_embed)
+            dm_delivered = True
+        except Exception:
+            dm_delivered = False
 
         status_msg = "sent license key directly to their dms." if dm_delivered else "could not dm the user (dms closed)."
         embed = success_embed(
-            f"whitelisted <@{discord_id}> for **{script['name']}** ({duration_label}).\n"
+            f"successfully whitelisted {target_member.mention} for **{script['name']}** ({duration_label}).\n"
             f"**key:** `{key}`{role_text}\n"
             f"{status_msg}",
             interaction.user
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-class StaffGenKeyModal(discord.ui.Modal, title="Generate License Key"):
-    def __init__(self, default_slug: str = ""):
-        super().__init__()
-        self.slug_input = discord.ui.TextInput(
-            label="Script Slug",
-            placeholder="e.g. hoopz-hub, golden-eagle-hub",
-            default=default_slug if default_slug and default_slug != "all" else "",
-            min_length=2,
-            max_length=64,
-            required=True
-        )
-        self.duration_input = discord.ui.TextInput(
-            label="Duration",
-            placeholder="e.g. lifetime, 7d, 30d, 1h (default: lifetime)",
-            default="lifetime",
-            min_length=1,
-            max_length=32,
-            required=False
-        )
-        self.note_input = discord.ui.TextInput(
-            label="Key Note / Customer Name",
-            placeholder="e.g. Reseller Key / Batch 1",
-            max_length=100,
-            required=False
-        )
-        self.add_item(self.slug_input)
-        self.add_item(self.duration_input)
-        self.add_item(self.note_input)
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        clean_slug = self.slug_input.value.strip().lower()
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌", row=3)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=fleed_embed(title="whitelist cancelled", description="action was cancelled.", author=interaction.user), view=self)
+
+class StaffInteractiveBuyerManagerView(discord.ui.View):
+    def __init__(self, licenses: list, author: Union[discord.Member, discord.User], guild: Optional[discord.Guild]):
+        super().__init__(timeout=180)
+        self.author = author
+        self.guild = guild
+        self.selected_license_id = None
+        self.add_item(BuyerSelectDropdown(licenses=licenses, row=0))
+
+    async def update_buyer_display(self, interaction: discord.Interaction):
+        async with db.get_db() as conn:
+            cursor = await conn.execute("""
+                SELECT l.*, s.name as script_name, s.slug as script_slug, s.buyer_role_id
+                FROM licenses l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE l.id = ?
+            """, (self.selected_license_id,))
+            lic = await cursor.fetchone()
+
+        if not lic:
+            return await interaction.response.send_message(embed=error_embed("license not found.", interaction.user), ephemeral=True)
+
+        status = "BANNED" if lic["is_banned"] else "Active"
+        hwid_val = f"`{lic['hwid'][:16]}...`" if lic["hwid"] else "`unbound`"
+        expires = f"`{lic['expires_at'][:10]}`" if lic["expires_at"] else "`lifetime`"
+        user_mention = f"<@{lic['discord_id']}>" if lic["discord_id"] else "`Unlinked (Unredeemed)`"
+
+        embed = fleed_embed(
+            title=f"buyer profile — {lic['script_name']}",
+            description=f"**buyer:** {user_mention}\n"
+                        f"**key:** `{lic['license_key']}`\n"
+                        f"**script:** **{lic['script_name']}** (`{lic['script_slug']}`)\n"
+                        f"**status:** `{status}`\n"
+                        f"**hwid:** {hwid_val}\n"
+                        f"**executions:** `{lic['execution_count']}`\n"
+                        f"**expires:** {expires}\n"
+                        f"**note:** `{lic['note'] or 'none'}`\n\n"
+                        f"use the action buttons below to manage this buyer.",
+            author=interaction.user
+        )
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Reset HWID", style=discord.ButtonStyle.success, emoji="🔄", row=1)
+    async def reset_hwid_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.selected_license_id:
+            return await interaction.response.send_message(embed=error_embed("please select a buyer from the dropdown first.", interaction.user), ephemeral=True)
+
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        async with db.get_db() as conn:
+            await conn.execute("UPDATE licenses SET hwid = NULL, ip_address = NULL, last_reset_at = ? WHERE id = ?", (now_iso, self.selected_license_id))
+            await conn.commit()
+
+        await self.update_buyer_display(interaction)
+        await interaction.followup.send(embed=success_embed("successfully reset hardware ID for this buyer.", interaction.user), ephemeral=True)
+
+    @discord.ui.button(label="Resend DM", style=discord.ButtonStyle.primary, emoji="📬", row=1)
+    async def resend_dm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.selected_license_id:
+            return await interaction.response.send_message(embed=error_embed("please select a buyer from the dropdown first.", interaction.user), ephemeral=True)
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("""
+                SELECT l.*, s.name as script_name, s.slug as script_slug
+                FROM licenses l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE l.id = ?
+            """, (self.selected_license_id,))
+            lic = await cursor.fetchone()
+
+        if not lic or not lic["discord_id"]:
+            return await interaction.response.send_message(embed=error_embed("no linked discord user found for this license.", interaction.user), ephemeral=True)
+
+        target_member = interaction.guild.get_member(int(lic["discord_id"])) if (interaction.guild and lic["discord_id"].isdigit()) else None
+        if not target_member and lic["discord_id"].isdigit():
+            try:
+                target_member = await interaction.client.fetch_user(int(lic["discord_id"]))
+            except Exception:
+                pass
+
+        if not target_member:
+            return await interaction.response.send_message(embed=error_embed("could not locate the buyer's discord account.", interaction.user), ephemeral=True)
+
+        pub_url = loader_generator.get_public_url()
+        loadstring_snippet = f'getgenv().FleedKey = "{lic["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{lic["script_slug"]}?key={lic["license_key"]}"))()'
+        dm_embed = fleed_embed(
+            title=f"{lic['script_name']} — license & loadstring",
+            description=f"here is your key and loadstring for **{lic['script_name']}**:\n\n"
+                        f"**key:** `{lic['license_key']}`\n\n"
+                        f"**loadstring:**\n```lua\n{loadstring_snippet}\n```\n"
+                        f"execute this loadstring inside your roblox executor.",
+            author=interaction.user
+        )
+        try:
+            await target_member.send(embed=dm_embed)
+            await interaction.response.send_message(embed=success_embed(f"resent key and loadstring to {target_member.mention}'s DMs.", interaction.user), ephemeral=True)
+        except Exception:
+            await interaction.response.send_message(embed=warn_embed(f"could not deliver to {target_member.mention}'s DMs (DMs are closed).", interaction.user), ephemeral=True)
+
+    @discord.ui.button(label="Toggle Ban", style=discord.ButtonStyle.secondary, emoji="🚫", row=1)
+    async def toggle_ban_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.selected_license_id:
+            return await interaction.response.send_message(embed=error_embed("please select a buyer from the dropdown first.", interaction.user), ephemeral=True)
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT is_banned FROM licenses WHERE id = ?", (self.selected_license_id,))
+            lic = await cursor.fetchone()
+            if not lic:
+                return await interaction.response.send_message(embed=error_embed("license not found.", interaction.user), ephemeral=True)
+
+            new_status = 0 if lic["is_banned"] else 1
+            reason = "manually banned by staff" if new_status else None
+            await conn.execute("UPDATE licenses SET is_banned = ?, ban_reason = ? WHERE id = ?", (new_status, reason, self.selected_license_id))
+            await conn.commit()
+
+        await self.update_buyer_display(interaction)
+        status_text = "banned" if new_status else "unbanned"
+        await interaction.followup.send(embed=success_embed(f"license is now {status_text}.", interaction.user), ephemeral=True)
+
+    @discord.ui.button(label="Revoke Access", style=discord.ButtonStyle.danger, emoji="🗑️", row=1)
+    async def revoke_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.selected_license_id:
+            return await interaction.response.send_message(embed=error_embed("please select a buyer from the dropdown first.", interaction.user), ephemeral=True)
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("""
+                SELECT l.*, s.name as script_name, s.buyer_role_id
+                FROM licenses l
+                JOIN scripts s ON l.script_id = s.id
+                WHERE l.id = ?
+            """, (self.selected_license_id,))
+            lic = await cursor.fetchone()
+
+            if not lic:
+                return await interaction.response.send_message(embed=error_embed("license not found.", interaction.user), ephemeral=True)
+
+            await conn.execute("DELETE FROM licenses WHERE id = ?", (self.selected_license_id,))
+            await conn.commit()
+
+        if lic["buyer_role_id"] and interaction.guild and lic["discord_id"]:
+            role = interaction.guild.get_role(lic["buyer_role_id"])
+            target_member = interaction.guild.get_member(int(lic["discord_id"])) if lic["discord_id"].isdigit() else None
+            if role and target_member and role in target_member.roles:
+                try:
+                    await target_member.remove_roles(role, reason=f"whitelist revoked: {lic['script_name']}")
+                except Exception:
+                    pass
+
+        embed = success_embed(f"permanently revoked whitelist access for `{lic['license_key']}`.", interaction.user)
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+class StaffInteractiveGenKeyView(discord.ui.View):
+    def __init__(self, scripts: list, default_slug: str, author: Union[discord.Member, discord.User]):
+        super().__init__(timeout=180)
+        self.author = author
+        self.selected_slug = default_slug
+        self.selected_duration = "lifetime"
+
+        self.add_item(ScriptSelect(scripts=scripts, default_slug=default_slug, include_all=False, row=0))
+        self.add_item(DurationSelect(row=1))
+
+    @discord.ui.button(label="Generate Key", style=discord.ButtonStyle.primary, emoji="🚀", row=2)
+    async def generate_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        clean_slug = self.selected_slug.strip().lower()
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, clean_slug)
         if not is_allowed:
             return await interaction.response.send_message(embed=error_embed(err or "you do not have permission to generate keys for this script.", interaction.user), ephemeral=True)
 
-        expires_at, duration_label = parse_whitelist_duration(self.duration_input.value.strip() or "lifetime")
-        user_note = self.note_input.value.strip() or f"generated by {interaction.user.name}"
+        expires_at, duration_label = parse_whitelist_duration(self.selected_duration)
+        user_note = f"generated via dropdown panel by {interaction.user.name}"
 
         async with db.get_db() as conn:
             cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (clean_slug,))
@@ -880,164 +1175,249 @@ class StaffGenKeyModal(discord.ui.Modal, title="Generate License Key"):
             f"buyers can redeem this via `,redeem {key}` or by clicking **Redeem Key** on the buyer control panel.",
             interaction.user
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
 
-class StaffLookupModal(discord.ui.Modal, title="Lookup Buyer / Key"):
-    def __init__(self):
-        super().__init__()
-        self.query_input = discord.ui.TextInput(
-            label="Discord User ID / @Mention or License Key",
-            placeholder="e.g. 123456789012345678, @username, or FLEED-XXXX-XXXX-XXXX",
-            min_length=3,
-            max_length=64,
-            required=True
-        )
-        self.add_item(self.query_input)
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌", row=2)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=fleed_embed(title="key generation cancelled", description="action was cancelled.", author=interaction.user), view=self)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, None)
-        if not is_allowed:
-            return await interaction.response.send_message(embed=error_embed(err or "you do not have permission to lookup keys.", interaction.user), ephemeral=True)
+class StaffInteractiveGrantManagerView(discord.ui.View):
+    def __init__(self, scripts: list, default_slug: str, author: Union[discord.Member, discord.User], guild: Optional[discord.Guild]):
+        super().__init__(timeout=180)
+        self.author = author
+        self.guild = guild
+        self.selected_user = None
+        self.selected_role = None
+        self.selected_slug = default_slug
 
-        val = self.query_input.value.strip().strip("<@!>")
-        is_key = val.upper().startswith("FLEED-")
+        self.add_item(BuyerUserSelect(placeholder="👤 Select user to grant manager access...", row=0))
+        self.add_item(ManagerRoleSelect(placeholder="🛡️ Or select role to grant manager access...", row=1))
+        self.add_item(ScriptSelect(scripts=scripts, default_slug=default_slug, include_all=True, row=2))
 
-        async with db.get_db() as conn:
-            if is_key:
-                cursor = await conn.execute("""
-                    SELECT l.*, s.name as script_name, s.slug as script_slug
-                    FROM licenses l
-                    JOIN scripts s ON l.script_id = s.id
-                    WHERE UPPER(l.license_key) = ?
-                """, (val.upper(),))
-                rows = await cursor.fetchall()
-            else:
-                cursor = await conn.execute("""
-                    SELECT l.*, s.name as script_name, s.slug as script_slug
-                    FROM licenses l
-                    JOIN scripts s ON l.script_id = s.id
-                    WHERE l.discord_id = ?
-                """, (val,))
-                rows = await cursor.fetchall()
+    @discord.ui.button(label="Grant User Access", style=discord.ButtonStyle.success, emoji="👑", row=3)
+    async def grant_user_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.selected_user:
+            return await interaction.response.send_message(embed=error_embed("please select a user from the user dropdown first.", interaction.user), ephemeral=True)
 
-        if not rows:
-            return await interaction.response.send_message(embed=warn_embed(f"no whitelist records found for `{val}`.", interaction.user), ephemeral=True)
+        clean_slug = self.selected_slug.strip().lower()
+        ok, err_msg, _ = await is_script_owner_or_admin_interaction(interaction.user, interaction.guild, clean_slug if clean_slug != "all" else None)
+        if not ok:
+            return await interaction.response.send_message(embed=error_embed(err_msg or "only script owners or platform admins can grant manager access.", interaction.user), ephemeral=True)
 
-        lines = [f"**query:** `{val}`\n"]
-        for r in rows:
-            status = "banned" if r["is_banned"] else "active"
-            hwid_val = f"`{r['hwid'][:16]}...`" if r["hwid"] else "`unbound`"
-            expires = f"`{r['expires_at'][:10]}`" if r["expires_at"] else "`lifetime`"
-            target_user = f"<@{r['discord_id']}>" if r["discord_id"] else "`unlinked (unredeemed)`"
-            lines.append(
-                f"**{r['script_name']}** (`{r['script_slug']}`)\n"
-                f"↳ **user:** {target_user}\n"
-                f"↳ **key:** `{r['license_key']}`\n"
-                f"↳ **status:** `{status}` • **hwid:** {hwid_val} • **execs:** `{r['execution_count']}` • **expires:** {expires}"
-            )
-
-        embed = fleed_embed(title="whitelist record lookup", description="\n\n".join(lines), author=interaction.user)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-class StaffResetHWIDModal(discord.ui.Modal, title="Reset User HWID"):
-    def __init__(self, default_slug: str = ""):
-        super().__init__()
-        self.user_input = discord.ui.TextInput(
-            label="Discord User ID / @Mention or License Key",
-            placeholder="e.g. 123456789012345678, @username, or FLEED-XXXX",
-            min_length=3,
-            max_length=64,
-            required=True
-        )
-        self.slug_input = discord.ui.TextInput(
-            label="Script Slug",
-            placeholder="e.g. hoopz-hub (or leave blank if using key)",
-            default=default_slug if default_slug and default_slug != "all" else "",
-            max_length=64,
-            required=False
-        )
-        self.add_item(self.user_input)
-        self.add_item(self.slug_input)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        clean_slug = self.slug_input.value.strip().lower() if self.slug_input.value.strip() else None
-        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, clean_slug)
-        if not is_allowed:
-            return await interaction.response.send_message(embed=error_embed(err or "you do not have permission to reset hwids.", interaction.user), ephemeral=True)
-
-        target = self.user_input.value.strip().strip("<@!>")
+        target_member = self.selected_user
+        discord_id = str(target_member.id)
+        guild_id_str = str(interaction.guild.id) if interaction.guild else None
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         async with db.get_db() as conn:
-            if target.upper().startswith("FLEED-"):
-                cursor = await conn.execute("""
-                    SELECT l.*, s.name as script_name FROM licenses l
-                    JOIN scripts s ON l.script_id = s.id
-                    WHERE UPPER(l.license_key) = ?
-                """, (target.upper(),))
-            else:
-                query = """
-                    SELECT l.*, s.name as script_name FROM licenses l
-                    JOIN scripts s ON l.script_id = s.id
-                    WHERE l.discord_id = ?
-                """
-                params = [target]
-                if clean_slug:
-                    query += " AND s.slug = ?"
-                    params.append(clean_slug)
-                cursor = await conn.execute(query, tuple(params))
+            script_name = "All Scripts (Global)"
+            if clean_slug != "all":
+                cursor = await conn.execute("SELECT name FROM scripts WHERE slug = ?", (clean_slug,))
+                s_row = await cursor.fetchone()
+                if not s_row:
+                    return await interaction.response.send_message(embed=error_embed(f"script `{clean_slug}` not found.", interaction.user), ephemeral=True)
+                script_name = s_row["name"]
 
-            rows = await cursor.fetchall()
-            if not rows:
-                return await interaction.response.send_message(embed=error_embed(f"no license found for `{target}`.", interaction.user), ephemeral=True)
-
-            for r in rows:
-                await conn.execute("UPDATE licenses SET hwid = NULL, ip_address = NULL, last_reset_at = ? WHERE id = ?", (now_iso, r["id"]))
+            await conn.execute("""
+                INSERT INTO whitelist_managers (discord_user_id, is_role, script_slug, guild_id, granted_by, created_at)
+                VALUES (?, 0, ?, ?, ?, ?)
+                ON CONFLICT(discord_user_id, script_slug, is_role, guild_id) DO UPDATE SET
+                    granted_by = excluded.granted_by,
+                    created_at = excluded.created_at
+            """, (discord_id, clean_slug, guild_id_str, str(interaction.user.id), now_iso))
             await conn.commit()
 
-        embed = success_embed(f"force-reset hwid for **{len(rows)}** license record(s) for `{target}`.", interaction.user)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        # Auto-update permissions on staff channels
+        if interaction.guild:
+            for ch in interaction.guild.text_channels:
+                if ch.name in ["whitelist-staff", "staff-whitelist", "wl-staff"] or (ch.topic and "Private Whitelist Staff Hub" in ch.topic):
+                    try:
+                        await ch.set_permissions(target_member, overwrite=discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True, view_channel=True))
+                    except Exception:
+                        pass
+
+        # DM new manager
+        try:
+            dm_embed = fleed_embed(
+                title="whitelist manager access granted",
+                description=f"you have been granted whitelist management access for **{script_name}** (`{clean_slug}`).\n\n"
+                            f"**granted by:** {interaction.user.mention} (`{interaction.user.name}`)\n\n"
+                            f"you can now whitelist users and generate license keys directly in discord.",
+                author=interaction.user
+            )
+            await target_member.send(embed=dm_embed)
+        except Exception:
+            pass
+
+        embed = success_embed(
+            f"granted whitelist manager access to {target_member.mention} for **{script_name}** (`{clean_slug}`).\n"
+            f"they have also been granted access to the private staff whitelist chat.",
+            interaction.user
+        )
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+    @discord.ui.button(label="Grant Role Access", style=discord.ButtonStyle.primary, emoji="🛡️", row=3)
+    async def grant_role_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.selected_role:
+            return await interaction.response.send_message(embed=error_embed("please select a role from the role dropdown first.", interaction.user), ephemeral=True)
+
+        clean_slug = self.selected_slug.strip().lower()
+        ok, err_msg, _ = await is_script_owner_or_admin_interaction(interaction.user, interaction.guild, clean_slug if clean_slug != "all" else None)
+        if not ok:
+            return await interaction.response.send_message(embed=error_embed(err_msg or "only script owners or platform admins can grant manager access.", interaction.user), ephemeral=True)
+
+        role = self.selected_role
+        guild_id_str = str(interaction.guild.id) if interaction.guild else None
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        async with db.get_db() as conn:
+            script_name = "All Scripts (Global)"
+            if clean_slug != "all":
+                cursor = await conn.execute("SELECT name FROM scripts WHERE slug = ?", (clean_slug,))
+                s_row = await cursor.fetchone()
+                if not s_row:
+                    return await interaction.response.send_message(embed=error_embed(f"script `{clean_slug}` not found.", interaction.user), ephemeral=True)
+                script_name = s_row["name"]
+
+            await conn.execute("""
+                INSERT INTO whitelist_managers (discord_user_id, is_role, script_slug, guild_id, granted_by, created_at)
+                VALUES (?, 1, ?, ?, ?, ?)
+                ON CONFLICT(discord_user_id, script_slug, is_role, guild_id) DO UPDATE SET
+                    granted_by = excluded.granted_by,
+                    created_at = excluded.created_at
+            """, (str(role.id), clean_slug, guild_id_str, str(interaction.user.id), now_iso))
+            await conn.commit()
+
+        # Auto-update permissions on staff channels
+        if interaction.guild:
+            for ch in interaction.guild.text_channels:
+                if ch.name in ["whitelist-staff", "staff-whitelist", "wl-staff"] or (ch.topic and "Private Whitelist Staff Hub" in ch.topic):
+                    try:
+                        await ch.set_permissions(role, overwrite=discord.PermissionOverwrite(read_messages=True, send_messages=True, embed_links=True, view_channel=True))
+                    except Exception:
+                        pass
+
+        embed = success_embed(
+            f"granted whitelist manager access to role {role.mention} for **{script_name}** (`{clean_slug}`).\n"
+            f"all members with this role now have access to the staff whitelist chat.",
+            interaction.user
+        )
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
+
+# ------------------- Main Persistent Staff Control Panel -------------------
 
 class StaffWhitelistPanelView(discord.ui.View):
     def __init__(self, slug: str = "all"):
         super().__init__(timeout=None)
         self.slug = slug
         self.add_btn.custom_id = f"fg_staff_add:{slug}"
+        self.manage_btn.custom_id = f"fg_staff_manage:{slug}"
         self.genkey_btn.custom_id = f"fg_staff_genkey:{slug}"
-        self.lookup_btn.custom_id = f"fg_staff_lookup:{slug}"
-        self.resethwid_btn.custom_id = f"fg_staff_resethwid:{slug}"
+        self.grant_btn.custom_id = f"fg_staff_grant:{slug}"
         self.guide_btn.custom_id = f"fg_staff_guide:{slug}"
 
-    @discord.ui.button(label="Whitelist User", style=discord.ButtonStyle.success, emoji="➕", row=0, custom_id="fg_staff_add:default")
+    @discord.ui.button(label="Whitelist Member", style=discord.ButtonStyle.success, emoji="➕", row=0, custom_id="fg_staff_add:default")
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
         if not is_allowed:
             return await interaction.response.send_message(embed=error_embed(err or "you do not have whitelist manager permissions.", interaction.user), ephemeral=True)
-        await interaction.response.send_modal(StaffWhitelistAddModal(default_slug=slug))
 
-    @discord.ui.button(label="Generate Key", style=discord.ButtonStyle.primary, emoji="🔑", row=0, custom_id="fg_staff_genkey:default")
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT id, name, slug, version FROM scripts ORDER BY id DESC")
+            scripts = await cursor.fetchall()
+
+        if not scripts:
+            return await interaction.response.send_message(embed=error_embed("no scripts found in database. create a script on the website first.", interaction.user), ephemeral=True)
+
+        view = StaffInteractiveWhitelistView(scripts=scripts, default_slug=slug if slug != "all" else scripts[0]["slug"], author=interaction.user)
+        embed = fleed_embed(
+            title="➕ whitelist member — dropdown selector",
+            description="select the member, script hub, and duration from the dropdown menus below, then click **confirm whitelist**.",
+            author=interaction.user
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="Manage / Reset Buyer", style=discord.ButtonStyle.primary, emoji="🔍", row=0, custom_id="fg_staff_manage:default")
+    async def manage_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
+        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
+        if not is_allowed:
+            return await interaction.response.send_message(embed=error_embed(err or "you do not have whitelist manager permissions.", interaction.user), ephemeral=True)
+
+        async with db.get_db() as conn:
+            query = """
+                SELECT l.*, s.name as script_name, s.slug as script_slug
+                FROM licenses l
+                JOIN scripts s ON l.script_id = s.id
+            """
+            params = []
+            if slug and slug != "all":
+                query += " WHERE s.slug = ?"
+                params.append(slug.lower())
+            query += " ORDER BY l.id DESC LIMIT 25"
+            cursor = await conn.execute(query, tuple(params))
+            licenses = await cursor.fetchall()
+
+        if not licenses:
+            return await interaction.response.send_message(embed=warn_embed("no active buyer licenses found in database.", interaction.user), ephemeral=True)
+
+        view = StaffInteractiveBuyerManagerView(licenses=licenses, author=interaction.user, guild=interaction.guild)
+        embed = fleed_embed(
+            title="🔍 manage buyers & hwids — dropdown selector",
+            description="select any buyer from the dropdown menu below to view their profile, reset their HWID, resend their key, or revoke access.",
+            author=interaction.user
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="Generate Key", style=discord.ButtonStyle.secondary, emoji="🔑", row=0, custom_id="fg_staff_genkey:default")
     async def genkey_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
         if not is_allowed:
             return await interaction.response.send_message(embed=error_embed(err or "you do not have whitelist manager permissions.", interaction.user), ephemeral=True)
-        await interaction.response.send_modal(StaffGenKeyModal(default_slug=slug))
 
-    @discord.ui.button(label="Lookup Buyer", style=discord.ButtonStyle.secondary, emoji="🔍", row=0, custom_id="fg_staff_lookup:default")
-    async def lookup_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, None)
-        if not is_allowed:
-            return await interaction.response.send_message(embed=error_embed(err or "you do not have whitelist manager permissions.", interaction.user), ephemeral=True)
-        await interaction.response.send_modal(StaffLookupModal())
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT id, name, slug, version FROM scripts ORDER BY id DESC")
+            scripts = await cursor.fetchall()
 
-    @discord.ui.button(label="Reset HWID", style=discord.ButtonStyle.secondary, emoji="🔄", row=1, custom_id="fg_staff_resethwid:default")
-    async def resethwid_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not scripts:
+            return await interaction.response.send_message(embed=error_embed("no scripts found in database.", interaction.user), ephemeral=True)
+
+        view = StaffInteractiveGenKeyView(scripts=scripts, default_slug=slug if slug != "all" else scripts[0]["slug"], author=interaction.user)
+        embed = fleed_embed(
+            title="🔑 generate buyer key — dropdown selector",
+            description="select the script hub and duration from the dropdown menus below, then click **generate key**.",
+            author=interaction.user
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="Grant Manager Access", style=discord.ButtonStyle.secondary, emoji="👑", row=1, custom_id="fg_staff_grant:default")
+    async def grant_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
-        is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
-        if not is_allowed:
-            return await interaction.response.send_message(embed=error_embed(err or "you do not have whitelist manager permissions.", interaction.user), ephemeral=True)
-        await interaction.response.send_modal(StaffResetHWIDModal(default_slug=slug))
+        ok, err, _ = await is_script_owner_or_admin_interaction(interaction.user, interaction.guild, slug if slug != "all" else None)
+        if not ok:
+            return await interaction.response.send_message(embed=error_embed(err or "only the script owner or platform admin can grant manager access.", interaction.user), ephemeral=True)
+
+        async with db.get_db() as conn:
+            cursor = await conn.execute("SELECT id, name, slug, version FROM scripts ORDER BY id DESC")
+            scripts = await cursor.fetchall()
+
+        view = StaffInteractiveGrantManagerView(scripts=scripts, default_slug=slug if slug != "all" else "all", author=interaction.user, guild=interaction.guild)
+        embed = fleed_embed(
+            title="👑 grant whitelist manager access — dropdown selector",
+            description="select a user or role from the dropdowns below to delegate whitelist management permissions.",
+            author=interaction.user
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="Commands Guide", style=discord.ButtonStyle.secondary, emoji="📖", row=1, custom_id="fg_staff_guide:default")
     async def guide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1109,12 +1489,12 @@ class WhitelistCog(commands.Cog, name="whitelist"):
             view = StaffWhitelistPanelView(slug=slug)
             if action == "fg_staff_add":
                 await view.add_btn.callback(interaction)
+            elif action == "fg_staff_manage":
+                await view.manage_btn.callback(interaction)
             elif action == "fg_staff_genkey":
                 await view.genkey_btn.callback(interaction)
-            elif action == "fg_staff_lookup":
-                await view.lookup_btn.callback(interaction)
-            elif action == "fg_staff_resethwid":
-                await view.resethwid_btn.callback(interaction)
+            elif action == "fg_staff_grant":
+                await view.grant_btn.callback(interaction)
             elif action == "fg_staff_guide":
                 await view.guide_btn.callback(interaction)
 

@@ -830,11 +830,11 @@ async def preview_obfuscated_script(script_id: int, user: Dict = Depends(get_cur
 
         mode = row["is_obfuscated_mode"]
         if mode == 2:
-            obfuscated = crypto_engine.obfuscate_with_prometheus(full_code, preset="Medium", fail_closed=False)
-            mode_name = "Prometheus Obfuscator"
+            obfuscated = crypto_engine.obfuscate_with_obfuscate_v2(full_code, preset="ultra-secure", fail_closed=False)
+            mode_name = "O_bfuscate V2 (Ultra Secure)"
         elif mode == 1:
-            obfuscated = crypto_engine.obfuscate_with_obfuscate(full_code, profile="dense", fail_closed=False)
-            mode_name = "O_bfuscate 1.1"
+            obfuscated = crypto_engine.obfuscate_with_obfuscate_v2(full_code, preset="max-performance", fail_closed=False)
+            mode_name = "O_bfuscate V2 (Max Performance)"
         else:
             obfuscated = full_code
             mode_name = "Unobfuscated"
@@ -2033,21 +2033,21 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         # met, refuse to deliver.
         if row["is_obfuscated_mode"] == 2:
             try:
-                raw_code = crypto_engine.obfuscate_with_prometheus(raw_code, preset="Medium", fail_closed=True)
+                raw_code = crypto_engine.obfuscate_with_obfuscate_v2(raw_code, preset="ultra-secure", fail_closed=True)
             except Exception as _obf_err:
                 await conn.execute("""
                     INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELIVERY_BLOCKED', 'Protected-mode obfuscation failed; refused to ship raw source', ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELIVERY_BLOCKED', 'Ultra-Secure obfuscation failed; refused to ship raw source', ?)
                 """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
                 await conn.commit()
                 return JSONResponse(status_code=503, content={"success": False, "message": "Protected payload temporarily unavailable. Contact the developer."})
         elif row["is_obfuscated_mode"] == 1:
             try:
-                raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense", fail_closed=True)
+                raw_code = crypto_engine.obfuscate_with_obfuscate_v2(raw_code, preset="max-performance", fail_closed=True)
             except Exception as _obf_err:
                 await conn.execute("""
                     INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELIVERY_BLOCKED', 'Dense-mode obfuscation failed; refused to ship raw source', ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DELIVERY_BLOCKED', 'Max-Performance obfuscation failed; refused to ship raw source', ?)
                 """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
                 await conn.commit()
                 return JSONResponse(status_code=503, content={"success": False, "message": "Protected payload temporarily unavailable. Contact the developer."})

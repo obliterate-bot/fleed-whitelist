@@ -347,6 +347,50 @@ class CryptoEngine:
             # Non-protected callers may fall back to source code.
             return source_code
 
+    def obfuscate_with_obfuscate_v2(self, source_code: str, preset: str = "ultra-secure", fail_closed: bool = True) -> str:
+        """
+        Obfuscates Lua/Luau code using O_bfuscate V2 (Zero-Latency Luau Engine created by Undix).
+        Presets: 'max-performance', 'balanced', 'ultra-secure'
+        """
+        import subprocess
+        import tempfile
+        import shutil
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        obf_v2_cli = os.path.join(base_dir, "o_bfuscate_v2", "bin", "obfuscate.js")
+
+        node_bin = shutil.which("node") or shutil.which("nodejs") or "/usr/bin/node" or "/usr/local/bin/node"
+
+        if not os.path.exists(obf_v2_cli) or not shutil.which("node"):
+            # Fallback to dense AST
+            return self.obfuscate_with_obfuscate(source_code, profile="dense", fail_closed=fail_closed)
+
+        with tempfile.NamedTemporaryFile(suffix=".luau", delete=False, mode="w", encoding="utf-8") as in_f:
+            in_f.write(source_code)
+            in_path = in_f.name
+
+        out_path = in_path + ".obf.luau"
+
+        try:
+            cmd = [node_bin, obf_v2_cli, in_path, "--preset", preset, "-o", out_path]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=os.path.dirname(os.path.dirname(obf_v2_cli)))
+            if proc.returncode == 0 and os.path.exists(out_path):
+                with open(out_path, "r", encoding="utf-8", errors="ignore") as f:
+                    result = f.read()
+                if result and len(result) > 10:
+                    return result
+            print(f"[O_BFUSCATE V2 ERROR] Code: {proc.returncode}, Stderr: {proc.stderr[:300]}, Stdout: {proc.stdout[:300]}")
+            return self.obfuscate_with_obfuscate(source_code, profile="dense", fail_closed=fail_closed)
+        except Exception as e:
+            print(f"[O_BFUSCATE V2 EXCEPTION] {e}")
+            return self.obfuscate_with_obfuscate(source_code, profile="dense", fail_closed=fail_closed)
+        finally:
+            try:
+                if os.path.exists(in_path): os.unlink(in_path)
+                if os.path.exists(out_path): os.unlink(out_path)
+            except Exception:
+                pass
+
     def obfuscate_with_prometheus(self, source_code: str, preset: str = "Medium", fail_closed: bool = True) -> str:
         """
         Obfuscates Lua/Luau code using the Prometheus AST Obfuscator.

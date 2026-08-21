@@ -824,9 +824,9 @@ function renderScripts(scripts) {
   listEl.innerHTML = scripts.map(s => {
     let modeBadge = '<span class="badge badge-zinc"><i class="fa-solid fa-file-code"></i> Unobfuscated</span>';
     if (s.is_obfuscated_mode === 2) {
-      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-shield-halved"></i> Prometheus Obfuscated</span>';
+      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-shield-halved"></i> O_bfuscate V2 Ultra</span>';
     } else if (s.is_obfuscated_mode === 1) {
-      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-lock"></i> O_bfuscate 1.1</span>';
+      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-bolt"></i> O_bfuscate V2 MaxPerf</span>';
     }
 
     const keyGatedLoadstring = `getgenv().FleedKey = "YOUR_KEY"\nloadstring(game:HttpGet("${currentOrigin}/v1/loader/${s.slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;

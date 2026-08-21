@@ -1,0 +1,28 @@
+{
+  "name": "o_bfuscate-v2",
+  "version": "2.0.0",
+  "description": "High-Performance Luau Obfuscator Engine with Zero Runtime Latency Penalty, created by Undix",
+  "main": "src/index.js",
+  "bin": {
+    "o_bfuscate": "./bin/obfuscate.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node tests/run_all.js",
+    "obfuscate": "node bin/obfuscate.js"
+  },
+  "keywords": [
+    "luau",
+    "roblox",
+    "lua",
+    "obfuscator",
+    "ast",
+    "control-flow-flattening",
+    "string-encryption",
+    "zero-performance-loss",
+    "native-codegen"
+  ],
+  "author": "Undix",
+  "license": "MIT"
+}

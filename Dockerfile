@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnacl-dev \
     git \
     curl \
+    nodejs \
+    npm \
     lua5.1 \
     liblua5.1-0-dev \
     luajit \

@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>O_bfuscate V2 — High-Performance Luau Obfuscator</title>
+  <meta name="description" content="State-of-the-art Luau and Lua code obfuscator engine with zero runtime performance loss. Created by Undix.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="background-glow">
+    <div class="glow-orb orb-1"></div>
+    <div class="glow-orb orb-2"></div>
+    <div class="glow-orb orb-3"></div>
+    <div class="grid-overlay"></div>
+  </div>
+
+  <header class="header">
+    <div class="header-content">
+      <div class="logo-group">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+        </div>
+        <div class="logo-text">
+          <div class="brand-title">O_BFUSCATE <span class="version-tag">V2</span></div>
+          <div class="brand-subtitle">protected by O_bfuscate v2, created by Undix</div>
+        </div>
+      </div>
+
+      <div class="header-badges">
+        <div class="badge badge-native">
+          <span class="pulse-dot"></span>
+          <span>Luau Native NCG</span>
+        </div>
+        <div class="badge badge-perf">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          <span>0.0% Latency Penalty</span>
+        </div>
+        <div class="badge badge-watermark">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 8v4l3 3"></path></svg>
+          <span>Author: Undix</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <!-- Preset Selection Bar -->
+    <section class="presets-section">
+      <div class="section-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M1 14h6m2-6h6m2 8h6"/></svg>
+        <span>PROTECTION PROFILES</span>
+      </div>
+      <div class="preset-cards-grid">
+        <div class="preset-card active" data-preset="max-performance" id="preset-max-perf">
+          <div class="preset-header">
+            <div class="preset-icon speed-icon">⚡</div>
+            <div class="preset-name">Max Performance</div>
+            <span class="preset-tag recommended">Zero Latency</span>
+          </div>
+          <div class="preset-desc">Roblox 60 FPS game logic & physics loops. Memoized Buffer strings, Fastcall localization, zero GC churn.</div>
+          <div class="preset-stats">
+            <span>Overhead: <strong>0.0%</strong></span>
+            <span>Security: <strong>85%</strong></span>
+          </div>
+        </div>
+
+        <div class="preset-card" data-preset="balanced" id="preset-balanced">
+          <div class="preset-header">
+            <div class="preset-icon shield-icon">🛡️</div>
+            <div class="preset-name">Balanced Armor</div>
+            <span class="preset-tag">Balanced</span>
+          </div>
+          <div class="preset-desc">Control Flow Flattening (CFF) + Buffer string encryption + Barcode mangler + Invariant predicates.</div>
+          <div class="preset-stats">
+            <span>Overhead: <strong>~0.5%</strong></span>
+            <span>Security: <strong>95%</strong></span>
+          </div>
+        </div>
+
+        <div class="preset-card" data-preset="ultra-secure" id="preset-ultra">
+          <div class="preset-header">
+            <div class="preset-icon lock-icon">🔒</div>
+            <div class="preset-name">Ultra Secure</div>
+            <span class="preset-tag military">Hardened</span>
+          </div>
+          <div class="preset-desc">Deep non-linear CFF + Confusable Cyrillic mangling + Mixed Boolean-Arithmetic (MBA) + Anti-Tamper.</div>
+          <div class="preset-stats">
+            <span>Overhead: <strong>~2.0%</strong></span>
+            <span>Security: <strong>100%</strong></span>
+          </div>
+        </div>
+
+        <div class="preset-card" data-preset="custom" id="preset-custom">
+          <div class="preset-header">
+            <div class="preset-icon gear-icon">⚙️</div>
+            <div class="preset-name">Custom Engine</div>
+            <span class="preset-tag custom">Modular</span>
+          </div>
+          <div class="preset-desc">Fine-tune every individual AST transformation pass, intensity slider, and crypto parameters.</div>
+          <div class="preset-stats">
+            <span>Overhead: <strong>Configurable</strong></span>
+            <span>Security: <strong>Custom</strong></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Advanced Configuration Drawer -->
+    <section class="options-drawer" id="options-drawer">
+      <div class="drawer-header" id="drawer-toggle-btn">
+        <div class="drawer-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          <span>Transformation Parameters & Feature Toggles</span>
+        </div>
+        <button class="drawer-toggle-arrow" id="drawer-arrow" aria-label="Toggle Options">▼</button>
+      </div>
+
+      <div class="drawer-body" id="drawer-content">
+        <div class="toggles-grid">
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-native" checked>
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Luau Native NCG Directives</span>
+              <span class="opt-desc">Injects --!native and --!optimize 2 for AOT machine code speed</span>
+            </div>
+          </label>
+
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-string-crypto" checked>
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Zero-Overhead Buffer String Encryption</span>
+              <span class="opt-desc">Multi-key binary buffer with O(1) memoized table access</span>
+            </div>
+          </label>
+
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-localize-globals" checked>
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Fastcall Upvalue Localization</span>
+              <span class="opt-desc">Converts globals (math.sin, bit32) to local registers (2x speed boost)</span>
+            </div>
+          </label>
+
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-indirect-members" checked>
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Member Expression Indirection</span>
+              <span class="opt-desc">Rewrites obj.Property into encrypted dynamic index access</span>
+            </div>
+          </label>
+
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-mangler" checked>
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Identifier Mangling & Shadowing</span>
+              <span class="opt-desc">Scrambles variable names & reuses names in child scopes</span>
+            </div>
+          </label>
+
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-mba" checked>
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Mixed Boolean-Arithmetic (MBA)</span>
+              <span class="opt-desc">Masks numbers with algebraic bitwise identities</span>
+            </div>
+          </label>
+
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-cff">
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Control Flow Flattening (CFF)</span>
+              <span class="opt-desc">Transforms blocks into non-linear state dispatcher loops</span>
+            </div>
+          </label>
+
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-opaque">
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Invariant Opaque Predicates</span>
+              <span class="opt-desc">Inserts mathematical truths (n²+n%2==0) & decoy dead code</span>
+            </div>
+          </label>
+
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-antitamper">
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Environment Anti-Tamper & Hooks</span>
+              <span class="opt-desc">Lightweight startup check detecting hookfunction & debug spoofing</span>
+            </div>
+          </label>
+
+          <label class="toggle-item">
+            <input type="checkbox" id="opt-minify" checked>
+            <div class="toggle-switch"></div>
+            <div class="toggle-label">
+              <span class="opt-name">Minify & Strip Whitespace</span>
+              <span class="opt-desc">Removes all unnecessary whitespace and comments</span>
+            </div>
+          </label>
+        </div>
+
+        <div class="advanced-controls-row">
+          <div class="select-group">
+            <label for="select-mangler-mode">Mangler Character Style:</label>
+            <select id="select-mangler-mode" class="custom-select">
+              <option value="hex_hash">Hex Hashes (_0x7f2a, _0x1a9c)</option>
+              <option value="barcode">Barcodes (Il1Il11ll, l1lIIl1)</option>
+              <option value="confusables">Unicode Confusables (Cyrillic Homoglyphs)</option>
+              <option value="minified">Compact Letters (_a, _b, _c)</option>
+            </select>
+          </div>
+
+          <div class="input-group watermark-input-group">
+            <label for="input-watermark">Watermark Header:</label>
+            <input type="text" id="input-watermark" class="custom-input" value="protected by O_bfuscate v2, created by Undix">
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Studio Dual Code Editor Grid -->
+    <section class="editor-grid">
+      <!-- Left: Source Code -->
+      <div class="editor-panel source-panel">
+        <div class="editor-header">
+          <div class="editor-title">
+            <span class="dot dot-cyan"></span>
+            <span>ORIGINAL LUAU SOURCE</span>
+          </div>
+
+          <div class="editor-actions">
+            <select id="sample-selector" class="sample-select" title="Load High-Performance Luau Sample">
+              <option value="">-- Load Sample Script --</option>
+              <option value="raycast_aimbot">Roblox Raycasting & Ballistics</option>
+              <option value="buffer_crypto">Zero-Allocation Native Buffer</option>
+              <option value="remote_security">RemoteEvent Security Handshake</option>
+            </select>
+            <button class="btn btn-sm btn-ghost" id="btn-clear" title="Clear Editor">Clear</button>
+          </div>
+        </div>
+
+        <div class="editor-container">
+          <div class="line-numbers" id="source-line-numbers"></div>
+          <textarea id="source-code" class="code-textarea" spellcheck="false" placeholder="-- Paste your Luau / Roblox script here..."></textarea>
+        </div>
+
+        <div class="editor-footer">
+          <span id="source-stats">Lines: 0 | Size: 0 B</span>
+          <span class="luau-badge">Luau 5.1+ Compatible</span>
+        </div>
+      </div>
+
+      <!-- Center Action Button -->
+      <div class="action-divider">
+        <button class="btn-obfuscate" id="btn-obfuscate" title="Click or press Ctrl+Enter">
+          <div class="btn-glow"></div>
+          <div class="btn-inner">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="m9 12 2 2 4-4"></path></svg>
+            <span>OBFUSCATE</span>
+          </div>
+        </button>
+        <span class="shortcut-hint">Ctrl + Enter</span>
+      </div>
+
+      <!-- Right: Obfuscated Code -->
+      <div class="editor-panel output-panel">
+        <div class="editor-header">
+          <div class="editor-title">
+            <span class="dot dot-magenta"></span>
+            <span>OBFUSCATED OUTPUT</span>
+          </div>
+
+          <div class="editor-actions">
+            <button class="btn btn-sm btn-ghost" id="btn-ast-inspector">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+              <span>Inspect AST</span>
+            </button>
+            <button class="btn btn-sm btn-secondary" id="btn-download">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span>Download</span>
+            </button>
+            <button class="btn btn-sm btn-primary" id="btn-copy">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              <span>Copy Code</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="editor-container">
+          <div class="line-numbers" id="output-line-numbers"></div>
+          <textarea id="output-code" class="code-textarea" readonly spellcheck="false" placeholder="-- Obfuscated output will appear here..."></textarea>
+        </div>
+
+        <div class="editor-footer">
+          <span id="output-stats">Lines: 0 | Size: 0 B</span>
+          <span class="status-badge valid" id="status-badge">
+            <span class="status-dot"></span>
+            <span>Ready</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Telemetry & Performance Dashboard -->
+    <section class="telemetry-bar">
+      <div class="telemetry-card">
+        <div class="telemetry-header">
+          <span class="telemetry-label">SECURITY RATING</span>
+          <span class="telemetry-badge secure" id="badge-sec-score">85%</span>
+        </div>
+        <div class="telemetry-progress-bg">
+          <div class="telemetry-progress-fill" id="fill-sec-score" style="width: 85%;"></div>
+        </div>
+        <div class="telemetry-desc">AST & Cryptographic Armor Strength</div>
+      </div>
+
+      <div class="telemetry-card">
+        <div class="telemetry-header">
+          <span class="telemetry-label">RUNTIME OVERHEAD</span>
+          <span class="telemetry-badge speed" id="badge-perf-score">0.0% (Zero)</span>
+        </div>
+        <div class="telemetry-progress-bg">
+          <div class="telemetry-progress-fill speed-fill" id="fill-perf-score" style="width: 100%;"></div>
+        </div>
+        <div class="telemetry-desc">60 FPS Native Luau Engine Guaranteed</div>
+      </div>
+
+      <div class="telemetry-card">
+        <div class="telemetry-header">
+          <span class="telemetry-label">EXECUTION TIME</span>
+          <span class="telemetry-value" id="val-time-ms">0.00 ms</span>
+        </div>
+        <div class="telemetry-desc" id="val-passes-count">0 Passes Applied</div>
+      </div>
+
+      <div class="telemetry-card">
+        <div class="telemetry-header">
+          <span class="telemetry-label">SIZE EXPANSION</span>
+          <span class="telemetry-value" id="val-ratio">100%</span>
+        </div>
+        <div class="telemetry-desc" id="val-bytes-diff">0 B → 0 B</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- AST Inspector Modal -->
+  <div class="modal-overlay" id="ast-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+          <span>Luau Abstract Syntax Tree (AST) Visualizer</span>
+        </div>
+        <button class="modal-close" id="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <pre id="ast-json-view" class="ast-tree-view"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast" id="toast">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"></path></svg>
+    <span id="toast-message">Copied to clipboard!</span>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-content">
+      <span><strong>O_bfuscate V2</strong> — High-Performance Luau Obfuscator Engine</span>
+      <span>Watermark: <code>protected by O_bfuscate v2, created by Undix</code></span>
+      <span>Zero-Overhead AST Transformations • Native Code Generation</span>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

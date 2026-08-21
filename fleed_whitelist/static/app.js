@@ -824,9 +824,9 @@ function renderScripts(scripts) {
   listEl.innerHTML = scripts.map(s => {
     let modeBadge = '<span class="badge badge-zinc"><i class="fa-solid fa-file-code"></i> Unobfuscated</span>';
     if (s.is_obfuscated_mode === 2) {
-      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-shield-halved"></i> O_bfuscate 1.1 VM</span>';
+      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-shield-halved"></i> Prometheus Obfuscated</span>';
     } else if (s.is_obfuscated_mode === 1) {
-      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-lock"></i> Stream Encrypted</span>';
+      modeBadge = '<span class="badge badge-gold"><i class="fa-solid fa-lock"></i> O_bfuscate 1.1</span>';
     }
 
     const keyGatedLoadstring = `getgenv().FleedKey = "YOUR_KEY"\nloadstring(game:HttpGet("${currentOrigin}/v1/loader/${s.slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;
@@ -847,6 +847,7 @@ function renderScripts(scripts) {
             </p>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn-secondary btn-sm" onclick="previewObfuscatedSource(${s.id})"><i class="fa-solid fa-eye"></i> Preview Obfuscated</button>
             <button class="btn btn-secondary btn-sm" onclick="openLoadstringModal('${s.slug}', '${escapeHtml(s.name)}')"><i class="fa-solid fa-terminal"></i> Loadstring Studio</button>
             <button class="btn btn-secondary btn-sm" onclick="openEditScriptModal(${s.id})"><i class="fa-solid fa-pen-to-square"></i> Edit Source</button>
             ${s.discord_webhook ? `<button class="btn btn-secondary btn-sm" onclick="testScriptWebhook(${s.id})" title="Test Discord Webhook"><i class="fa-brands fa-discord" style="color:#5865F2;"></i> Test Webhook</button>` : ''}
@@ -988,6 +989,54 @@ async function deleteScript(id) {
     loadScripts();
     loadOverviewStats();
   } catch (err) {}
+}
+
+// ----------------- Obfuscated Source Preview -----------------
+async function previewObfuscatedSource(scriptId) {
+  showToast("Compiling obfuscated preview...", "info");
+  try {
+    const data = await apiCall(`/api/scripts/${scriptId}/preview`);
+    if (!data || !data.success) {
+      showToast("Failed to compile preview", "danger");
+      return;
+    }
+
+    document.getElementById("previewModalTitle").innerHTML = `<i class="fa-solid fa-eye" style="color:var(--gold-primary); margin-right:8px;"></i>Preview: ${escapeHtml(data.name)} (Delivered Obfuscated Output)`;
+    document.getElementById("previewTabTitle").innerText = `${data.slug}.obfuscated.luau`;
+    document.getElementById("previewCodeArea").value = data.obfuscated_source;
+    document.getElementById("previewEngineStatus").innerText = `${data.mode_name} Engine`;
+    document.getElementById("previewSizeStatus").innerText = `${(data.size_bytes / 1024).toFixed(1)} KB`;
+
+    document.getElementById("previewMetaBadges").innerHTML = `
+      <span class="badge badge-gold"><i class="fa-solid fa-shield-halved"></i> ${escapeHtml(data.mode_name)}</span>
+      <span class="badge badge-zinc">${(data.size_bytes / 1024).toFixed(1)} KB</span>
+    `;
+
+    updateLineNumbers(document.getElementById("previewCodeArea"), "previewLineNumbers");
+    document.getElementById("modalPreviewSource").classList.add("active");
+  } catch (err) {
+    showToast("Error generating preview: " + (err.message || err), "danger");
+  }
+}
+
+function copyPreviewSource() {
+  const code = document.getElementById("previewCodeArea").value;
+  copyText(code, "Obfuscated source copied to clipboard!");
+}
+
+function downloadPreviewSource() {
+  const code = document.getElementById("previewCodeArea").value;
+  const tabTitle = document.getElementById("previewTabTitle").innerText || "obfuscated.luau";
+  const blob = new Blob([code], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = tabTitle;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`Downloaded ${tabTitle}`);
 }
 
 // ----------------- Loadstring Studio -----------------

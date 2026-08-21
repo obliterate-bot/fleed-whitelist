@@ -1477,8 +1477,8 @@ game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = customSpeed
           <div class="form-group">
             <label class="form-label">Protection & Virtualization Pipeline</label>
             <select id="scriptMode" class="form-select">
-              <option value="2">O_bfuscate 1.1 (Hybrid VM, Dense Register Optimization & Vaults)</option>
-              <option value="1">FleedGuard Stream Armor (Anti-Dump & Encrypted Handshake)</option>
+              <option value="2">Prometheus (AST Obfuscation & Fast Zero-Lag Execution)</option>
+              <option value="1">O_bfuscate 1.1 (Dense AST Transforms & String Vaults)</option>
               <option value="0">Unobfuscated Mode (Raw Script + Server Whitelist)</option>
             </select>
           </div>
@@ -1503,6 +1503,63 @@ game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = customSpeed
 
         <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-cloud-arrow-up"></i> Save & Deploy to FleedGuard</button>
       </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Preview Obfuscated Source Code -->
+  <div id="modalPreviewSource" class="modal-overlay">
+    <div class="modal-content" style="max-width: 920px;">
+      <div class="modal-header">
+        <h3 id="previewModalTitle" class="modal-title"><i class="fa-solid fa-eye" style="color:var(--gold-primary);"></i> Preview Delivered Obfuscated Source</h3>
+        <button class="modal-close" onclick="closeModal('modalPreviewSource')">&times;</button>
+      </div>
+
+      <div style="margin-bottom: 12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div style="font-size:13px; color:var(--text-zinc-400);">
+          This is the exact obfuscated payload delivered to buyers in-memory when passing whitelist verification.
+        </div>
+        <div id="previewMetaBadges" style="display:flex; gap:8px;"></div>
+      </div>
+
+      <div class="executor-window" style="box-shadow:none; margin-bottom:16px;">
+        <div class="executor-topbar">
+          <div class="executor-window-dots">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+          </div>
+          <div class="executor-tabs">
+            <div class="executor-tab">
+              <i class="fa-solid fa-file-shield" style="color:var(--gold-primary);"></i>
+              <span id="previewTabTitle">payload.obfuscated.luau</span>
+            </div>
+          </div>
+          <div class="executor-topbar-actions">
+            <button type="button" class="exec-tool-btn" onclick="copyPreviewSource()"><i class="fa-solid fa-copy"></i> Copy Source</button>
+            <button type="button" class="exec-tool-btn" onclick="downloadPreviewSource()"><i class="fa-solid fa-download"></i> Download .luau</button>
+          </div>
+        </div>
+        <div class="executor-editor-body" style="height:360px;">
+          <div class="executor-line-numbers" id="previewLineNumbers">1</div>
+          <textarea id="previewCodeArea" class="executor-code-area" readonly spellcheck="false" onscroll="syncScroll(this, 'previewLineNumbers')"></textarea>
+        </div>
+        <div class="executor-statusbar">
+          <div class="exec-status-item">
+            <i class="fa-solid fa-shield-halved" style="color:var(--gold-primary);"></i>
+            <span id="previewEngineStatus">Prometheus Obfuscated Engine</span>
+          </div>
+          <div class="exec-status-item">
+            <span id="previewSizeStatus">0 KB</span>
+          </div>
+          <div class="exec-status-item">
+            <span>Read-Only Output</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex; justify-content:flex-end;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modalPreviewSource')">Close Preview</button>
+      </div>
     </div>
   </div>
 

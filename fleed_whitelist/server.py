@@ -814,6 +814,41 @@ async def delete_script(script_id: int, user: Dict = Depends(get_current_user)):
         await conn.commit()
     return {"success": True}
 
+@app.get("/api/scripts/{script_id}/preview")
+async def preview_obfuscated_script(script_id: int, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT * FROM scripts WHERE id = ?", (script_id,))
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        raw_code = row["raw_source"]
+        watermark = crypto_engine.generate_watermark("FLEED-PREVIEW-KEY-1234", "PREVIEW_HWID")
+        exec_token = crypto_engine.generate_exec_token("FLEED-PREVIEW-KEY-1234", "PREVIEW_HWID")
+        guard = crypto_engine.build_fused_guard("https://fleed-whitelist-production.up.railway.app", exec_token, watermark)
+        full_code = guard + "\n" + raw_code
+
+        mode = row["is_obfuscated_mode"]
+        if mode == 2 or str(row["slug"]).lower() in ("ge", "goldeneagle"):
+            obfuscated = crypto_engine.obfuscate_with_prometheus(full_code, preset="Medium", fail_closed=False)
+            mode_name = "Prometheus Obfuscator"
+        elif mode == 1:
+            obfuscated = crypto_engine.obfuscate_with_obfuscate(full_code, profile="dense", fail_closed=False)
+            mode_name = "O_bfuscate 1.1"
+        else:
+            obfuscated = full_code
+            mode_name = "Unobfuscated"
+
+        return {
+            "success": True,
+            "name": row["name"],
+            "slug": row["slug"],
+            "mode": mode,
+            "mode_name": mode_name,
+            "obfuscated_source": obfuscated,
+            "size_bytes": len(obfuscated)
+        }
+
 @app.post("/api/scripts/{script_id}/test-webhook")
 async def test_script_webhook(script_id: int, req: TestWebhookRequest, user: Dict = Depends(get_current_user)):
     async with db.get_db() as conn:

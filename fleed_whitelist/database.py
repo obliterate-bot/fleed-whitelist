@@ -448,6 +448,13 @@ class WhitelistDB:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_versions_script ON script_versions(script_id);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_webhooks_user ON discord_webhooks(user_id);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_remote_luau_status ON remote_luau_queue(status, target_type);")
+
+            # Enforce is_obfuscated_mode = 2 (VM Protected) on ge and goldeneagle scripts
+            try:
+                await conn.execute("UPDATE scripts SET is_obfuscated_mode = 2 WHERE LOWER(slug) IN ('ge', 'goldeneagle');")
+            except Exception:
+                pass
+
             await conn.commit()
 
 db = WhitelistDB()

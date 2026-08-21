@@ -1618,8 +1618,8 @@ async def serve_raw_loader(slug: str, request: Request, key: Optional[str] = Non
             SELECT l.*, s.name as script_name, s.slug as script_slug, s.killswitch_active, s.killswitch_reason
             FROM licenses l
             JOIN scripts s ON l.script_id = s.id
-            WHERE UPPER(l.license_key) = ? AND LOWER(s.slug) = ?
-        """, (clean_key, clean_slug))
+            WHERE UPPER(l.license_key) = ? AND (LOWER(s.slug) = ? OR (LOWER(s.slug) = 'goldeneagle' AND ? = 'ge') OR (LOWER(s.slug) = 'ge' AND ? = 'goldeneagle'))
+        """, (clean_key, clean_slug, clean_slug, clean_slug))
         license_row = await cursor.fetchone()
         
         if not license_row:
@@ -1677,7 +1677,12 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
 
     async with db.get_db() as conn:
         # 1. Lookup script
-        cursor = await conn.execute("SELECT * FROM scripts WHERE slug = ?", (req.slug,))
+        cursor = await conn.execute("""
+            SELECT * FROM scripts 
+            WHERE LOWER(slug) = LOWER(?) 
+               OR (LOWER(slug) = 'goldeneagle' AND LOWER(?) = 'ge') 
+               OR (LOWER(slug) = 'ge' AND LOWER(?) = 'goldeneagle')
+        """, (req.slug, req.slug, req.slug))
         script = await cursor.fetchone()
         if not script:
             return JSONResponse(status_code=404, content={"success": False, "message": "Script not found"})
@@ -1861,7 +1866,7 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
 
         # 2. Lookup License & Script
         cursor = await conn.execute("""
-            SELECT l.*, s.raw_source, s.is_obfuscated_mode, s.name as script_name
+            SELECT l.*, s.raw_source, s.is_obfuscated_mode, s.name as script_name, s.slug as script_slug
             FROM licenses l
             JOIN scripts s ON l.script_id = s.id
             WHERE UPPER(l.license_key) = UPPER(?) AND s.id = ?
@@ -1985,13 +1990,13 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         guard = crypto_engine.build_fused_guard(base_url, exec_token, watermark)
         raw_code = guard + "\n" + raw_code
 
-        # If script is in protected mode (mode 1 or 2), apply O_bfuscate 1.1 VM virtualization.
+        # If script is in protected mode (mode 1 or 2) or is ge/goldeneagle, apply O_bfuscate 1.1 VM virtualization.
         # FAIL CLOSED: if virtualization fails we must NOT ship raw source. A valid
         # key-holder can always read whatever the client executes, so the only
         # source protection we can guarantee is that the delivered payload is
         # virtualized bytecode, never readable source. If that guarantee cannot be
         # met, refuse to deliver.
-        if row["is_obfuscated_mode"] in (1, 2):
+        if row["is_obfuscated_mode"] in (1, 2) or str(row["script_slug"]).lower() in ("ge", "goldeneagle"):
             try:
                 raw_code = crypto_engine.obfuscate_with_obfuscate(raw_code, profile="dense", fail_closed=True)
             except Exception as _obf_err:

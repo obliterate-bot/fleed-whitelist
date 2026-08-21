@@ -377,16 +377,19 @@ class CryptoEngine:
         out_path = in_path + ".out.lua"
 
         try:
-            cmd = [lua_bin, prom_cli, "--preset", preset, "--out", out_path, in_path]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=os.path.dirname(prom_cli))
+            cmd = [lua_bin, prom_cli, "--preset", preset, "--LuaU", "--nocolors", "--out", out_path, in_path]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, cwd=os.path.dirname(prom_cli))
             if proc.returncode == 0 and os.path.exists(out_path):
                 with open(out_path, "r", encoding="utf-8", errors="ignore") as f:
                     result = f.read()
                 if result and len(result) > 10:
                     return result
+            else:
+                print(f"[PROMETHEUS ERROR] Code: {proc.returncode}, Stderr: {proc.stderr[:300]}, Stdout: {proc.stdout[:300]}")
             # If Prometheus failed, fallback to O_bfuscate
             return self.obfuscate_with_obfuscate(source_code, profile="dense", fail_closed=fail_closed)
-        except Exception:
+        except Exception as e:
+            print(f"[PROMETHEUS EXCEPTION] {e}")
             return self.obfuscate_with_obfuscate(source_code, profile="dense", fail_closed=fail_closed)
         finally:
             try:

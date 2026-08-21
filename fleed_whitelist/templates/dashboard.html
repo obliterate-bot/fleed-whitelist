@@ -99,16 +99,40 @@
         <i class="fa-solid fa-code"></i> Script Hubs & Armor <span id="badgeScriptsCount" class="tab-count-badge">0</span>
       </button>
       <button class="tab-btn" data-tab="licenses" onclick="switchTab('licenses')">
-        <i class="fa-solid fa-key"></i> License Key Manager <span id="badgeLicensesCount" class="tab-count-badge">0</span>
+        <i class="fa-solid fa-key"></i> License Keys <span id="badgeLicensesCount" class="tab-count-badge">0</span>
+      </button>
+      <button class="tab-btn" data-tab="chat" onclick="switchTab('chat')">
+        <i class="fa-solid fa-comments" style="color:var(--gold-primary);"></i> Live Chat <span id="badgeChatUnread" class="tab-count-badge" style="background:var(--gold-primary); color:#000; display:none;">0</span>
+      </button>
+      <button class="tab-btn" data-tab="sessions" onclick="switchTab('sessions')">
+        <i class="fa-solid fa-gamepad" style="color:var(--gold-primary);"></i> In-Game Sessions <span id="badgeLiveSessionsCount" class="tab-count-badge">0</span>
+      </button>
+      <button class="tab-btn" data-tab="staff" onclick="switchTab('staff')">
+        <i class="fa-solid fa-users-gear"></i> Staff & Resellers
+      </button>
+      <button class="tab-btn" data-tab="telemetry" onclick="switchTab('telemetry')">
+        <i class="fa-solid fa-chart-pie"></i> Executor Analytics
+      </button>
+      <button class="tab-btn" data-tab="flags" onclick="switchTab('flags')">
+        <i class="fa-solid fa-flag"></i> Feature Flags
+      </button>
+      <button class="tab-btn" data-tab="announcements" onclick="switchTab('announcements')">
+        <i class="fa-solid fa-bullhorn"></i> Broadcasts
+      </button>
+      <button class="tab-btn" data-tab="versions" onclick="switchTab('versions')">
+        <i class="fa-solid fa-code-branch"></i> Versioning
       </button>
       <button class="tab-btn" data-tab="logs" onclick="switchTab('logs')">
-        <i class="fa-solid fa-shield-halved"></i> Live Security Stream
+        <i class="fa-solid fa-shield-halved"></i> Security Stream
       </button>
       <button class="tab-btn" data-tab="bypasses" onclick="switchTab('bypasses')">
-        <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger-light);"></i> Threat Radar & Attribution <span id="badgeThreatCount" class="tab-count-badge" style="background:var(--danger-bg); color:var(--danger-light); display:none;">0</span>
+        <i class="fa-solid fa-triangle-exclamation" style="color:var(--danger-light);"></i> Threat Radar <span id="badgeThreatCount" class="tab-count-badge" style="background:var(--danger-bg); color:var(--danger-light); display:none;">0</span>
+      </button>
+      <button class="tab-btn" data-tab="webhooks" onclick="switchTab('webhooks')">
+        <i class="fa-brands fa-discord" style="color:#5865F2;"></i> Webhooks
       </button>
       <button class="tab-btn" data-tab="api" onclick="switchTab('api')">
-        <i class="fa-solid fa-terminal"></i> Developer API & Studio
+        <i class="fa-solid fa-terminal"></i> Developer API
       </button>
       <button class="tab-btn" data-tab="settings" onclick="switchTab('settings')">
         <i class="fa-solid fa-user-shield"></i> Security & 2FA
@@ -824,6 +848,276 @@ async function createLicense(slug, key, discordId, note) {
       </div>
     </section>
 
+    <!-- ======================================================== -->
+    <!-- VIEW 9: LIVE COMMUNITY CHAT ROOM                         -->
+    <!-- ======================================================== -->
+    <section id="view-chat" class="tab-view" style="display:none;">
+      <div class="chat-full-layout">
+        <!-- Main Chat Stream -->
+        <div class="card" style="display:flex; flex-direction:column; height: 680px; padding:0; overflow:hidden;">
+          <div class="card-header" style="padding:16px 20px; border-bottom:1px solid var(--border-subtle);">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <span class="live-pulse"></span>
+              <h3 class="card-title" style="margin:0;"><i class="fa-solid fa-comments" style="color:var(--gold-primary);"></i> Developer & Buyer Live Chat</h3>
+              <span class="badge badge-gold" id="chatChannelBadge">#general</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <button class="btn btn-secondary btn-sm" onclick="toggleChatSound()"><i id="mainChatSoundIcon" class="fa-solid fa-volume-high"></i> Sound</button>
+              <button class="btn btn-secondary btn-sm" onclick="loadChatMessages()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+            </div>
+          </div>
+
+          <div id="mainChatMessages" class="chat-stream" style="flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:14px;">
+            <div style="text-align:center; color:var(--text-zinc-500); padding:40px;">Connecting to real-time chat stream...</div>
+          </div>
+
+          <form onsubmit="sendMainChatMessage(event)" style="padding:16px; border-top:1px solid var(--border-subtle); display:flex; gap:10px; background:rgba(0,0,0,0.3);">
+            <input type="text" id="mainChatInput" class="form-input" placeholder="Type a message to all online developers..." style="flex:1;" autocomplete="off" maxlength="1000">
+            <button type="submit" class="btn btn-primary" style="padding:0 20px;"><i class="fa-solid fa-paper-plane"></i> Send</button>
+          </form>
+        </div>
+
+        <!-- Online Users Sidebar -->
+        <div class="card" style="height: 680px; display:flex; flex-direction:column; padding:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--border-subtle);">
+            <span style="font-weight:700; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-zinc-400);">Online Members</span>
+            <span id="chatOnlineCount" class="badge badge-gold">1 Online</span>
+          </div>
+          <div id="chatOnlineUsersList" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:8px;">
+            <!-- Online users list -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- VIEW 10: IN-GAME SESSIONS & LIVE REMOTE KICK             -->
+    <!-- ======================================================== -->
+    <section id="view-sessions" class="tab-view" style="display:none;">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title"><i class="fa-solid fa-gamepad" style="color:var(--gold-primary);"></i> Real-Time In-Game Players & Remote Kick</h3>
+            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Live monitoring of players executing your scripts in Roblox. Issue instant remote kicks with 1-click.</p>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button class="btn btn-danger btn-sm" onclick="openRemoteKickModal()"><i class="fa-solid fa-bolt"></i> Instant Remote Kick</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadLiveSessions()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Player / Roblox User</th>
+                <th>Script Hub</th>
+                <th>Game / Place</th>
+                <th>Executor</th>
+                <th>Started / Latency</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="sessionsTableBody">
+              <tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Loading in-game sessions...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- VIEW 11: STAFF & RESELLER MANAGERS                       -->
+    <!-- ======================================================== -->
+    <section id="view-staff" class="tab-view" style="display:none;">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title"><i class="fa-solid fa-users-gear" style="color:var(--gold-primary);"></i> Staff & Reseller Whitelist Delegation</h3>
+            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Grant Discord users and staff roles permission to whitelist buyers, issue unlinked keys, and manage HWIDs.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openAddManagerModal()"><i class="fa-solid fa-user-plus"></i> Grant Staff Access</button>
+        </div>
+
+        <div class="table-container">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Target Type</th>
+                <th>Discord ID / Mention</th>
+                <th>Script Scope</th>
+                <th>Quota Limit</th>
+                <th>Keys Issued</th>
+                <th>Note / Reason</th>
+                <th>Granted By</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="staffTableBody">
+              <tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Loading authorized managers...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- VIEW 12: EXECUTOR TELEMETRY & ANALYTICS                  -->
+    <!-- ======================================================== -->
+    <section id="view-telemetry" class="tab-view" style="display:none;">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:20px;">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title"><i class="fa-solid fa-chart-pie" style="color:var(--gold-primary);"></i> Roblox Executor Market Share</h3>
+            <span class="badge badge-zinc">Live Detection</span>
+          </div>
+          <div id="executorChartContainer" style="display:flex; flex-direction:column; gap:12px; padding:10px 0;">
+            <!-- Progress bars for executors -->
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title"><i class="fa-solid fa-gauge-high" style="color:var(--gold-primary);"></i> Security & Auth Health</h3>
+            <span class="badge badge-gold">Telemetry</span>
+          </div>
+          <div id="telemetryStatsBox" style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; padding:10px 0;">
+            <!-- Metrics -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- VIEW 13: REMOTE SCRIPT FEATURE FLAGS                     -->
+    <!-- ======================================================== -->
+    <section id="view-flags" class="tab-view" style="display:none;">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title"><i class="fa-solid fa-flag" style="color:var(--gold-primary);"></i> Dynamic Script Feature Flags</h3>
+            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Remotely enable, disable, or adjust features in your Roblox scripts in real-time via <code>getgenv().FleedFlags</code> without updating code.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openAddFlagModal()"><i class="fa-solid fa-plus"></i> New Feature Flag</button>
+        </div>
+
+        <div class="table-container">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Feature Flag</th>
+                <th>Type</th>
+                <th>Current Value</th>
+                <th>Status</th>
+                <th>Last Updated</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="flagsTableBody">
+              <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Loading feature flags...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- VIEW 14: IN-GAME BROADCASTS & MAINTENANCE               -->
+    <!-- ======================================================== -->
+    <section id="view-announcements" class="tab-view" style="display:none;">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title"><i class="fa-solid fa-bullhorn" style="color:var(--gold-primary);"></i> In-Game Broadcasts & Maintenance Banners</h3>
+            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Deliver instant popups or banner announcements to players when they execute your script.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openAddAnnouncementModal()"><i class="fa-solid fa-plus"></i> New Broadcast</button>
+        </div>
+
+        <div class="table-container">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Broadcast Type</th>
+                <th>Message Preview</th>
+                <th>Status</th>
+                <th>Created At</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="announcementsTableBody">
+              <tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Loading announcements...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- VIEW 15: SCRIPT VERSIONING & ROLLBACK                    -->
+    <!-- ======================================================== -->
+    <section id="view-versions" class="tab-view" style="display:none;">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title"><i class="fa-solid fa-code-branch" style="color:var(--gold-primary);"></i> Script Version Snapshots & 1-Click Rollback</h3>
+            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Publish version releases with changelogs and safely rollback if a new game update breaks features.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openPublishVersionModal()"><i class="fa-solid fa-cloud-arrow-up"></i> Publish New Version</button>
+        </div>
+
+        <div class="table-container">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Version Tag</th>
+                <th>Release Changelog</th>
+                <th>Published By</th>
+                <th>Date</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="versionsTableBody">
+              <tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Loading version history...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================================================== -->
+    <!-- VIEW 16: DISCORD WEBHOOK ALERTS                         -->
+    <!-- ======================================================== -->
+    <section id="view-webhooks" class="tab-view" style="display:none;">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h3 class="card-title"><i class="fa-brands fa-discord" style="color:#5865F2;"></i> Event-Driven Discord Webhooks</h3>
+            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Receive real-time Discord embeds on key redemptions, security tampering, and HWID resets.</p>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openAddWebhookModal()"><i class="fa-solid fa-plus"></i> Add Webhook</button>
+        </div>
+
+        <div class="table-container">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Event Trigger</th>
+                <th>Script Scope</th>
+                <th>Webhook URL</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="webhooksTableBody">
+              <tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Loading webhooks...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
   </div>
 
   <!-- ======================================================== -->
@@ -1243,16 +1537,235 @@ async function createLicense(slug, key, discordId, note) {
         <input type="url" id="avatarCustomUrlInput" class="form-input" placeholder="https://i.imgur.com/example.png" oninput="updateAvatarPreviewDirect(this.value)">
       </div>
 
-      <div style="display:flex; justify-content:flex-end; gap:10px;">
-        <button type="button" class="btn btn-secondary" onclick="closeModal('modalChangeAvatar')">Cancel</button>
-        <button type="button" class="btn btn-primary" onclick="saveUserAvatar()"><i class="fa-solid fa-floppy-disk"></i> Save Avatar</button>
+  <!-- MODAL: Grant Staff / Reseller Manager -->
+  <div id="modalAddManager" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-user-shield" style="color:var(--gold-primary);"></i> Grant Staff / Reseller Whitelist Access</h3>
+        <button class="modal-close" onclick="closeModal('modalAddManager')">&times;</button>
       </div>
+      <form onsubmit="handleSaveManager(event)">
+        <div class="form-group">
+          <label class="form-label">Discord User or Role ID</label>
+          <input type="text" id="mgrDiscordId" class="form-input" placeholder="e.g. 123456789012345678" required>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+          <div class="form-group">
+            <label class="form-label">Target Type</label>
+            <select id="mgrIsRole" class="form-select">
+              <option value="0">Discord User</option>
+              <option value="1">Discord Role (All Role Members)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Script Hub Scope</label>
+            <select id="mgrScriptSlug" class="form-select">
+              <option value="all">All Scripts (Global Manager)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Key Generation Quota Limit (-1 for Unlimited)</label>
+          <input type="number" id="mgrQuota" class="form-input" value="-1" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Admin Note / Reseller Name</label>
+          <input type="text" id="mgrNote" class="form-input" placeholder="e.g. Senior Mod / Official Reseller #2">
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-check"></i> Grant Whitelist Permissions</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Instant Remote Kick -->
+  <div id="modalRemoteKick" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-bolt" style="color:var(--danger-light);"></i> Instant In-Game Remote Kick</h3>
+        <button class="modal-close" onclick="closeModal('modalRemoteKick')">&times;</button>
+      </div>
+      <form onsubmit="handleExecuteRemoteKick(event)">
+        <div class="form-group">
+          <label class="form-label">Target Identifier Type</label>
+          <select id="kickTargetType" class="form-select">
+            <option value="KEY">License Key</option>
+            <option value="USERNAME">Roblox Username</option>
+            <option value="HWID">Hardware ID (HWID)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Target Value</label>
+          <input type="text" id="kickTargetValue" class="form-input" placeholder="Enter key, username, or HWID" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Kick Message / Reason</label>
+          <input type="text" id="kickReason" class="form-input" value="Terminated by developer via FleedGuard Security Console" required>
+        </div>
+        <button type="submit" class="btn btn-danger" style="width:100%; padding:12px;"><i class="fa-solid fa-bolt"></i> Send Instant Disconnect Signal</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Add Feature Flag -->
+  <div id="modalAddFlag" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-flag" style="color:var(--gold-primary);"></i> Dynamic Script Feature Flag</h3>
+        <button class="modal-close" onclick="closeModal('modalAddFlag')">&times;</button>
+      </div>
+      <form onsubmit="handleSaveFeatureFlag(event)">
+        <div class="form-group">
+          <label class="form-label">Script Hub</label>
+          <select id="flagScriptSlug" class="form-select" required></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Flag Name (Variable Identifier)</label>
+          <input type="text" id="flagName" class="form-input" placeholder="e.g. SilentAimEnabled / WalkSpeed" required>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+          <div class="form-group">
+            <label class="form-label">Type</label>
+            <select id="flagType" class="form-select">
+              <option value="BOOLEAN">Boolean (true/false)</option>
+              <option value="STRING">String</option>
+              <option value="NUMBER">Number</option>
+              <option value="JSON">JSON / Array</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Flag Value</label>
+            <input type="text" id="flagValue" class="form-input" value="true" required>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-check"></i> Save Feature Flag</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Add In-Game Announcement -->
+  <div id="modalAddAnnouncement" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-bullhorn" style="color:var(--gold-primary);"></i> In-Game Broadcast Announcement</h3>
+        <button class="modal-close" onclick="closeModal('modalAddAnnouncement')">&times;</button>
+      </div>
+      <form onsubmit="handleSaveAnnouncement(event)">
+        <div class="form-group">
+          <label class="form-label">Script Hub</label>
+          <select id="annScriptSlug" class="form-select" required></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Banner Type</label>
+          <select id="annBannerType" class="form-select">
+            <option value="INFO">Information (Blue)</option>
+            <option value="UPDATE">Update Release (Gold)</option>
+            <option value="WARNING">Security Warning (Amber)</option>
+            <option value="MAINTENANCE">Maintenance Alert (Red)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Broadcast Message</label>
+          <textarea id="annMessage" class="form-textarea" placeholder="Enter message to display on player screen..." required></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-bullhorn"></i> Deploy Broadcast to Game</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Publish Version Snapshot -->
+  <div id="modalPublishVersion" class="modal-overlay">
+    <div class="modal-content" style="max-width:700px;">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-code-branch" style="color:var(--gold-primary);"></i> Publish Version Snapshot</h3>
+        <button class="modal-close" onclick="closeModal('modalPublishVersion')">&times;</button>
+      </div>
+      <form onsubmit="handleSaveVersion(event)">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+          <div class="form-group">
+            <label class="form-label">Script Hub</label>
+            <select id="verScriptSlug" class="form-select" required></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Version Tag</label>
+            <input type="text" id="verTag" class="form-input" placeholder="e.g. v2.5.0" required>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Changelog & Release Notes</label>
+          <input type="text" id="verChangelog" class="form-input" placeholder="e.g. Added aimbot prediction, fixed auto-steal bypass">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Raw Lua / Luau Source</label>
+          <textarea id="verSource" class="form-textarea" placeholder="-- Script source code for this release..." style="min-height:200px;" required></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-cloud-arrow-up"></i> Publish Version Snapshot</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Add Discord Webhook -->
+  <div id="modalAddWebhook" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-brands fa-discord" style="color:#5865F2;"></i> Configure Discord Webhook Alert</h3>
+        <button class="modal-close" onclick="closeModal('modalAddWebhook')">&times;</button>
+      </div>
+      <form onsubmit="handleSaveWebhook(event)">
+        <div class="form-group">
+          <label class="form-label">Event Trigger</label>
+          <select id="whEvent" class="form-select">
+            <option value="WHITELIST_ADDED">Buyer Whitelisted / Key Redeemed</option>
+            <option value="THREAT_DETECTED">Security Threat / Memory Hook Detected</option>
+            <option value="HWID_RESET">Hardware ID Reset Event</option>
+            <option value="EXECUTION_SPIKE">Execution Spike Alert</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Discord Webhook URL</label>
+          <input type="url" id="whUrl" class="form-input" placeholder="https://discord.com/api/webhooks/..." required>
+        </div>
+        <div style="display:flex; gap:10px;">
+          <button type="button" class="btn btn-secondary" style="flex:1;" onclick="testWebhookFromModal()"><i class="fa-solid fa-paper-plane"></i> Test Webhook</button>
+          <button type="submit" class="btn btn-primary" style="flex:1;"><i class="fa-solid fa-check"></i> Save Webhook</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- GLOBAL FLOATING LIVE CHAT WIDGET                         -->
+  <!-- ======================================================== -->
+  <div id="floatingChatWidget" class="floating-chat-widget">
+    <button id="floatingChatToggleBtn" class="chat-toggle-btn" onclick="toggleFloatingChat()">
+      <i class="fa-solid fa-comments"></i>
+      <span>Live Chat</span>
+      <span id="floatingChatBadge" class="chat-unread-badge" style="display:none;">0</span>
+    </button>
+    <div id="floatingChatPanel" class="floating-chat-panel" style="display:none;">
+      <div class="chat-panel-header">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="live-pulse"></span>
+          <span style="font-weight:700; font-size:13px;">Community Chat</span>
+          <span id="floatingOnlineBadge" class="badge badge-gold" style="font-size:10px;">1 Online</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          <button class="chat-tool-btn" onclick="toggleChatSound()" title="Toggle Sound"><i id="floatingChatSoundIcon" class="fa-solid fa-volume-high"></i></button>
+          <button class="chat-tool-btn" onclick="toggleFloatingChat()"><i class="fa-solid fa-minus"></i></button>
+        </div>
+      </div>
+      <div id="floatingChatMessages" class="chat-messages-container">
+        <!-- Floating chat messages -->
+      </div>
+      <form id="floatingChatForm" onsubmit="sendFloatingChatMessage(event)" class="chat-input-form">
+        <input type="text" id="floatingChatInput" placeholder="Type a message..." autocomplete="off" maxlength="1000">
+        <button type="submit" class="chat-send-btn"><i class="fa-solid fa-paper-plane"></i></button>
+      </form>
     </div>
   </div>
 
   <!-- Dynamic Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js?v=2.2.3"></script>
+  <script src="/static/app.js?v=2.3.0"></script>
 </body>
 </html>

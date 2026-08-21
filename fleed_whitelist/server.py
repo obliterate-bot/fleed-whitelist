@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response, Depends, HTTPException, status, Header, UploadFile, File
+from fastapi import FastAPI, Request, Response, Depends, HTTPException, status, Header, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -197,22 +197,47 @@ class SimulateHandshakeRequest(BaseModel):
     key: str
     hwid: Optional[str] = "SIMULATOR_HWID_ABC123"
 
-class TestWebhookRequest(BaseModel):
-    webhook_url: Optional[str] = None
+class StaffManagerAddRequest(BaseModel):
+    discord_user_id: str
+    script_slug: Optional[str] = "all"
+    is_role: Optional[int] = 0
+    quota_limit: Optional[int] = -1
+    note: Optional[str] = ""
 
-class WatermarkLookupRequest(BaseModel):
-    watermark_or_source: str
+class RemoteKickRequest(BaseModel):
+    target_type: str = "KEY" # KEY, HWID, USER_ID, USERNAME
+    target_value: str
+    reason: Optional[str] = "Terminated by developer"
 
-class BanLeakerRequest(BaseModel):
-    license_id: int
-    reason: Optional[str] = "Banned via Forensic Watermark Trace"
+class PublicRedeemRequest(BaseModel):
+    license_key: str
+    discord_id: Optional[str] = None
 
-class KickPlayerRequest(BaseModel):
-    license_key: Optional[str] = None
-    hwid: Optional[str] = None
-    roblox_user_id: Optional[int] = None
-    roblox_username: Optional[str] = None
-    reason: Optional[str] = "Kicked by FleedGuard Administrator"
+class PublicResetHwidRequest(BaseModel):
+    license_key: str
+    discord_id: str
+
+class AnnouncementCreateRequest(BaseModel):
+    message: str
+    banner_type: Optional[str] = "INFO" # 'INFO', 'UPDATE', 'WARNING', 'MAINTENANCE'
+    is_active: Optional[int] = 1
+
+class FeatureFlagCreateRequest(BaseModel):
+    flag_name: str
+    flag_type: Optional[str] = "BOOLEAN" # 'BOOLEAN', 'STRING', 'NUMBER', 'JSON'
+    flag_value: str = "true"
+    is_enabled: Optional[int] = 1
+
+class ScriptVersionCreateRequest(BaseModel):
+    version_tag: str
+    changelog: Optional[str] = ""
+    raw_source: str
+
+class DiscordWebhookCreateRequest(BaseModel):
+    script_id: Optional[int] = None
+    event_type: str = "WHITELIST_ADDED" # 'WHITELIST_ADDED', 'THREAT_DETECTED', 'HWID_RESET', 'EXECUTION_SPIKE'
+    webhook_url: str
+    is_enabled: Optional[int] = 1
 
 async def send_discord_security_alert(webhook_url: str, title: str, description: str, fields: List[Dict], color: int = 0xEF4444):
     """Sends a rich, non-blocking Discord security alert embed."""
@@ -2552,6 +2577,550 @@ async def get_kicked_sessions(limit: int = 50, user: Dict = Depends(get_current_
         results.append(d)
 
     return results
+
+
+# =========================================================================
+# LIVE COMMUNITY CHAT WEBSOCKET & REST API
+# =========================================================================
+
+class ChatConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[WebSocket, Dict] = {}
+
+    async def connect(self, websocket: WebSocket, user_info: Dict):
+        await websocket.accept()
+        self.active_connections[websocket] = user_info
+        await self.broadcast_presence()
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            del self.active_connections[websocket]
+
+    async def broadcast_presence(self):
+        online_users = []
+        seen_ids = set()
+        for u in self.active_connections.values():
+            uid = u.get("id")
+            if uid and uid not in seen_ids:
+                seen_ids.add(uid)
+                online_users.append({
+                    "id": u.get("id"),
+                    "username": u.get("username", "Anonymous"),
+                    "avatar_url": u.get("avatar_url"),
+                    "role": u.get("role", "developer")
+                })
+        payload = {
+            "type": "presence",
+            "online_count": max(1, len(seen_ids)),
+            "users": online_users
+        }
+        await self.broadcast(payload)
+
+    async def broadcast(self, message: dict):
+        disconnected = []
+        for ws in list(self.active_connections.keys()):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                disconnected.append(ws)
+        for ws in disconnected:
+            self.disconnect(ws)
+
+chat_manager = ChatConnectionManager()
+
+@app.websocket("/ws/chat")
+async def websocket_chat_endpoint(websocket: WebSocket, token: Optional[str] = None):
+    if not token and "fleed_token" in websocket.cookies:
+        token = websocket.cookies.get("fleed_token")
+
+    user = None
+    if token:
+        payload = crypto_engine.verify_session_token(token)
+        if payload and "sub" in payload:
+            async with db.get_db() as conn:
+                cursor = await conn.execute("SELECT id, username, email, role, avatar_url FROM users WHERE id = ?", (payload["sub"],))
+                u_row = await cursor.fetchone()
+                if u_row:
+                    user = dict(u_row)
+
+    if not user:
+        guest_tag = secrets.token_hex(2)
+        user = {"id": 0, "username": f"Guest_{guest_tag}", "role": "buyer", "avatar_url": None}
+
+    await chat_manager.connect(websocket, user)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type", "message")
+            if msg_type == "message":
+                text = (data.get("message") or "").strip()
+                channel = data.get("channel", "general")[:32]
+                if text and len(text) <= 1000:
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    async with db.get_db() as conn:
+                        cursor = await conn.execute("""
+                            INSERT INTO chat_messages (user_id, username, avatar_url, role, message, channel, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (user.get("id"), user.get("username"), user.get("avatar_url"), user.get("role", "developer"), text, channel, now_iso))
+                        await conn.commit()
+                        msg_id = cursor.lastrowid
+
+                    broadcast_payload = {
+                        "type": "message",
+                        "id": msg_id,
+                        "user_id": user.get("id"),
+                        "username": user.get("username"),
+                        "avatar_url": user.get("avatar_url"),
+                        "role": user.get("role", "developer"),
+                        "message": text,
+                        "channel": channel,
+                        "created_at": now_iso
+                    }
+                    await chat_manager.broadcast(broadcast_payload)
+            elif msg_type == "typing":
+                await chat_manager.broadcast({
+                    "type": "typing",
+                    "username": user.get("username")
+                })
+    except WebSocketDisconnect:
+        chat_manager.disconnect(websocket)
+        await chat_manager.broadcast_presence()
+    except Exception:
+        chat_manager.disconnect(websocket)
+        await chat_manager.broadcast_presence()
+
+@app.get("/api/chat/messages")
+async def get_chat_messages(channel: str = "general", limit: int = 50, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT id, user_id, username, avatar_url, role, message, channel, created_at
+            FROM chat_messages
+            WHERE channel = ? AND is_deleted = 0
+            ORDER BY id DESC LIMIT ?
+        """, (channel, min(limit, 100)))
+        rows = await cursor.fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+@app.delete("/api/chat/messages/{message_id}")
+async def delete_chat_message(message_id: int, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        if user.get("role") == "admin":
+            await conn.execute("UPDATE chat_messages SET is_deleted = 1 WHERE id = ?", (message_id,))
+        else:
+            await conn.execute("UPDATE chat_messages SET is_deleted = 1 WHERE id = ? AND user_id = ?", (message_id, user["id"]))
+        await conn.commit()
+    return {"success": True}
+
+
+# =========================================================================
+# STAFF & RESELLER MANAGERS API
+# =========================================================================
+
+@app.get("/api/staff/managers")
+async def get_staff_managers(user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT m.*, s.name as script_name
+            FROM whitelist_managers m
+            LEFT JOIN scripts s ON m.script_slug = s.slug
+            ORDER BY m.id DESC
+        """)
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/staff/managers")
+async def add_staff_manager(req: StaffManagerAddRequest, user: Dict = Depends(get_current_user)):
+    clean_id = req.discord_user_id.strip("<@!&>").strip()
+    clean_slug = (req.script_slug or "all").strip().lower()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    
+    async with db.get_db() as conn:
+        await conn.execute("""
+            INSERT INTO whitelist_managers (discord_user_id, is_role, script_slug, quota_limit, note, granted_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(discord_user_id, script_slug, is_role, guild_id) DO UPDATE SET
+                quota_limit = excluded.quota_limit,
+                note = excluded.note
+        """, (clean_id, req.is_role or 0, clean_slug, req.quota_limit or -1, req.note, user["username"], now_iso))
+        await conn.commit()
+
+    return {"success": True, "message": f"Successfully granted manager access to ID {clean_id} for {clean_slug}."}
+
+@app.delete("/api/staff/managers/{manager_id}")
+async def revoke_staff_manager(manager_id: int, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        await conn.execute("DELETE FROM whitelist_managers WHERE id = ?", (manager_id,))
+        await conn.commit()
+    return {"success": True, "message": "Manager access revoked."}
+
+
+# =========================================================================
+# LIVE REMOTE KICK & SESSION DISCONNECT API
+# =========================================================================
+
+@app.post("/api/sessions/kick")
+async def execute_remote_kick(req: RemoteKickRequest, user: Dict = Depends(get_current_user)):
+    clean_val = req.target_value.strip()
+    target_type = req.target_type.upper()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    reason = req.reason or "Terminated by developer"
+
+    async with db.get_db() as conn:
+        await conn.execute("""
+            INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user["id"], target_type, clean_val, reason, user["username"], now_iso))
+
+        if target_type == "KEY":
+            await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE UPPER(license_key) = UPPER(?)", (reason, now_iso, user["username"], clean_val))
+        elif target_type == "HWID":
+            await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE hwid = ?", (reason, now_iso, user["username"], clean_val))
+        elif target_type == "USERNAME":
+            await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE roblox_username = ?", (reason, now_iso, user["username"], clean_val))
+
+        await conn.commit()
+
+    return {"success": True, "message": f"Issued instant remote kick for {target_type}: '{clean_val}'."}
+
+
+# =========================================================================
+# ROBLOX EXECUTOR TELEMETRY & ANALYTICS API
+# =========================================================================
+
+@app.get("/api/telemetry/executors")
+async def get_executor_telemetry(user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT executor_name, COUNT(*) as count,
+                   SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) as success_count,
+                   SUM(CASE WHEN status != 'SUCCESS' THEN 1 ELSE 0 END) as fail_count
+            FROM execution_logs
+            WHERE executor_name IS NOT NULL AND executor_name != '' AND executor_name != 'Unknown'
+            GROUP BY executor_name
+            ORDER BY count DESC
+            LIMIT 12
+        """)
+        rows = await cursor.fetchall()
+
+    total_execs = sum(r["count"] for r in rows) or 1
+    data = []
+    for r in rows:
+        d = dict(r)
+        d["percentage"] = round((d["count"] / total_execs) * 100, 1)
+        data.append(d)
+
+    return {"total": total_execs, "executors": data}
+
+@app.get("/api/telemetry/overview")
+async def get_telemetry_overview(user: Dict = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    day_7_ago = (now - timedelta(days=7)).isoformat()
+
+    async with db.get_db() as conn:
+        # Total counts
+        cur1 = await conn.execute("SELECT COUNT(*) as total_logs FROM execution_logs")
+        total_logs = (await cur1.fetchone())["total_logs"]
+
+        cur2 = await conn.execute("SELECT COUNT(*) as total_success FROM execution_logs WHERE status = 'SUCCESS'")
+        total_success = (await cur2.fetchone())["total_success"]
+
+        cur3 = await conn.execute("SELECT COUNT(*) as total_threats FROM execution_logs WHERE status IN ('BYPASS_ATTEMPT', 'TAMPER_DETECTED', 'BLACKLISTED')")
+        total_threats = (await cur3.fetchone())["total_threats"]
+
+        # Daily volume last 7 days
+        cur4 = await conn.execute("""
+            SELECT substr(timestamp, 1, 10) as day, COUNT(*) as count
+            FROM execution_logs
+            WHERE timestamp >= ?
+            GROUP BY day
+            ORDER BY day ASC
+        """, (day_7_ago,))
+        daily_rows = [dict(r) for r in await cur4.fetchall()]
+
+    return {
+        "total_logs": total_logs,
+        "total_success": total_success,
+        "total_threats": total_threats,
+        "success_rate": round((total_success / (total_logs or 1)) * 100, 1),
+        "daily_volume": daily_rows
+    }
+
+
+# =========================================================================
+# PUBLIC BUYER PORTAL & REDEMPTION API
+# =========================================================================
+
+@app.get("/redeem", response_class=HTMLResponse)
+async def public_redeem_page():
+    template_path = os.path.join(TEMPLATES_DIR, "redeem.html")
+    if os.path.exists(template_path):
+        with open(template_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    return HTMLResponse(content="<h1>FleedGuard Key Redemption Portal</h1>")
+
+@app.post("/api/public/redeem")
+async def public_redeem_key(req: PublicRedeemRequest):
+    clean_key = req.license_key.strip().upper()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT l.*, s.name as script_name, s.slug as script_slug, s.description as script_desc
+            FROM licenses l
+            JOIN scripts s ON l.script_id = s.id
+            WHERE UPPER(l.license_key) = ?
+        """, (clean_key,))
+        lic = await cursor.fetchone()
+        if not lic:
+            raise HTTPException(status_code=404, detail="Invalid license key. Please verify your key and try again.")
+
+        if lic["is_banned"]:
+            raise HTTPException(status_code=403, detail=f"This license has been banned: {lic['ban_reason'] or 'Violation of terms'}")
+
+        if req.discord_id and not lic["discord_id"]:
+            clean_disc = req.discord_id.strip("<@!>")
+            await conn.execute("UPDATE licenses SET discord_id = ? WHERE id = ?", (clean_disc, lic["id"]))
+            await conn.commit()
+
+    pub_url = loader_generator.get_public_url()
+    loadstr = f'getgenv().FleedKey = "{lic["license_key"]}"\nloadstring(game:HttpGet("{pub_url}/v1/loader/{lic["script_slug"]}?key={lic["license_key"]}"))()'
+
+    return {
+        "status": "valid",
+        "script_name": lic["script_name"],
+        "script_slug": lic["script_slug"],
+        "script_desc": lic["script_desc"] or "",
+        "license_key": lic["license_key"],
+        "discord_id": lic["discord_id"] or req.discord_id,
+        "is_hwid_bound": bool(lic["hwid"]),
+        "expires_at": lic["expires_at"] or "Lifetime",
+        "execution_count": lic["execution_count"],
+        "loadstring": loadstr
+    }
+
+@app.post("/api/public/resethwid")
+async def public_reset_hwid(req: PublicResetHwidRequest):
+    clean_key = req.license_key.strip().upper()
+    clean_disc = req.discord_id.strip("<@!>")
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT * FROM licenses 
+            WHERE UPPER(license_key) = ? AND discord_id = ? AND is_banned = 0
+        """, (clean_key, clean_disc))
+        lic = await cursor.fetchone()
+        if not lic:
+            raise HTTPException(status_code=400, detail="Matching license not found for this Discord ID.")
+
+        await conn.execute("UPDATE licenses SET hwid = NULL, ip_address = NULL, last_reset_at = ? WHERE id = ?", (now_iso, lic["id"]))
+        await conn.commit()
+
+    return {"success": True, "message": "HWID successfully reset! You can now execute on your new device."}
+
+
+# =========================================================================
+# IN-GAME ANNOUNCEMENTS & MAINTENANCE BANNERS API
+# =========================================================================
+
+@app.get("/api/scripts/{slug}/announcements")
+async def get_script_announcements(slug: str, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (slug.lower(), user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        cur2 = await conn.execute("SELECT * FROM script_announcements WHERE script_id = ? ORDER BY id DESC", (script["id"],))
+        rows = await cur2.fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/scripts/{slug}/announcements")
+async def create_script_announcement(slug: str, req: AnnouncementCreateRequest, user: Dict = Depends(get_current_user)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (slug.lower(), user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        # Deactivate older announcements if this is active
+        if req.is_active:
+            await conn.execute("UPDATE script_announcements SET is_active = 0 WHERE script_id = ?", (script["id"],))
+
+        await conn.execute("""
+            INSERT INTO script_announcements (script_id, message, banner_type, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (script["id"], req.message.strip(), req.banner_type or "INFO", req.is_active or 1, now_iso))
+        await conn.commit()
+
+    return {"success": True, "message": "In-game announcement updated successfully!"}
+
+@app.delete("/api/scripts/{slug}/announcements/{ann_id}")
+async def delete_script_announcement(slug: str, ann_id: int, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        await conn.execute("DELETE FROM script_announcements WHERE id = ?", (ann_id,))
+        await conn.commit()
+    return {"success": True, "message": "Announcement deleted."}
+
+
+# =========================================================================
+# REMOTE DYNAMIC FEATURE FLAGS API
+# =========================================================================
+
+@app.get("/api/scripts/{slug}/flags")
+async def get_script_feature_flags(slug: str, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (slug.lower(), user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        cur2 = await conn.execute("SELECT * FROM script_feature_flags WHERE script_id = ? ORDER BY flag_name ASC", (script["id"],))
+        rows = await cur2.fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/scripts/{slug}/flags")
+async def set_script_feature_flag(slug: str, req: FeatureFlagCreateRequest, user: Dict = Depends(get_current_user)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (slug.lower(), user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        await conn.execute("""
+            INSERT INTO script_feature_flags (script_id, flag_name, flag_type, flag_value, is_enabled, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(script_id, flag_name) DO UPDATE SET
+                flag_type = excluded.flag_type,
+                flag_value = excluded.flag_value,
+                is_enabled = excluded.is_enabled,
+                updated_at = excluded.updated_at
+        """, (script["id"], req.flag_name.strip(), req.flag_type or "BOOLEAN", req.flag_value.strip(), req.is_enabled or 1, now_iso))
+        await conn.commit()
+
+    return {"success": True, "message": f"Feature flag '{req.flag_name}' updated."}
+
+@app.delete("/api/scripts/{slug}/flags/{flag_id}")
+async def delete_script_feature_flag(slug: str, flag_id: int, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        await conn.execute("DELETE FROM script_feature_flags WHERE id = ?", (flag_id,))
+        await conn.commit()
+    return {"success": True, "message": "Feature flag removed."}
+
+
+# =========================================================================
+# SCRIPT VERSION HISTORY & 1-CLICK ROLLBACK API
+# =========================================================================
+
+@app.get("/api/scripts/{slug}/versions")
+async def get_script_versions(slug: str, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (slug.lower(), user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        cur2 = await conn.execute("SELECT id, script_id, version_tag, changelog, created_by, created_at FROM script_versions WHERE script_id = ? ORDER BY id DESC", (script["id"],))
+        rows = await cur2.fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/scripts/{slug}/versions")
+async def create_script_version(slug: str, req: ScriptVersionCreateRequest, user: Dict = Depends(get_current_user)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (slug.lower(), user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        # Save snapshot
+        await conn.execute("""
+            INSERT INTO script_versions (script_id, version_tag, changelog, raw_source, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (script["id"], req.version_tag.strip(), req.changelog or "", req.raw_source, user["username"], now_iso))
+
+        # Update active script source
+        await conn.execute("""
+            UPDATE scripts SET raw_source = ?, version = ?, updated_at = ? WHERE id = ?
+        """, (req.raw_source, req.version_tag.strip(), now_iso, script["id"]))
+        await conn.commit()
+
+    return {"success": True, "message": f"Published version {req.version_tag} successfully!"}
+
+@app.post("/api/scripts/{slug}/rollback/{version_id}")
+async def rollback_script_version(slug: str, version_id: int, user: Dict = Depends(get_current_user)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (slug.lower(), user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        cur_v = await conn.execute("SELECT raw_source, version_tag FROM script_versions WHERE id = ? AND script_id = ?", (version_id, script["id"]))
+        ver = await cur_v.fetchone()
+        if not ver:
+            raise HTTPException(status_code=404, detail="Version snapshot not found")
+
+        await conn.execute("""
+            UPDATE scripts SET raw_source = ?, version = ?, updated_at = ? WHERE id = ?
+        """, (ver["raw_source"], ver["version_tag"], now_iso, script["id"]))
+        await conn.commit()
+
+    return {"success": True, "message": f"Successfully rolled back to version {ver['version_tag']}!"}
+
+
+# =========================================================================
+# DISCORD WEBHOOKS CONFIGURATION API
+# =========================================================================
+
+@app.get("/api/webhooks")
+async def get_discord_webhooks(user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT w.*, s.name as script_name, s.slug as script_slug
+            FROM discord_webhooks w
+            LEFT JOIN scripts s ON w.script_id = s.id
+            WHERE w.user_id = ?
+            ORDER BY w.id DESC
+        """, (user["id"],))
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/webhooks")
+async def create_discord_webhook(req: DiscordWebhookCreateRequest, user: Dict = Depends(get_current_user)):
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        await conn.execute("""
+            INSERT INTO discord_webhooks (user_id, script_id, event_type, webhook_url, is_enabled, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (user["id"], req.script_id, req.event_type.upper(), req.webhook_url.strip(), req.is_enabled or 1, now_iso))
+        await conn.commit()
+    return {"success": True, "message": "Webhook created successfully."}
+
+@app.post("/api/webhooks/test")
+async def test_discord_webhook(req: TestWebhookRequest, user: Dict = Depends(get_current_user)):
+    url = req.webhook_url
+    if not url:
+        raise HTTPException(status_code=400, detail="Webhook URL required")
+    await send_discord_security_alert(
+        webhook_url=url,
+        title="Webhook Test Event",
+        description=f"This is a test notification from the FleedGuard Console sent by **{user['username']}**.",
+        fields=[
+            {"name": "Status", "value": "🟢 Operational", "inline": True},
+            {"name": "Service", "value": "FleedGuard v2.2 Enterprise", "inline": True}
+        ],
+        color=0xFACC15
+    )
+    return {"success": True, "message": "Test webhook dispatched!"}
+
+@app.delete("/api/webhooks/{webhook_id}")
+async def delete_discord_webhook(webhook_id: int, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        await conn.execute("DELETE FROM discord_webhooks WHERE id = ? AND user_id = ?", (webhook_id, user["id"]))
+        await conn.commit()
+    return {"success": True, "message": "Webhook removed."}
+
 
 
 

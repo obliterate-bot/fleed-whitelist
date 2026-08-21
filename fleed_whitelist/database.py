@@ -274,9 +274,95 @@ class WhitelistDB:
                     is_role INTEGER DEFAULT 0,
                     script_slug TEXT DEFAULT 'all',
                     guild_id TEXT,
+                    quota_limit INTEGER DEFAULT -1, -- -1 for unlimited
+                    keys_generated INTEGER DEFAULT 0,
+                    note TEXT,
                     granted_by TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     UNIQUE(discord_user_id, script_slug, is_role, guild_id) ON CONFLICT REPLACE
+                )
+            """)
+
+            for col, col_type in [
+                ("quota_limit", "INTEGER DEFAULT -1"),
+                ("keys_generated", "INTEGER DEFAULT 0"),
+                ("note", "TEXT")
+            ]:
+                try:
+                    await conn.execute(f"ALTER TABLE whitelist_managers ADD COLUMN {col} {col_type};")
+                except Exception:
+                    pass
+
+            # 10. Live Community Chat Messages
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    username TEXT NOT NULL,
+                    avatar_url TEXT,
+                    role TEXT DEFAULT 'developer',
+                    message TEXT NOT NULL,
+                    channel TEXT DEFAULT 'general',
+                    created_at TEXT NOT NULL,
+                    is_deleted INTEGER DEFAULT 0,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                )
+            """)
+
+            # 11. In-Game Announcements & Maintenance Banners
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS script_announcements (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    script_id INTEGER NOT NULL,
+                    message TEXT NOT NULL,
+                    banner_type TEXT DEFAULT 'INFO', -- 'INFO', 'UPDATE', 'WARNING', 'MAINTENANCE'
+                    is_active INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+                )
+            """)
+
+            # 12. Remote Dynamic Script Feature Flags
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS script_feature_flags (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    script_id INTEGER NOT NULL,
+                    flag_name TEXT NOT NULL,
+                    flag_type TEXT DEFAULT 'BOOLEAN', -- 'BOOLEAN', 'STRING', 'NUMBER', 'JSON'
+                    flag_value TEXT NOT NULL,
+                    is_enabled INTEGER DEFAULT 1,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(script_id, flag_name) ON CONFLICT REPLACE,
+                    FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+                )
+            """)
+
+            # 13. Script Version History & 1-Click Rollback
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS script_versions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    script_id INTEGER NOT NULL,
+                    version_tag TEXT NOT NULL,
+                    changelog TEXT,
+                    raw_source TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+                )
+            """)
+
+            # 14. Event-Driven Discord Webhooks
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS discord_webhooks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    script_id INTEGER,
+                    event_type TEXT NOT NULL, -- 'WHITELIST_ADDED', 'THREAT_DETECTED', 'HWID_RESET', 'EXECUTION_SPIKE', 'CHAT_MENTION'
+                    webhook_url TEXT NOT NULL,
+                    is_enabled INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
                 )
             """)
 
@@ -292,6 +378,11 @@ class WhitelistDB:
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_kicks_val ON session_kicks(target_value);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_live_hb ON live_sessions(last_heartbeat);")
             await conn.execute("CREATE INDEX IF NOT EXISTS idx_wl_mgr_user ON whitelist_managers(discord_user_id, script_slug);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_channel_time ON chat_messages(channel, id DESC);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_flags_script ON script_feature_flags(script_id);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_announcements_script ON script_announcements(script_id);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_versions_script ON script_versions(script_id);")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_webhooks_user ON discord_webhooks(user_id);")
             await conn.commit()
 
 db = WhitelistDB()

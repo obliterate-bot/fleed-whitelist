@@ -499,6 +499,14 @@ function switchTab(tabName) {
   if (tabName === "overview") loadOverviewStats();
   if (tabName === "scripts") loadScripts();
   if (tabName === "licenses") loadLicensesView();
+  if (tabName === "chat") { loadChatMessages(); initChatWebSocket(); }
+  if (tabName === "sessions") loadLiveSessions();
+  if (tabName === "staff") loadStaffManagers();
+  if (tabName === "telemetry") loadTelemetryData();
+  if (tabName === "flags") loadFeatureFlags();
+  if (tabName === "announcements") loadAnnouncements();
+  if (tabName === "versions") loadScriptVersions();
+  if (tabName === "webhooks") loadDiscordWebhooks();
   if (tabName === "logs") loadLiveLogs();
   if (tabName === "bypasses") { loadThreatRadarBypasses(); loadAnomalies(); loadBlacklists(); }
   if (tabName === "api") loadApiStudioView();
@@ -2400,6 +2408,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     switchTab("overview");
     loadOverviewStats();
     loadProfileStats();
+    initChatWebSocket();
 
     // Auto-refresh polling loop (every 5 seconds)
     if (!liveLogInterval) {
@@ -2409,7 +2418,696 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (activeTab === "logs") loadLiveLogs();
         if (activeTab === "bypasses") { loadBypassLogs(); loadAnomalies(); }
         if (activeTab === "overview") loadOverviewStats();
+        if (activeTab === "sessions") loadLiveSessions();
       }, 5000);
     }
   }
 });
+
+
+// =========================================================================
+// LIVE COMMUNITY CHAT (WEBSOCKET & REALTIME BROADCAST)
+// =========================================================================
+let chatSocket = null;
+let isChatSoundEnabled = true;
+let unreadChatCount = 0;
+
+function initChatWebSocket() {
+  if (chatSocket && (chatSocket.readyState === WebSocket.OPEN || chatSocket.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  const token = localStorage.getItem("fleed_token") || "";
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${protocol}//${window.location.host}/ws/chat?token=${encodeURIComponent(token)}`;
+
+  try {
+    chatSocket = new WebSocket(wsUrl);
+
+    chatSocket.onopen = () => {
+      console.log("[FleedGuard] Chat WebSocket connected.");
+    };
+
+    chatSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "message") {
+          appendChatMessage(data);
+          playChatSound();
+          const activeTab = document.querySelector(".tab-btn.active")?.getAttribute("data-tab");
+          if (activeTab !== "chat") {
+            unreadChatCount++;
+            updateChatBadge();
+          }
+        } else if (data.type === "presence") {
+          updateChatPresence(data);
+        }
+      } catch (err) {}
+    };
+
+    chatSocket.onclose = () => {
+      console.log("[FleedGuard] Chat WebSocket closed. Retrying in 5s...");
+      setTimeout(() => initChatWebSocket(), 5000);
+    };
+
+    chatSocket.onerror = () => {
+      try { chatSocket.close(); } catch (e) {}
+    };
+  } catch (err) {}
+}
+
+function updateChatBadge() {
+  const b1 = document.getElementById("badgeChatUnread");
+  const b2 = document.getElementById("floatingChatBadge");
+  if (unreadChatCount > 0) {
+    if (b1) { b1.innerText = unreadChatCount; b1.style.display = "inline-block"; }
+    if (b2) { b2.innerText = unreadChatCount; b2.style.display = "inline-block"; }
+  } else {
+    if (b1) b1.style.display = "none";
+    if (b2) b2.style.display = "none";
+  }
+}
+
+function playChatSound() {
+  if (!isChatSoundEnabled) return;
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1); // A5
+    gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.15);
+  } catch (e) {}
+}
+
+function toggleChatSound() {
+  isChatSoundEnabled = !isChatSoundEnabled;
+  const icon1 = document.getElementById("mainChatSoundIcon");
+  const icon2 = document.getElementById("floatingChatSoundIcon");
+  const cls = isChatSoundEnabled ? "fa-solid fa-volume-high" : "fa-solid fa-volume-xmark";
+  if (icon1) icon1.className = cls;
+  if (icon2) icon2.className = cls;
+  showToast(isChatSoundEnabled ? "Chat notifications enabled" : "Chat muted", "info");
+}
+
+function toggleFloatingChat() {
+  const panel = document.getElementById("floatingChatPanel");
+  if (!panel) return;
+  const isHidden = panel.style.display === "none" || !panel.style.display;
+  panel.style.display = isHidden ? "flex" : "none";
+  if (isHidden) {
+    unreadChatCount = 0;
+    updateChatBadge();
+    const input = document.getElementById("floatingChatInput");
+    if (input) input.focus();
+  }
+}
+
+async function loadChatMessages() {
+  try {
+    const msgs = await apiCall("/api/chat/messages?limit=50");
+    const container = document.getElementById("mainChatMessages");
+    const floatContainer = document.getElementById("floatingChatMessages");
+    if (container) container.innerHTML = "";
+    if (floatContainer) floatContainer.innerHTML = "";
+
+    msgs.forEach(m => {
+      appendChatMessage(m, false);
+    });
+
+    unreadChatCount = 0;
+    updateChatBadge();
+  } catch (err) {}
+}
+
+function appendChatMessage(msg, autoScroll = true) {
+  const mainBox = document.getElementById("mainChatMessages");
+  const floatBox = document.getElementById("floatingChatMessages");
+
+  const avatar = msg.avatar_url 
+    ? `<img src="${escapeHtml(msg.avatar_url)}" alt="avatar">` 
+    : (msg.username || "U").charAt(0).toUpperCase();
+
+  const roleCls = `chat-role-${(msg.role || 'developer').toLowerCase()}`;
+  const timeStr = formatTimeAgo(msg.created_at);
+
+  const html = `
+    <div class="chat-msg-row">
+      <div class="chat-avatar">${avatar}</div>
+      <div class="chat-content-wrap">
+        <div class="chat-meta">
+          <span class="chat-username">${escapeHtml(msg.username || 'Anonymous')}</span>
+          <span class="chat-role-badge ${roleCls}">${escapeHtml(msg.role || 'Member')}</span>
+          <span class="chat-time">${timeStr}</span>
+        </div>
+        <div class="chat-bubble">${escapeHtml(msg.message)}</div>
+      </div>
+    </div>
+  `;
+
+  if (mainBox) {
+    mainBox.insertAdjacentHTML("beforeend", html);
+    if (autoScroll) mainBox.scrollTop = mainBox.scrollHeight;
+  }
+  if (floatBox) {
+    floatBox.insertAdjacentHTML("beforeend", html);
+    if (autoScroll) floatBox.scrollTop = floatBox.scrollHeight;
+  }
+}
+
+function updateChatPresence(data) {
+  const onlineCount = data.online_count || 1;
+  const bMain = document.getElementById("chatOnlineCount");
+  const bFloat = document.getElementById("floatingOnlineBadge");
+  if (bMain) bMain.innerText = `${onlineCount} Online`;
+  if (bFloat) bFloat.innerText = `${onlineCount} Online`;
+
+  const usersList = document.getElementById("chatOnlineUsersList");
+  if (!usersList || !data.users) return;
+
+  usersList.innerHTML = data.users.map(u => {
+    const avatar = u.avatar_url 
+      ? `<img src="${escapeHtml(u.avatar_url)}" style="width:100%; height:100%; border-radius:50%; object-fit:cover;">` 
+      : (u.username || "U").charAt(0).toUpperCase();
+    const roleCls = `chat-role-${(u.role || 'developer').toLowerCase()}`;
+
+    return `
+      <div class="chat-user-item">
+        <div class="chat-avatar" style="width:28px; height:28px; font-size:11px;">${avatar}</div>
+        <div style="flex:1; overflow:hidden;">
+          <div style="font-size:12px; font-weight:700; color:var(--text-white); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(u.username)}</div>
+          <span class="chat-role-badge ${roleCls}" style="font-size:9px; padding:0 4px;">${escapeHtml(u.role || 'Dev')}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function sendMainChatMessage(e) {
+  e.preventDefault();
+  const input = document.getElementById("mainChatInput");
+  const text = input?.value.trim();
+  if (!text) return;
+
+  if (chatSocket && chatSocket.readyState === WebSocket.OPEN) {
+    chatSocket.send(JSON.stringify({ type: "message", message: text, channel: "general" }));
+  }
+  input.value = "";
+}
+
+function sendFloatingChatMessage(e) {
+  e.preventDefault();
+  const input = document.getElementById("floatingChatInput");
+  const text = input?.value.trim();
+  if (!text) return;
+
+  if (chatSocket && chatSocket.readyState === WebSocket.OPEN) {
+    chatSocket.send(JSON.stringify({ type: "message", message: text, channel: "general" }));
+  }
+  input.value = "";
+}
+
+
+// =========================================================================
+// IN-GAME SESSIONS & LIVE REMOTE KICK
+// =========================================================================
+
+async function loadLiveSessions() {
+  try {
+    const sessions = await apiCall("/api/sessions?show_all=true");
+    const badge = document.getElementById("badgeLiveSessionsCount");
+    if (badge) badge.innerText = sessions.filter(s => s.presence_state === 'online').length;
+
+    const tbody = document.getElementById("sessionsTableBody");
+    if (!tbody) return;
+
+    if (sessions.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-gamepad" style="margin-right:6px;"></i>No players currently in-game.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = sessions.map(s => {
+      const avatar = s.roblox_user_id > 0 
+        ? `<img src="/api/roblox/avatar/${s.roblox_user_id}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle);">`
+        : `<div style="width:28px; height:28px; border-radius:50%; background:#222; display:flex; align-items:center; justify-content:center; font-size:11px;">R</div>`;
+
+      let presenceBadge = `<span class="presence-badge presence-online"><span class="live-pulse"></span> ONLINE</span>`;
+      if (s.presence_state === "idle") {
+        presenceBadge = `<span class="presence-badge presence-idle"><i class="fa-regular fa-clock"></i> IDLE</span>`;
+      } else if (s.is_kicked) {
+        presenceBadge = `<span class="presence-badge presence-kicked"><i class="fa-solid fa-bolt"></i> KICKED</span>`;
+      }
+
+      return `
+        <tr>
+          <td>${presenceBadge}</td>
+          <td>
+            <div style="display:flex; align-items:center; gap:8px;">
+              ${avatar}
+              <div>
+                <a href="https://www.roblox.com/users/${s.roblox_user_id || 1}/profile" target="_blank" style="color:var(--text-white); font-weight:700; font-size:12px; text-decoration:none;">
+                  ${escapeHtml(s.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
+                </a>
+                <div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">Key: ${escapeHtml(s.license_key.substring(0, 14))}...</div>
+              </div>
+            </div>
+          </td>
+          <td><span class="badge badge-gold">${escapeHtml(s.script_name || s.script_slug || 'Hub')}</span></td>
+          <td>
+            <a href="https://www.roblox.com/games/${s.place_id || 0}" target="_blank" style="color:var(--gold-light); font-weight:600; font-size:12px; text-decoration:none;">
+              ${escapeHtml(s.game_name || 'Roblox Place')}
+            </a>
+          </td>
+          <td><span class="badge badge-zinc">${escapeHtml(s.executor_name || 'Generic')}</span></td>
+          <td><span style="font-size:12px; color:var(--text-zinc-400);">${formatTimeAgo(s.last_heartbeat)}</span></td>
+          <td>
+            <button class="btn btn-danger btn-sm" onclick="openRemoteKickModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.hwid)}', '${escapeHtml(s.roblox_username || '')}')">
+              <i class="fa-solid fa-bolt"></i> Kick
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {}
+}
+
+function openRemoteKickModal(key = "", hwid = "", username = "") {
+  if (key) {
+    document.getElementById("kickTargetType").value = "KEY";
+    document.getElementById("kickTargetValue").value = key;
+  } else if (username) {
+    document.getElementById("kickTargetType").value = "USERNAME";
+    document.getElementById("kickTargetValue").value = username;
+  }
+  document.getElementById("modalRemoteKick").classList.add("active");
+}
+
+async function handleExecuteRemoteKick(e) {
+  e.preventDefault();
+  const target_type = document.getElementById("kickTargetType").value;
+  const target_value = document.getElementById("kickTargetValue").value.trim();
+  const reason = document.getElementById("kickReason").value.trim();
+
+  try {
+    const res = await apiCall("/api/sessions/kick", "POST", { target_type, target_value, reason });
+    showToast(res.message, "success");
+    closeModal("modalRemoteKick");
+    loadLiveSessions();
+  } catch (err) {}
+}
+
+
+// =========================================================================
+// STAFF & RESELLER MANAGERS
+// =========================================================================
+
+async function loadStaffManagers() {
+  try {
+    const managers = await apiCall("/api/staff/managers");
+    const tbody = document.getElementById("staffTableBody");
+    if (!tbody) return;
+
+    if (managers.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-users-slash" style="margin-right:6px;"></i>No authorized whitelist managers delegated yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = managers.map(m => `
+      <tr>
+        <td><span class="badge ${m.is_role ? 'badge-zinc' : 'badge-gold'}">${m.is_role ? 'Discord Role' : 'Discord User'}</span></td>
+        <td><span style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--text-white);">${escapeHtml(m.discord_user_id)}</span></td>
+        <td><span class="badge badge-zinc">${escapeHtml(m.script_name || m.script_slug || 'All Scripts')}</span></td>
+        <td><span style="font-weight:600;">${m.quota_limit === -1 ? 'Unlimited' : m.quota_limit}</span></td>
+        <td><span class="badge badge-gold">${m.keys_generated || 0}</span></td>
+        <td><span style="color:var(--text-zinc-400); font-size:12px;">${escapeHtml(m.note || '—')}</span></td>
+        <td><span style="font-size:12px; color:var(--text-zinc-500);">${escapeHtml(m.granted_by)}</span></td>
+        <td>
+          <button class="btn btn-danger btn-sm" onclick="revokeStaffManager(${m.id})">
+            <i class="fa-solid fa-trash"></i> Revoke
+          </button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (err) {}
+}
+
+async function openAddManagerModal() {
+  const select = document.getElementById("mgrScriptSlug");
+  if (select) {
+    select.innerHTML = '<option value="all">All Scripts (Global Manager)</option>' +
+      currentScripts.map(s => `<option value="${escapeHtml(s.slug)}">${escapeHtml(s.name)}</option>`).join("");
+  }
+  document.getElementById("modalAddManager").classList.add("active");
+}
+
+async function handleSaveManager(e) {
+  e.preventDefault();
+  const discord_user_id = document.getElementById("mgrDiscordId").value.trim();
+  const is_role = parseInt(document.getElementById("mgrIsRole").value) || 0;
+  const script_slug = document.getElementById("mgrScriptSlug").value;
+  const quota_limit = parseInt(document.getElementById("mgrQuota").value) || -1;
+  const note = document.getElementById("mgrNote").value.trim();
+
+  try {
+    const res = await apiCall("/api/staff/managers", "POST", { discord_user_id, is_role, script_slug, quota_limit, note });
+    showToast(res.message, "success");
+    closeModal("modalAddManager");
+    loadStaffManagers();
+  } catch (err) {}
+}
+
+async function revokeStaffManager(id) {
+  if (!confirm("Are you sure you want to revoke whitelist management access for this staff member?")) return;
+  try {
+    const res = await apiCall(`/api/staff/managers/${id}`, "DELETE");
+    showToast(res.message, "success");
+    loadStaffManagers();
+  } catch (err) {}
+}
+
+
+// =========================================================================
+// ROBLOX EXECUTOR TELEMETRY & ANALYTICS
+// =========================================================================
+
+async function loadTelemetryData() {
+  try {
+    const [execData, overviewData] = await Promise.all([
+      apiCall("/api/telemetry/executors"),
+      apiCall("/api/telemetry/overview")
+    ]);
+
+    const chartBox = document.getElementById("executorChartContainer");
+    if (chartBox && execData.executors) {
+      if (execData.executors.length === 0) {
+        chartBox.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-zinc-500);">No executor telemetry captured yet.</div>`;
+      } else {
+        chartBox.innerHTML = execData.executors.map(ex => `
+          <div class="telemetry-bar-row">
+            <div class="telemetry-bar-header">
+              <span style="color:var(--text-white);">${escapeHtml(ex.executor_name)}</span>
+              <span style="color:var(--gold-primary); font-family:var(--font-mono);">${ex.percentage}% (${ex.count} runs)</span>
+            </div>
+            <div class="telemetry-bar-track">
+              <div class="telemetry-bar-fill" style="width: ${ex.percentage}%;"></div>
+            </div>
+          </div>
+        `).join("");
+      }
+    }
+
+    const statsBox = document.getElementById("telemetryStatsBox");
+    if (statsBox && overviewData) {
+      statsBox.innerHTML = `
+        <div class="stat-box" style="padding:16px;">
+          <div class="stat-label">Total Authentications</div>
+          <div class="stat-value gold" style="font-size:24px;">${overviewData.total_logs}</div>
+          <div class="stat-subtext">${overviewData.success_rate}% Success Rate</div>
+        </div>
+        <div class="stat-box" style="padding:16px;">
+          <div class="stat-label">Security Interceptions</div>
+          <div class="stat-value" style="font-size:24px; color:var(--danger-light);">${overviewData.total_threats}</div>
+          <div class="stat-subtext">Threat Traps & Blocks</div>
+        </div>
+      `;
+    }
+  } catch (err) {}
+}
+
+
+// =========================================================================
+// REMOTE FEATURE FLAGS
+// =========================================================================
+
+async function loadFeatureFlags() {
+  if (currentScripts.length === 0) await loadScripts();
+  const slug = currentScripts[0]?.slug;
+  if (!slug) return;
+
+  try {
+    const flags = await apiCall(`/api/scripts/${slug}/flags`);
+    const tbody = document.getElementById("flagsTableBody");
+    if (!tbody) return;
+
+    if (flags.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-flag" style="margin-right:6px;"></i>No dynamic feature flags set. Create your first flag above!</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = flags.map(f => `
+      <tr>
+        <td><span style="font-family:var(--font-mono); font-weight:700; color:var(--gold-light);">${escapeHtml(f.flag_name)}</span></td>
+        <td><span class="badge badge-zinc">${escapeHtml(f.flag_type)}</span></td>
+        <td><span style="font-family:var(--font-mono);">${escapeHtml(f.flag_value)}</span></td>
+        <td><span class="badge ${f.is_enabled ? 'badge-success' : 'badge-danger'}">${f.is_enabled ? 'Active' : 'Disabled'}</span></td>
+        <td><span style="font-size:11px; color:var(--text-zinc-500);">${formatTimeAgo(f.updated_at)}</span></td>
+        <td>
+          <button class="btn btn-danger btn-sm" onclick="deleteFeatureFlag('${slug}', ${f.id})">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (err) {}
+}
+
+async function openAddFlagModal() {
+  const select = document.getElementById("flagScriptSlug");
+  if (select) {
+    select.innerHTML = currentScripts.map(s => `<option value="${escapeHtml(s.slug)}">${escapeHtml(s.name)}</option>`).join("");
+  }
+  document.getElementById("modalAddFlag").classList.add("active");
+}
+
+async function handleSaveFeatureFlag(e) {
+  e.preventDefault();
+  const slug = document.getElementById("flagScriptSlug").value;
+  const flag_name = document.getElementById("flagName").value.trim();
+  const flag_type = document.getElementById("flagType").value;
+  const flag_value = document.getElementById("flagValue").value.trim();
+
+  try {
+    const res = await apiCall(`/api/scripts/${slug}/flags`, "POST", { flag_name, flag_type, flag_value, is_enabled: 1 });
+    showToast(res.message, "success");
+    closeModal("modalAddFlag");
+    loadFeatureFlags();
+  } catch (err) {}
+}
+
+async function deleteFeatureFlag(slug, flagId) {
+  try {
+    const res = await apiCall(`/api/scripts/${slug}/flags/${flagId}`, "DELETE");
+    showToast(res.message, "success");
+    loadFeatureFlags();
+  } catch (err) {}
+}
+
+
+// =========================================================================
+// IN-GAME ANNOUNCEMENTS & MAINTENANCE BANNERS
+// =========================================================================
+
+async function loadAnnouncements() {
+  if (currentScripts.length === 0) await loadScripts();
+  const slug = currentScripts[0]?.slug;
+  if (!slug) return;
+
+  try {
+    const announcements = await apiCall(`/api/scripts/${slug}/announcements`);
+    const tbody = document.getElementById("announcementsTableBody");
+    if (!tbody) return;
+
+    if (announcements.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-bullhorn" style="margin-right:6px;"></i>No broadcasts deployed for this script.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = announcements.map(a => `
+      <tr>
+        <td><span class="badge badge-gold">${escapeHtml(a.banner_type)}</span></td>
+        <td><span style="font-size:13px; color:var(--text-white); font-weight:500;">${escapeHtml(a.message)}</span></td>
+        <td><span class="badge ${a.is_active ? 'badge-success' : 'badge-zinc'}">${a.is_active ? 'Active' : 'Archived'}</span></td>
+        <td><span style="font-size:11px; color:var(--text-zinc-500);">${formatTimeAgo(a.created_at)}</span></td>
+        <td>
+          <button class="btn btn-danger btn-sm" onclick="deleteAnnouncement('${slug}', ${a.id})">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (err) {}
+}
+
+async function openAddAnnouncementModal() {
+  const select = document.getElementById("annScriptSlug");
+  if (select) {
+    select.innerHTML = currentScripts.map(s => `<option value="${escapeHtml(s.slug)}">${escapeHtml(s.name)}</option>`).join("");
+  }
+  document.getElementById("modalAddAnnouncement").classList.add("active");
+}
+
+async function handleSaveAnnouncement(e) {
+  e.preventDefault();
+  const slug = document.getElementById("annScriptSlug").value;
+  const banner_type = document.getElementById("annBannerType").value;
+  const message = document.getElementById("annMessage").value.trim();
+
+  try {
+    const res = await apiCall(`/api/scripts/${slug}/announcements`, "POST", { banner_type, message, is_active: 1 });
+    showToast(res.message, "success");
+    closeModal("modalAddAnnouncement");
+    loadAnnouncements();
+  } catch (err) {}
+}
+
+async function deleteAnnouncement(slug, annId) {
+  try {
+    const res = await apiCall(`/api/scripts/${slug}/announcements/${annId}`, "DELETE");
+    showToast(res.message, "success");
+    loadAnnouncements();
+  } catch (err) {}
+}
+
+
+// =========================================================================
+// SCRIPT VERSION HISTORY & ROLLBACK
+// =========================================================================
+
+async function loadScriptVersions() {
+  if (currentScripts.length === 0) await loadScripts();
+  const slug = currentScripts[0]?.slug;
+  if (!slug) return;
+
+  try {
+    const versions = await apiCall(`/api/scripts/${slug}/versions`);
+    const tbody = document.getElementById("versionsTableBody");
+    if (!tbody) return;
+
+    if (versions.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-code-branch" style="margin-right:6px;"></i>No version releases published yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = versions.map(v => `
+      <tr>
+        <td><span class="badge badge-gold" style="font-size:12px;">${escapeHtml(v.version_tag)}</span></td>
+        <td><span style="color:var(--text-zinc-300); font-size:13px;">${escapeHtml(v.changelog || 'Routine release')}</span></td>
+        <td><span style="font-size:12px; color:var(--text-zinc-400);">${escapeHtml(v.created_by)}</span></td>
+        <td><span style="font-size:11px; color:var(--text-zinc-500);">${formatTimeAgo(v.created_at)}</span></td>
+        <td>
+          <button class="btn btn-secondary btn-sm" onclick="rollbackVersion('${slug}', ${v.id}, '${escapeHtml(v.version_tag)}')">
+            <i class="fa-solid fa-rotate-left"></i> Rollback
+          </button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (err) {}
+}
+
+async function openPublishVersionModal() {
+  const select = document.getElementById("verScriptSlug");
+  if (select) {
+    select.innerHTML = currentScripts.map(s => `<option value="${escapeHtml(s.slug)}">${escapeHtml(s.name)}</option>`).join("");
+  }
+  document.getElementById("modalPublishVersion").classList.add("active");
+}
+
+async function handleSaveVersion(e) {
+  e.preventDefault();
+  const slug = document.getElementById("verScriptSlug").value;
+  const version_tag = document.getElementById("verTag").value.trim();
+  const changelog = document.getElementById("verChangelog").value.trim();
+  const raw_source = document.getElementById("verSource").value;
+
+  try {
+    const res = await apiCall(`/api/scripts/${slug}/versions`, "POST", { version_tag, changelog, raw_source });
+    showToast(res.message, "success");
+    closeModal("modalPublishVersion");
+    loadScriptVersions();
+  } catch (err) {}
+}
+
+async function rollbackVersion(slug, verId, verTag) {
+  if (!confirm(`Are you sure you want to rollback active script source to version ${verTag}?`)) return;
+  try {
+    const res = await apiCall(`/api/scripts/${slug}/rollback/${verId}`, "POST");
+    showToast(res.message, "success");
+    loadScriptVersions();
+  } catch (err) {}
+}
+
+
+// =========================================================================
+// DISCORD WEBHOOKS
+// =========================================================================
+
+async function loadDiscordWebhooks() {
+  try {
+    const webhooks = await apiCall("/api/webhooks");
+    const tbody = document.getElementById("webhooksTableBody");
+    if (!tbody) return;
+
+    if (webhooks.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-brands fa-discord" style="margin-right:6px;"></i>No Discord webhooks configured yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = webhooks.map(w => `
+      <tr>
+        <td><span class="badge badge-gold">${escapeHtml(w.event_type)}</span></td>
+        <td><span class="badge badge-zinc">${escapeHtml(w.script_name || 'Global')}</span></td>
+        <td><span style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-400);">${escapeHtml(w.webhook_url.substring(0, 45))}...</span></td>
+        <td><span class="badge badge-success">Active</span></td>
+        <td>
+          <button class="btn btn-secondary btn-sm" onclick="testWebhook('${escapeHtml(w.webhook_url)}')"><i class="fa-solid fa-paper-plane"></i> Test</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteWebhook(${w.id})"><i class="fa-solid fa-trash"></i></button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (err) {}
+}
+
+function openAddWebhookModal() {
+  document.getElementById("modalAddWebhook").classList.add("active");
+}
+
+async function handleSaveWebhook(e) {
+  e.preventDefault();
+  const event_type = document.getElementById("whEvent").value;
+  const webhook_url = document.getElementById("whUrl").value.trim();
+
+  try {
+    const res = await apiCall("/api/webhooks", "POST", { event_type, webhook_url, is_enabled: 1 });
+    showToast(res.message, "success");
+    closeModal("modalAddWebhook");
+    loadDiscordWebhooks();
+  } catch (err) {}
+}
+
+async function testWebhook(webhook_url) {
+  try {
+    const res = await apiCall("/api/webhooks/test", "POST", { webhook_url });
+    showToast(res.message, "success");
+  } catch (err) {}
+}
+
+async function testWebhookFromModal() {
+  const url = document.getElementById("whUrl").value.trim();
+  if (!url) return showToast("Enter webhook URL first", "error");
+  await testWebhook(url);
+}
+
+async function deleteWebhook(id) {
+  try {
+    const res = await apiCall(`/api/webhooks/${id}`, "DELETE");
+    showToast(res.message, "success");
+    loadDiscordWebhooks();
+  } catch (err) {}
+}
+

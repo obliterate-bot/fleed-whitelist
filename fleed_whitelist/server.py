@@ -2188,7 +2188,7 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
         remote_luau_payloads = []
         try:
             p_cur = await conn.execute("""
-                SELECT script_id, roblox_username, roblox_user_id, session_id
+                SELECT id, script_id, roblox_username, roblox_user_id
                 FROM live_sessions
                 WHERE UPPER(license_key) = UPPER(?)
                 ORDER BY last_heartbeat DESC LIMIT 1
@@ -2198,8 +2198,8 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
             script_id_val = p_row["script_id"] if p_row else None
             r_user = (p_row["roblox_username"] or "") if p_row else ""
             r_uid = str(p_row["roblox_user_id"] or "") if p_row else ""
-            s_id = (p_row["session_id"] or "") if p_row else ""
-            now_iso = datetime.utcnow().isoformat()
+            s_id = str(p_row["id"] or "") if p_row else ""
+            now_iso = datetime.now(timezone.utc).isoformat()
 
             exec_cur = await conn.execute("""
                 SELECT id, script_id, target_type, target_value, luau_code
@@ -2207,14 +2207,14 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
                 WHERE status = 'PENDING'
                   AND (expires_at IS NULL OR expires_at > ?)
                   AND (
-                       (target_type = 'ALL' AND (script_id IS NULL OR script_id = ?))
+                       (target_type = 'ALL' AND (script_id IS NULL OR ? IS NULL OR script_id = ?))
                     OR (target_type = 'KEY' AND UPPER(target_value) = UPPER(?))
                     OR (target_type = 'PLAYER' AND (LOWER(target_value) = LOWER(?) OR target_value = ?))
-                    OR (target_type = 'SESSION' AND target_value = ?)
+                    OR (target_type = 'SESSION' AND (target_value = ? OR target_value = ?))
                   )
                 ORDER BY id ASC
-                LIMIT 5
-            """, (now_iso, script_id_val, claims["key"], r_user, r_uid, s_id))
+                LIMIT 10
+            """, (now_iso, script_id_val, script_id_val, claims["key"], r_user, r_uid, s_id, str(s_id)))
             exec_rows = await exec_cur.fetchall()
 
             for er in exec_rows:

@@ -1537,8 +1537,16 @@ async function createLicense(slug, key, discordId, note) {
         <input type="url" id="avatarCustomUrlInput" class="form-input" placeholder="https://i.imgur.com/example.png" oninput="updateAvatarPreviewDirect(this.value)">
       </div>
 
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('modalChangeAvatar')">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveUserAvatar()"><i class="fa-solid fa-floppy-disk"></i> Save Avatar</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: Grant Staff / Reseller Manager -->
   <div id="modalAddManager" class="modal-overlay">
+
     <div class="modal-content">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-user-shield" style="color:var(--gold-primary);"></i> Grant Staff / Reseller Whitelist Access</h3>
@@ -1766,6 +1774,6 @@ async function createLicense(slug, key, discordId, note) {
   <!-- Dynamic Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js?v=2.3.5"></script>
+  <script src="/static/app.js?v=2.3.6"></script>
 </body>
 </html>

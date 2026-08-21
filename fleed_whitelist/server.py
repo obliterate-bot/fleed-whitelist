@@ -2115,15 +2115,20 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
             })
 
 
-        # Update real-time heartbeat timestamp
+        # Throttled heartbeat write: update live_sessions only every 5 seconds to keep sub-second polling instantaneous
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
-            await conn.execute("""
-                UPDATE live_sessions 
-                SET last_heartbeat = ? 
-                WHERE UPPER(license_key) = UPPER(?) AND hwid = ?
-            """, (now_iso, claims["key"], presented))
-            await conn.commit()
+            cur_hb = await conn.execute("""
+                SELECT last_heartbeat FROM live_sessions 
+                WHERE UPPER(license_key) = UPPER(?) AND (last_heartbeat IS NULL OR last_heartbeat <= datetime('now', '-5 seconds'))
+            """, (claims["key"],))
+            if await cur_hb.fetchone():
+                await conn.execute("""
+                    UPDATE live_sessions 
+                    SET last_heartbeat = ? 
+                    WHERE UPPER(license_key) = UPPER(?)
+                """, (now_iso, claims["key"]))
+                await conn.commit()
         except Exception:
             pass
 

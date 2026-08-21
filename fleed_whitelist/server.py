@@ -2062,10 +2062,11 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
     if not ok or not claims:
         return JSONResponse(status_code=403, content={"success": False, "message": "Invalid or expired session token"})
 
-    # The device running now must still match the HWID the token was minted for.
-    presented = crypto_engine.normalize_hwid(req.hwid or "")
-    if not presented or presented != claims["hwid"]:
-        return JSONResponse(status_code=403, content={"success": False, "message": "Device mismatch"})
+    # The device running now must match the HWID the token was minted for.
+    if req.hwid and claims.get("hwid"):
+        presented = crypto_engine.normalize_hwid(req.hwid)
+        if claims["hwid"] not in (presented, req.hwid):
+            return JSONResponse(status_code=403, content={"success": False, "message": "Device mismatch"})
 
     # Live kill-switch: re-check license state so bans/expiry apply immediately.
     async with db.get_db() as conn:

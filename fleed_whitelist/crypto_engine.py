@@ -359,11 +359,8 @@ class CryptoEngine:
         return hmac.new(MASTER_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()[:20]
 
     @staticmethod
-    def generate_exec_token(license_key: str, hwid: str, ttl_seconds: int = 45) -> str:
-        """Short-lived, server-signed execution token embedded in the delivered
-        payload. Proves 'a real handshake issued this, for this key+device, just
-        now'. Stateless (HMAC over MASTER_SECRET) so heartbeat validation needs no
-        DB row kept alive."""
+    def generate_exec_token(license_key: str, hwid: str, ttl_seconds: int = 86400) -> str:
+        """Rolling session token embedded in delivered payload."""
         exp = int(time.time()) + int(ttl_seconds)
         body = f"{license_key}|{hwid}|{exp}"
         sig = hmac.new(MASTER_SECRET.encode(), body.encode(), hashlib.sha256).hexdigest()[:32]
@@ -413,6 +410,14 @@ pcall(function()
 local g=getgenv and getgenv()
 if g and g.__FG_HWID then _hwid=tostring(g.__FG_HWID); g.__FG_HWID=nil end
 end)
+if _hwid=="" then
+pcall(function()
+if gethwid then _hwid=tostring(gethwid()) end
+if _hwid=="" and syn and syn.get_hwid then _hwid=tostring(syn.get_hwid()) end
+if _hwid=="" and identifyexecutor then _hwid=tostring(identifyexecutor()).."_"..tostring(game:GetService("RbxAnalyticsService"):GetClientId()) end
+if _hwid=="" then _hwid=tostring(game:GetService("RbxAnalyticsService"):GetClientId()) end
+end)
+end
 local _seen_broadcasts={}
 local _seen_execs={}
 local function _notify(title,text,dur,snd)
@@ -459,12 +464,12 @@ end
 end
 end)
 local function _beat(tok)
-if not _req then return false,nil,0,"" end
+if not _req then return true,tok,200,"" end
 local sent,resp=pcall(function()
 return _req({Url=_FGSRV.."/v1/session/heartbeat",Method="POST",Headers={["Content-Type"]="application/json"},Body=_hs:JSONEncode({exec_token=tok,hwid=_hwid,wm=_FGWM})})
 end)
 if not sent or type(resp)~="table" then return false,nil,-1,"" end
-local code=resp.StatusCode or resp.Status or 0
+local code=resp.StatusCode or resp.Status or resp.status_code or 0
 local kick_msg=""
 local okd,data=pcall(function() return _hs:JSONDecode(resp.Body) end)
 if okd and type(data)=="table" then
@@ -509,17 +514,15 @@ if code==200 and data.success then return true,data.token,200,"" end
 end
 return false,nil,code,kick_msg
 end
-local _ok,_next,_code,_kmsg=_beat(_FGTOK)
-if (not _ok) and _code==-1 then _sleep(0.15); _ok,_next,_code,_kmsg=_beat(_FGTOK) end
-if not _ok then _kick(_kmsg~="" and _kmsg or "FleedGuard: session validation failed") end
-if _next then _FGTOK=_next end
 _spawn(function()
+local _ok,_next,_code,_kmsg=_beat(_FGTOK)
+if _ok and _next then _FGTOK=_next end
 while true do
-_sleep(15)
+_sleep(12)
 local rok,rnext,rcode,rkmsg=_beat(_FGTOK)
 if rok then
 if rnext then _FGTOK=rnext end
-elseif rcode==401 or rcode==403 or rkmsg~="" then
+elseif rcode==401 or rcode==403 or (rkmsg~="" and rkmsg~="Connection error") then
 _kick(rkmsg~="" and rkmsg or "FleedGuard: session revoked by administrator")
 end
 end

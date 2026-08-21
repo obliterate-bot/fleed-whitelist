@@ -2860,21 +2860,23 @@ let selectedFlagsScriptSlug = "";
 
 function getCategoryBadgeClass(category) {
   const cat = (category || "").toLowerCase();
-  if (cat.includes("combat") || cat.includes("target")) return "cat-combat";
-  if (cat.includes("move") || cat.includes("physics")) return "cat-movement";
-  if (cat.includes("vis") || cat.includes("esp")) return "cat-visuals";
-  if (cat.includes("auto") || cat.includes("macro")) return "cat-automation";
-  if (cat.includes("protect") || cat.includes("bypass")) return "cat-protection";
+  if (cat.includes("combat") || cat.includes("shoot") || cat.includes("aim")) return "cat-combat";
+  if (cat.includes("defense") || cat.includes("guard") || cat.includes("steal")) return "cat-defense";
+  if (cat.includes("move") || cat.includes("mobil") || cat.includes("speed")) return "cat-movement";
+  if (cat.includes("vis") || cat.includes("esp") || cat.includes("cosmetic")) return "cat-visuals";
+  if (cat.includes("auto") || cat.includes("macro") || cat.includes("farm")) return "cat-automation";
+  if (cat.includes("protect") || cat.includes("bypass") || cat.includes("anti")) return "cat-protection";
   return "cat-general";
 }
 
 function getCategoryIcon(category) {
   const cat = (category || "").toLowerCase();
-  if (cat.includes("combat") || cat.includes("target")) return "fa-crosshairs";
-  if (cat.includes("move") || cat.includes("physics")) return "fa-person-running";
-  if (cat.includes("vis") || cat.includes("esp")) return "fa-eye";
-  if (cat.includes("auto") || cat.includes("macro")) return "fa-robot";
-  if (cat.includes("protect") || cat.includes("bypass")) return "fa-shield";
+  if (cat.includes("combat") || cat.includes("shoot") || cat.includes("aim")) return "fa-crosshairs";
+  if (cat.includes("defense") || cat.includes("guard") || cat.includes("steal")) return "fa-shield-halved";
+  if (cat.includes("move") || cat.includes("mobil") || cat.includes("speed")) return "fa-person-running";
+  if (cat.includes("vis") || cat.includes("esp") || cat.includes("cosmetic")) return "fa-eye";
+  if (cat.includes("auto") || cat.includes("macro") || cat.includes("farm")) return "fa-robot";
+  if (cat.includes("protect") || cat.includes("bypass") || cat.includes("anti")) return "fa-user-shield";
   return "fa-sliders";
 }
 
@@ -2909,6 +2911,7 @@ function updateFlagsCategoryCounts() {
   const counts = {
     all: cachedFeatureFlags.length,
     combat: 0,
+    defense: 0,
     movement: 0,
     visuals: 0,
     automation: 0,
@@ -2918,11 +2921,12 @@ function updateFlagsCategoryCounts() {
 
   cachedFeatureFlags.forEach(f => {
     const cat = (f.category || "").toLowerCase();
-    if (cat.includes("combat") || cat.includes("target")) counts.combat++;
-    else if (cat.includes("move") || cat.includes("physics")) counts.movement++;
-    else if (cat.includes("vis") || cat.includes("esp")) counts.visuals++;
-    else if (cat.includes("auto") || cat.includes("macro")) counts.automation++;
-    else if (cat.includes("protect") || cat.includes("bypass")) counts.protection++;
+    if (cat.includes("combat") || cat.includes("shoot") || cat.includes("aim")) counts.combat++;
+    else if (cat.includes("defense") || cat.includes("guard") || cat.includes("steal")) counts.defense++;
+    else if (cat.includes("move") || cat.includes("mobil") || cat.includes("speed")) counts.movement++;
+    else if (cat.includes("vis") || cat.includes("esp") || cat.includes("cosmetic")) counts.visuals++;
+    else if (cat.includes("auto") || cat.includes("macro") || cat.includes("farm")) counts.automation++;
+    else if (cat.includes("protect") || cat.includes("bypass") || cat.includes("anti")) counts.protection++;
     else counts.utilities++;
   });
 
@@ -2933,6 +2937,7 @@ function updateFlagsCategoryCounts() {
 
   setCnt("countFlagsAll", counts.all);
   setCnt("countFlagsCombat", counts.combat);
+  setCnt("countFlagsDefense", counts.defense);
   setCnt("countFlagsMovement", counts.movement);
   setCnt("countFlagsVisuals", counts.visuals);
   setCnt("countFlagsAutomation", counts.automation);

@@ -1037,9 +1037,10 @@ async function createLicense(slug, key, discordId, note) {
           <!-- Category Filter Pills -->
           <div class="filter-pills-bar" id="flagsCategoryFilters">
             <button class="filter-pill-btn active" onclick="filterFlagsByCategory('all', this)">All Features (<span id="countFlagsAll">0</span>)</button>
-            <button class="filter-pill-btn" onclick="filterFlagsByCategory('Combat & Targeting', this)">Combat (<span id="countFlagsCombat">0</span>)</button>
-            <button class="filter-pill-btn" onclick="filterFlagsByCategory('Movement & Physics', this)">Movement (<span id="countFlagsMovement">0</span>)</button>
-            <button class="filter-pill-btn" onclick="filterFlagsByCategory('Visuals & ESP', this)">Visuals (<span id="countFlagsVisuals">0</span>)</button>
+            <button class="filter-pill-btn" onclick="filterFlagsByCategory('Combat & Shooting', this)">Combat (<span id="countFlagsCombat">0</span>)</button>
+            <button class="filter-pill-btn" onclick="filterFlagsByCategory('Defense & Guarding', this)">Defense (<span id="countFlagsDefense">0</span>)</button>
+            <button class="filter-pill-btn" onclick="filterFlagsByCategory('Movement & Mobility', this)">Movement (<span id="countFlagsMovement">0</span>)</button>
+            <button class="filter-pill-btn" onclick="filterFlagsByCategory('Visuals & Cosmetics', this)">Visuals (<span id="countFlagsVisuals">0</span>)</button>
             <button class="filter-pill-btn" onclick="filterFlagsByCategory('Automation & Macro', this)">Automation (<span id="countFlagsAutomation">0</span>)</button>
             <button class="filter-pill-btn" onclick="filterFlagsByCategory('Protection & Bypass', this)">Protection (<span id="countFlagsProtection">0</span>)</button>
             <button class="filter-pill-btn" onclick="filterFlagsByCategory('General Utilities', this)">Utilities (<span id="countFlagsUtilities">0</span>)</button>
@@ -1899,6 +1900,6 @@ game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = customSpeed
   <!-- Dynamic Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js?v=2.4.0"></script>
+  <script src="/static/app.js?v=2.4.2"></script>
 </body>
 </html>

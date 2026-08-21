@@ -3542,6 +3542,87 @@ pcall(function()
     print("==================================================")
 end)`,
 
+  fade: `-- [[ Smooth Cinematic Fade In / Fade Out Notification ]]
+pcall(function()
+    local TweenService = game:GetService("TweenService")
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local CoreGui = game:GetService("CoreGui")
+
+    local existing = CoreGui:FindFirstChild("FleedFadeOverlay") or (LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("FleedFadeOverlay"))
+    if existing then existing:Destroy() end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "FleedFadeOverlay"
+    screenGui.ResetOnSpawn = false
+    screenGui.IgnoreGuiInset = true
+    
+    local parentOk = pcall(function() screenGui.Parent = CoreGui end)
+    if not parentOk or not screenGui.Parent then
+        screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    end
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 380, 0, 90)
+    frame.Position = UDim2.new(0.5, -190, 0.15, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
+    frame.BackgroundTransparency = 1
+    frame.BorderSizePixel = 0
+    frame.Parent = screenGui
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 12)
+    corner.Parent = frame
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(250, 204, 21)
+    stroke.Thickness = 1.5
+    stroke.Transparency = 1
+    stroke.Parent = frame
+
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 35)
+    title.Position = UDim2.new(0, 0, 0, 10)
+    title.BackgroundTransparency = 1
+    title.Text = "⚡ FLEEDGUARD LIVE SYNC"
+    title.TextColor3 = Color3.fromRGB(250, 204, 21)
+    title.TextSize = 15
+    title.Font = Enum.Font.GothamBold
+    title.TextTransparency = 1
+    title.Parent = frame
+
+    local subtitle = Instance.new("TextLabel")
+    subtitle.Size = UDim2.new(1, 0, 0, 30)
+    subtitle.Position = UDim2.new(0, 0, 0, 45)
+    subtitle.BackgroundTransparency = 1
+    subtitle.Text = "Fade In / Fade Out Animation Executed!"
+    subtitle.TextColor3 = Color3.fromRGB(220, 225, 235)
+    subtitle.TextSize = 13
+    subtitle.Font = Enum.Font.Gotham
+    subtitle.TextTransparency = 1
+    subtitle.Parent = frame
+
+    local tweenInfo = TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+    -- Fade In
+    TweenService:Create(frame, tweenInfo, { BackgroundTransparency = 0.15 }):Play()
+    TweenService:Create(stroke, tweenInfo, { Transparency = 0.2 }):Play()
+    TweenService:Create(title, tweenInfo, { TextTransparency = 0 }):Play()
+    TweenService:Create(subtitle, tweenInfo, { TextTransparency = 0 }):Play()
+
+    task.wait(2.5)
+
+    -- Fade Out
+    local fadeOut = TweenService:Create(frame, tweenInfo, { BackgroundTransparency = 1 })
+    TweenService:Create(stroke, tweenInfo, { Transparency = 1 }):Play()
+    TweenService:Create(title, tweenInfo, { TextTransparency = 1 }):Play()
+    TweenService:Create(subtitle, tweenInfo, { TextTransparency = 1 }):Play()
+    fadeOut:Play()
+    fadeOut.Completed:Wait()
+
+    screenGui:Destroy()
+end)`,
+
   clear: ""
 };
 

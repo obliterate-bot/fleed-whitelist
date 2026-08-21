@@ -1470,34 +1470,178 @@ tr.row-selected td {
   animation: radar-pulse 2s infinite;
 }
 
-/* Code Editor & Remote Luau Console Styles */
-.code-editor-container {
-  position: relative;
-  background: #09090d;
-  border: 1px solid var(--border-gold-subtle);
-  border-radius: 8px;
+/* ======================================================== */
+/* LUXURY ROBLOX EXECUTOR STUDIO WINDOW UI                  */
+/* ======================================================== */
+
+.executor-window {
+  display: flex;
+  flex-direction: column;
+  background: #08090e;
+  border: 1px solid rgba(250, 204, 21, 0.28);
+  border-radius: 10px;
   overflow: hidden;
-  box-shadow: inset 0 2px 8px rgba(0,0,0,0.6);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.7), 0 0 20px rgba(250, 204, 21, 0.06);
+  margin-top: 4px;
 }
 
-.code-editor-textarea {
-  width: 100%;
-  height: 100%;
-  min-height: 180px;
+.executor-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #0c0e16;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  user-select: none;
+}
+
+.executor-window-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.executor-window-dots .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.executor-window-dots .dot-red { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.5); }
+.executor-window-dots .dot-yellow { background: #eab308; box-shadow: 0 0 6px rgba(234, 179, 8, 0.5); }
+.executor-window-dots .dot-green { background: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, 0.5); }
+
+.executor-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+  flex: 1;
+}
+
+.executor-tab {
+  background: #141724;
+  color: #e2e8f0;
+  padding: 4px 12px;
+  border-radius: 6px 6px 0 0;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-top: 2px solid var(--gold-primary);
+  border-left: 1px solid rgba(255,255,255,0.06);
+  border-right: 1px solid rgba(255,255,255,0.06);
+}
+
+.executor-tab-add {
+  background: transparent;
+  border: none;
+  color: var(--text-zinc-500);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0 6px;
+  transition: color 0.15s;
+}
+
+.executor-tab-add:hover {
+  color: var(--gold-primary);
+}
+
+.executor-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.exec-tool-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+
+.exec-tool-btn:hover {
+  background: rgba(250, 204, 21, 0.15);
+  color: #facc15;
+  border-color: rgba(250, 204, 21, 0.35);
+  box-shadow: 0 0 8px rgba(250, 204, 21, 0.2);
+}
+
+.executor-editor-body {
+  display: flex;
+  position: relative;
+  background: #050609;
+  height: 340px;
+  overflow: hidden;
+}
+
+.executor-line-numbers {
+  width: 44px;
+  background: #090a10;
+  color: #475569;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  font-size: 12px;
+  line-height: 20px;
+  padding: 12px 6px 12px 0;
+  text-align: right;
+  user-select: none;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  white-space: pre;
+}
+
+.executor-code-area {
+  flex: 1;
   background: transparent;
   color: #a5f3fc;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+  font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 20px;
   padding: 12px 14px;
   border: none;
   outline: none;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
+  overflow-x: auto;
   tab-size: 4;
+  white-space: pre;
+  caret-color: var(--gold-primary);
 }
 
-.code-editor-textarea:focus {
-  background: rgba(250, 204, 21, 0.015);
+.executor-code-area::selection {
+  background: rgba(250, 204, 21, 0.25);
+  color: #ffffff;
+}
+
+.executor-statusbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #0c0e16;
+  padding: 4px 12px;
+  font-size: 10.5px;
+  color: #64748b;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  user-select: none;
+}
+
+.executor-statusbar .status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
 
 .mono-tag {

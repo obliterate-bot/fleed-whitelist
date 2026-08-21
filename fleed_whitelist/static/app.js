@@ -3547,16 +3547,83 @@ end)`,
 
 let cachedLivePlayers = [];
 
+function updateLineNumbers(textarea, lineNumbersId) {
+  const lineNumbers = document.getElementById(lineNumbersId);
+  if (!lineNumbers || !textarea) return;
+  const lines = (textarea.value || "").split("\n").length;
+  lineNumbers.innerHTML = Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join("<br>");
+  
+  const lineCountEl = document.getElementById("execLineCount");
+  if (lineCountEl) lineCountEl.innerText = `${lines} Line${lines === 1 ? '' : 's'}`;
+  
+  updateCursorPosition(textarea);
+}
+
+function syncScroll(textarea, lineNumbersId) {
+  const lineNumbers = document.getElementById(lineNumbersId);
+  if (lineNumbers && textarea) {
+    lineNumbers.scrollTop = textarea.scrollTop;
+  }
+}
+
+function updateCursorPosition(textarea) {
+  const posEl = document.getElementById("execCursorPos");
+  if (!posEl || !textarea) return;
+  const pos = textarea.selectionStart || 0;
+  const val = textarea.value.substring(0, pos);
+  const line = val.split("\n").length;
+  const col = pos - val.lastIndexOf("\n");
+  posEl.innerText = `Ln ${line}, Col ${col}`;
+}
+
+function copyEditorCode() {
+  const editor = document.getElementById("remoteExecCode");
+  if (!editor || !editor.value) return showToast("Editor is empty", "info");
+  copyText(editor.value, "Luau source copied to clipboard!");
+}
+
+function saveLuauPayloadFile() {
+  const editor = document.getElementById("remoteExecCode");
+  const code = editor?.value || "";
+  if (!code.trim()) return showToast("Editor is empty", "info");
+
+  const blob = new Blob([code], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "payload.luau";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  showToast("Saved payload.luau to downloads", "success");
+}
+
+function handleOpenScriptFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const editor = document.getElementById("remoteExecCode");
+    if (editor) {
+      editor.value = event.target.result;
+      updateLineNumbers(editor, "execLineNumbers");
+      showToast(`Loaded ${file.name} into executor!`, "success");
+    }
+  };
+  reader.readAsText(file);
+}
+
 function insertLuauPreset(presetKey) {
   const editor = document.getElementById("remoteExecCode");
   if (!editor) return;
   if (presetKey === "clear") {
     editor.value = "";
+    updateLineNumbers(editor, "execLineNumbers");
     return;
   }
   const snippet = LUAU_PRESETS[presetKey];
   if (snippet) {
     editor.value = snippet;
+    updateLineNumbers(editor, "execLineNumbers");
     showToast(`Loaded ${presetKey.toUpperCase()} preset template`, "info");
   }
 }
@@ -3564,9 +3631,15 @@ function insertLuauPreset(presetKey) {
 function insertModalLuauPreset(presetKey) {
   const editor = document.getElementById("modalExecCode");
   if (!editor) return;
+  if (presetKey === "clear") {
+    editor.value = "";
+    updateLineNumbers(editor, "modalExecLineNumbers");
+    return;
+  }
   const snippet = LUAU_PRESETS[presetKey];
   if (snippet) {
     editor.value = snippet;
+    updateLineNumbers(editor, "modalExecLineNumbers");
     showToast(`Loaded ${presetKey.toUpperCase()} preset template`, "info");
   }
 }
@@ -3801,6 +3874,8 @@ function openRemoteExecModal(targetKey = "", targetPlayer = "") {
   }
 
   handleModalExecTargetTypeChange(targetTypeSelect?.value || "ALL");
+  const modalEditor = document.getElementById("modalExecCode");
+  if (modalEditor) updateLineNumbers(modalEditor, "modalExecLineNumbers");
   modal.classList.add("active");
 }
 
@@ -3838,7 +3913,10 @@ function reRunRemoteExec(encodedCode, targetType, targetValue, scriptSlug) {
   const targetValInput = document.getElementById("remoteExecTargetValue");
   const scriptSelect = document.getElementById("remoteExecScriptSlug");
 
-  if (editor) editor.value = code;
+  if (editor) {
+    editor.value = code;
+    updateLineNumbers(editor, "execLineNumbers");
+  }
   if (targetTypeSelect) {
     targetTypeSelect.value = targetType;
     handleRemoteExecTargetTypeChange(targetType);

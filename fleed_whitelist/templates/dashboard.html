@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Enterprise Security Console — FleedGuard</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-  <link rel="stylesheet" href="/static/style.css?v=2.4.0">
+  <link rel="stylesheet" href="/static/style.css?v=2.5.5">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23FACC15'><path d='M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z'/></svg>">
 </head>
 <body>
@@ -1209,19 +1209,70 @@ game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = customSpeed
               </div>
             </div>
 
-            <!-- Luau Code Editor -->
+            <!-- Roblox Executor Studio Window -->
             <div class="form-group" style="flex:1; display:flex; flex-direction:column; margin:0;">
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                <label class="form-label" style="margin:0;">Luau Bytecode / Source Payload</label>
-                <span style="font-size:11px; color:var(--text-zinc-500); font-family:monospace;">Executed in protected task.spawn thread</span>
+                <label class="form-label" style="margin:0; display:flex; align-items:center; gap:6px;">
+                  <i class="fa-solid fa-code" style="color:var(--gold-primary);"></i> Luau Source Payload
+                </label>
+                <span style="font-size:11px; color:var(--text-zinc-500); font-family:monospace;"><i class="fa-solid fa-shield-halved"></i> Protected task.spawn execution</span>
               </div>
-              <div class="code-editor-container" style="flex:1; min-height:190px;">
-                <textarea id="remoteExecCode" class="code-editor-textarea" placeholder="-- Enter Luau code to run inside client...&#10;print('FleedGuard Remote Exec triggered!')&#10;game:GetService('StarterGui'):SetCore('SendNotification', {&#10;    Title = 'Developer Console',&#10;    Text = 'Live update received from dashboard!',&#10;    Duration = 6&#10;})" required></textarea>
+
+              <div class="executor-window">
+                <!-- Topbar -->
+                <div class="executor-topbar">
+                  <div class="executor-window-dots">
+                    <span class="dot dot-red"></span>
+                    <span class="dot dot-yellow"></span>
+                    <span class="dot dot-green"></span>
+                  </div>
+                  <div class="executor-tabs">
+                    <div class="executor-tab">
+                      <i class="fa-solid fa-file-code" style="color:var(--gold-primary);"></i>
+                      <span>main.luau</span>
+                    </div>
+                  </div>
+                  <div class="executor-topbar-actions">
+                    <button type="button" class="exec-tool-btn" onclick="document.getElementById('execFileInput').click()" title="Open .lua script file">
+                      <i class="fa-solid fa-folder-open"></i> Open
+                    </button>
+                    <input type="file" id="execFileInput" style="display:none;" accept=".lua,.luau,.txt" onchange="handleOpenScriptFile(event)">
+                    <button type="button" class="exec-tool-btn" onclick="saveLuauPayloadFile()" title="Save script to disk">
+                      <i class="fa-solid fa-floppy-disk"></i> Save
+                    </button>
+                    <button type="button" class="exec-tool-btn" onclick="copyEditorCode()" title="Copy code to clipboard">
+                      <i class="fa-solid fa-copy"></i> Copy
+                    </button>
+                    <button type="button" class="exec-tool-btn" onclick="insertLuauPreset('clear')" title="Clear editor">
+                      <i class="fa-solid fa-trash-can"></i> Clear
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Editor Body with Line Numbers -->
+                <div class="executor-editor-body">
+                  <div class="executor-line-numbers" id="execLineNumbers">1</div>
+                  <textarea id="remoteExecCode" class="executor-code-area" spellcheck="false" placeholder="-- Enter Luau code to dispatch to connected clients...&#10;print('FleedGuard Remote Exec triggered!')" oninput="updateLineNumbers(this, 'execLineNumbers')" onscroll="syncScroll(this, 'execLineNumbers')" onkeyup="updateCursorPosition(this)" onclick="updateCursorPosition(this)" required></textarea>
+                </div>
+
+                <!-- Status Bar -->
+                <div class="executor-statusbar">
+                  <div style="display:flex; align-items:center; gap:12px;">
+                    <span class="status-item"><span class="live-pulse" style="width:6px; height:6px;"></span> Armed & Ready</span>
+                    <span class="status-item" id="execCursorPos">Ln 1, Col 1</span>
+                    <span class="status-item" id="execLineCount">1 Line</span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:12px;">
+                    <span class="status-item"><i class="fa-solid fa-shield-halved" style="color:var(--success-light);"></i> Protected Pcall Sandbox</span>
+                    <span class="status-item">Luau Engine</span>
+                    <span class="status-item">UTF-8</span>
+                  </div>
+                </div>
               </div>
             </div>
 
             <!-- Execution Note & Dispatch Button -->
-            <div style="display:flex; gap:10px; align-items:center;">
+            <div style="display:flex; gap:10px; align-items:center; margin-top:4px;">
               <input type="text" id="remoteExecDescription" class="form-input" placeholder="Task description (e.g. Patch aim calculation)" style="flex:1;">
               <button type="submit" id="btnDispatchRemoteExec" class="btn btn-primary" style="padding:10px 24px; font-weight:700; white-space:nowrap;">
                 <i class="fa-solid fa-bolt"></i> Dispatch to Client
@@ -2068,9 +2119,30 @@ game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = customSpeed
           </div>
         </div>
 
-        <div class="form-group">
+        <div class="form-group" style="margin-bottom:12px;">
           <label class="form-label">Luau Payload</label>
-          <textarea id="modalExecCode" class="code-editor-textarea" style="min-height:140px;" placeholder="-- Enter Luau code to run in client..." required></textarea>
+          <div class="executor-window" style="box-shadow:none;">
+            <div class="executor-topbar" style="padding:4px 10px;">
+              <div class="executor-window-dots">
+                <span class="dot dot-red" style="width:8px; height:8px;"></span>
+                <span class="dot dot-yellow" style="width:8px; height:8px;"></span>
+                <span class="dot dot-green" style="width:8px; height:8px;"></span>
+              </div>
+              <div class="executor-tabs">
+                <div class="executor-tab" style="padding:2px 8px; font-size:10px;">
+                  <i class="fa-solid fa-file-code" style="color:var(--gold-primary);"></i>
+                  <span>quick_exec.luau</span>
+                </div>
+              </div>
+              <div class="executor-topbar-actions">
+                <button type="button" class="exec-tool-btn" style="padding:2px 6px; font-size:10px;" onclick="insertModalLuauPreset('clear')" title="Clear"><i class="fa-solid fa-trash-can"></i> Clear</button>
+              </div>
+            </div>
+            <div class="executor-editor-body" style="height:180px;">
+              <div class="executor-line-numbers" id="modalExecLineNumbers" style="width:36px; padding-top:8px;">1</div>
+              <textarea id="modalExecCode" class="executor-code-area" style="padding:8px 10px;" spellcheck="false" placeholder="-- Enter Luau code to run in client..." oninput="updateLineNumbers(this, 'modalExecLineNumbers')" onscroll="syncScroll(this, 'modalExecLineNumbers')" required></textarea>
+            </div>
+          </div>
         </div>
 
         <div class="form-group">
@@ -2119,6 +2191,6 @@ game.Players.LocalPlayer.Character.Humanoid.WalkSpeed = customSpeed
   <!-- Dynamic Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js?v=2.5.0"></script>
+  <script src="/static/app.js?v=2.5.5"></script>
 </body>
 </html>

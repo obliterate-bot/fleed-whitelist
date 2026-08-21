@@ -1,2 +1,5 @@
+[phases.setup]
+nixPkgs = ["python311", "ffmpeg", "libsodium", "lua51Packages.lua", "luajit"]
+
 [start]
 cmd = "/bin/bash start.sh"

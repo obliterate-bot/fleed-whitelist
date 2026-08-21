@@ -829,7 +829,7 @@ async def preview_obfuscated_script(script_id: int, user: Dict = Depends(get_cur
         full_code = guard + "\n" + raw_code
 
         mode = row["is_obfuscated_mode"]
-        if mode == 2 or str(row["slug"]).lower() in ("ge", "goldeneagle"):
+        if mode == 2:
             obfuscated = crypto_engine.obfuscate_with_prometheus(full_code, preset="Medium", fail_closed=False)
             mode_name = "Prometheus Obfuscator"
         elif mode == 1:
@@ -2031,7 +2031,7 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         # source protection we can guarantee is that the delivered payload is
         # virtualized bytecode, never readable source. If that guarantee cannot be
         # met, refuse to deliver.
-        if row["is_obfuscated_mode"] == 2 or str(row["script_slug"]).lower() in ("ge", "goldeneagle"):
+        if row["is_obfuscated_mode"] == 2:
             try:
                 raw_code = crypto_engine.obfuscate_with_prometheus(raw_code, preset="Medium", fail_closed=True)
             except Exception as _obf_err:

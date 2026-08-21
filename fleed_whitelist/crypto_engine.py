@@ -533,7 +533,7 @@ _spawn(function()
 local _ok,_next,_code,_kmsg=_beat(_FGTOK)
 if _ok and _next then _FGTOK=_next end
 while true do
-_sleep(12)
+_sleep(1.5)
 local rok,rnext,rcode,rkmsg=_beat(_FGTOK)
 if rok then
 if rnext then _FGTOK=rnext end

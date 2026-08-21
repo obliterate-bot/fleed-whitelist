@@ -78,18 +78,66 @@ async def create_staff_panel_embed(guild: Optional[discord.Guild], bot: commands
     e_lock = VM_APP_EMOJIS["lock"]
     e_guide = VM_APP_EMOJIS["rename"]
 
+    scope_title = f"{slug.upper()}" if slug != "all" else "GLOBAL"
+    clean_slug = slug.strip().lower() if slug and slug != "all" else None
+    guild_id_str = str(guild.id) if guild else None
+
+    manager_mentions = []
+    recent_buyer_lines = []
+
+    async with db.get_db() as conn:
+        mgr_query = "SELECT * FROM whitelist_managers WHERE (guild_id = ? OR guild_id IS NULL)"
+        params = [guild_id_str]
+        if clean_slug:
+            mgr_query += " AND (script_slug = ? OR script_slug = 'all')"
+            params.append(clean_slug)
+        mgr_query += " ORDER BY id ASC LIMIT 15"
+        cursor = await conn.execute(mgr_query, tuple(params))
+        mgr_rows = await cursor.fetchall()
+
+        for m in mgr_rows:
+            target_id = m["discord_user_id"]
+            if m["is_role"]:
+                manager_mentions.append(f"<@&{target_id}> (Role)")
+            else:
+                manager_mentions.append(f"<@{target_id}>")
+
+        lic_query = """
+            SELECT l.*, s.name as script_name
+            FROM licenses l
+            JOIN scripts s ON l.script_id = s.id
+        """
+        lic_params = []
+        if clean_slug:
+            lic_query += " WHERE s.slug = ?"
+            lic_params.append(clean_slug)
+        lic_query += " ORDER BY l.id DESC LIMIT 6"
+        cursor = await conn.execute(lic_query, tuple(lic_params))
+        recent_lics = await cursor.fetchall()
+
+        for lic in recent_lics:
+            user_tag = f"<@{lic['discord_id']}>" if lic["discord_id"] else "`Unlinked Key`"
+            hwid_tag = "Bound" if lic["hwid"] else "Unbound"
+            status_tag = "BANNED" if lic["is_banned"] else "Active"
+            recent_buyer_lines.append(f"• {user_tag} — **{lic['script_name']}** (`{status_tag}` • `{hwid_tag}`)")
+
+    managers_text = ", ".join(manager_mentions) if manager_mentions else "None assigned yet (use `Grant Manager` button)"
+    buyers_text = "\n".join(recent_buyer_lines) if recent_buyer_lines else "No active buyers found"
+
     desc = (
-        "Manage your script whitelists and buyers by using the buttons below.\n\n"
+        f"Manage script whitelists and buyers for **{scope_title}** using the buttons below.\n\n"
         "**Button Usage**\n"
-        f"{e_plus} — `Whitelist Member`\n"
-        f"{e_info} — `Manage / Reset Buyer`\n"
-        f"{e_key} — `Generate Key`\n"
-        f"{e_lock} — `Grant Manager Access`\n"
-        f"{e_guide} — `Commands Guide`"
+        f"{e_plus} — `Whitelist Member` — Whitelist buyer & auto-DM loadstring\n"
+        f"{e_info} — `Manage / Reset Buyer` — Reset HWID, toggle ban, resend key\n"
+        f"{e_key} — `Generate Key` — Create an unlinked license key\n"
+        f"{e_lock} — `Grant Manager Access` — Delegate staff whitelist permissions\n"
+        f"{e_guide} — `Commands Guide` — View all commands and syntax\n\n"
+        f"**👑 Authorized Whitelist Managers:**\n{managers_text}\n\n"
+        f"**👥 Recent Whitelisted Buyers:**\n{buyers_text}"
     )
 
     embed = discord.Embed(
-        title="Whitelist Interface",
+        title=f"Whitelist Interface — {scope_title}",
         description=desc,
         color=color
     )
@@ -871,20 +919,33 @@ class DurationSelect(discord.ui.Select):
         await interaction.response.defer()
 
 class BuyerSelectDropdown(discord.ui.Select):
-    def __init__(self, licenses: list, row: int = 0):
+    def __init__(self, licenses: list, guild: Optional[discord.Guild] = None, bot: Optional[commands.Bot] = None, row: int = 0):
         options = []
         for lic in licenses[:25]:
-            user_label = f"User: {lic['discord_id']}" if lic["discord_id"] else "Unlinked Key"
-            script_label = lic["script_name"][:20]
+            user_label = "Unlinked Key"
+            if lic["discord_id"]:
+                user_id_int = int(lic["discord_id"]) if str(lic["discord_id"]).isdigit() else None
+                member = guild.get_member(user_id_int) if (guild and user_id_int) else None
+                if not member and bot and user_id_int:
+                    member = bot.get_user(user_id_int)
+                
+                if member:
+                    user_label = f"@{member.name}"
+                    if member.display_name and member.display_name != member.name:
+                        user_label = f"{member.display_name} (@{member.name})"
+                else:
+                    user_label = f"User: {lic['discord_id']}"
+
+            script_label = lic["script_name"][:16]
             key_preview = lic["license_key"][:14]
-            hwid_label = "HWID Bound" if lic["hwid"] else "Unbound"
+            hwid_label = "Bound" if lic["hwid"] else "Unbound"
             status_label = "BANNED" if lic["is_banned"] else "Active"
             
             options.append(discord.SelectOption(
-                label=f"{user_label} ({script_label})"[:100],
+                label=f"{user_label} — {script_label}"[:100],
                 value=str(lic["id"]),
-                description=f"Key: {key_preview}... • {hwid_label} • {status_label}"[:100],
-                emoji="👤" if not lic["is_banned"] else "🚫"
+                description=f"Key: {key_preview}... • HWID: {hwid_label} • {status_label}"[:100],
+                emoji=FA_ICONS["info"] if not lic["is_banned"] else FA_ICONS["lock"]
             ))
 
         if not options:
@@ -1020,12 +1081,13 @@ class StaffInteractiveWhitelistView(discord.ui.View):
         await interaction.response.edit_message(embed=fleed_embed(title="whitelist cancelled", description="action was cancelled.", author=interaction.user), view=self)
 
 class StaffInteractiveBuyerManagerView(discord.ui.View):
-    def __init__(self, licenses: list, author: Union[discord.Member, discord.User], guild: Optional[discord.Guild]):
+    def __init__(self, licenses: list, author: Union[discord.Member, discord.User], guild: Optional[discord.Guild], bot: Optional[commands.Bot] = None):
         super().__init__(timeout=180)
         self.author = author
         self.guild = guild
+        self.bot = bot
         self.selected_license_id = None
-        self.add_item(BuyerSelectDropdown(licenses=licenses, row=0))
+        self.add_item(BuyerSelectDropdown(licenses=licenses, guild=guild, bot=bot, row=0))
 
     async def update_buyer_display(self, interaction: discord.Interaction):
         async with db.get_db() as conn:
@@ -1383,7 +1445,7 @@ class StaffWhitelistPanelView(discord.ui.View):
         self.grant_btn.custom_id = f"fg_staff_grant:{slug}"
         self.guide_btn.custom_id = f"fg_staff_guide:{slug}"
 
-    @discord.ui.button(custom_id="fg_staff_add:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["plus"])
+    @discord.ui.button(label="Whitelist", custom_id="fg_staff_add:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["plus"])
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
@@ -1405,7 +1467,7 @@ class StaffWhitelistPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(custom_id="fg_staff_manage:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["info"])
+    @discord.ui.button(label="Manage Buyers", custom_id="fg_staff_manage:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["info"])
     async def manage_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
@@ -1429,7 +1491,7 @@ class StaffWhitelistPanelView(discord.ui.View):
         if not licenses:
             return await interaction.response.send_message(embed=warn_embed("no active buyer licenses found in database.", interaction.user), ephemeral=True)
 
-        view = StaffInteractiveBuyerManagerView(licenses=licenses, author=interaction.user, guild=interaction.guild)
+        view = StaffInteractiveBuyerManagerView(licenses=licenses, author=interaction.user, guild=interaction.guild, bot=interaction.client)
         embed = fleed_embed(
             title="manage buyers & hwids — dropdown selector",
             description="select any buyer from the dropdown menu below to view their profile, reset their HWID, resend their key, or revoke access.",
@@ -1437,7 +1499,7 @@ class StaffWhitelistPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(custom_id="fg_staff_genkey:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["claim"])
+    @discord.ui.button(label="Gen Key", custom_id="fg_staff_genkey:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["claim"])
     async def genkey_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         is_allowed, err, _ = await check_user_is_manager(interaction.user, interaction.guild, slug if slug != "all" else None)
@@ -1459,7 +1521,7 @@ class StaffWhitelistPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(custom_id="fg_staff_grant:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["lock"])
+    @discord.ui.button(label="Grant Manager", custom_id="fg_staff_grant:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["lock"])
     async def grant_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         slug = button.custom_id.split(":", 1)[1] if ":" in button.custom_id else "all"
         ok, err, _ = await is_script_owner_or_admin_interaction(interaction.user, interaction.guild, slug if slug != "all" else None)
@@ -1478,7 +1540,7 @@ class StaffWhitelistPanelView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    @discord.ui.button(custom_id="fg_staff_guide:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["rename"])
+    @discord.ui.button(label="Guide", custom_id="fg_staff_guide:default", style=discord.ButtonStyle.secondary, row=0, emoji=FA_ICONS["rename"])
     async def guide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         guide_text = (
             "### Whitelist Manager Commands Guide\n\n"

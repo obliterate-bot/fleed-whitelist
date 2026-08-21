@@ -437,6 +437,26 @@ pcall(function() game:GetService("Debris"):AddItem(s,5) end)
 end
 end)
 end
+pcall(function()
+local g=getgenv and getgenv()
+if g then
+if not g.GetFlag then
+g.GetFlag=function(name,def)
+if g.__FLEED_FLAGS and g.__FLEED_FLAGS[name]~=nil then return g.__FLEED_FLAGS[name] end
+return def
+end
+end
+if not g.IsFlagEnabled then
+g.IsFlagEnabled=function(name)
+if g.__FLEED_FLAGS and g.__FLEED_FLAGS[name]~=nil then
+local v=g.__FLEED_FLAGS[name]
+return v==true or v==1 or v=="true"
+end
+return true
+end
+end
+end
+end)
 local function _beat(tok)
 if not _req then return false,nil,0,"" end
 local sent,resp=pcall(function()
@@ -447,6 +467,15 @@ local code=resp.StatusCode or resp.Status or 0
 local kick_msg=""
 local okd,data=pcall(function() return _hs:JSONDecode(resp.Body) end)
 if okd and type(data)=="table" then
+if data.flags and type(data.flags)=="table" then
+pcall(function()
+local g=getgenv and getgenv()
+if g then
+if not g.__FLEED_FLAGS then g.__FLEED_FLAGS={} end
+for k,v in pairs(data.flags) do g.__FLEED_FLAGS[k]=v end
+end
+end)
+end
 if data.broadcast and type(data.broadcast)=="table" then
 local bid=data.broadcast.id or data.broadcast.message
 if not _seen_broadcasts[bid] then

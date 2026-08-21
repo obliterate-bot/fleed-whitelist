@@ -357,14 +357,30 @@ class WhitelistDB:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     script_id INTEGER NOT NULL,
                     flag_name TEXT NOT NULL,
+                    display_name TEXT,
+                    category TEXT DEFAULT 'General',
                     flag_type TEXT DEFAULT 'BOOLEAN', -- 'BOOLEAN', 'STRING', 'NUMBER', 'JSON'
                     flag_value TEXT NOT NULL,
                     is_enabled INTEGER DEFAULT 1,
+                    source_type TEXT DEFAULT 'Manual',
+                    line_number INTEGER DEFAULT 0,
                     updated_at TEXT NOT NULL,
                     UNIQUE(script_id, flag_name) ON CONFLICT REPLACE,
                     FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
                 )
             """)
+
+            for col, col_type in [
+                ("display_name", "TEXT"),
+                ("category", "TEXT DEFAULT 'General'"),
+                ("source_type", "TEXT DEFAULT 'Manual'"),
+                ("line_number", "INTEGER DEFAULT 0")
+            ]:
+                try:
+                    await conn.execute(f"ALTER TABLE script_feature_flags ADD COLUMN {col} {col_type};")
+                except Exception:
+                    pass
+
 
             # 13. Script Version History & 1-Click Rollback
             await conn.execute("""

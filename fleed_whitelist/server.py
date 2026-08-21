@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from .database import db
 from .crypto_engine import crypto_engine
 from .loader_generator import loader_generator
+from .feature_analyzer import feature_analyzer
 
 BASE_DIR = os.path.dirname(__file__)
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -224,9 +225,18 @@ class AnnouncementCreateRequest(BaseModel):
 
 class FeatureFlagCreateRequest(BaseModel):
     flag_name: str
+    display_name: Optional[str] = None
+    category: Optional[str] = "General Utilities"
     flag_type: Optional[str] = "BOOLEAN" # 'BOOLEAN', 'STRING', 'NUMBER', 'JSON'
     flag_value: str = "true"
     is_enabled: Optional[int] = 1
+    source_type: Optional[str] = "Manual"
+    line_number: Optional[int] = 0
+
+class FeatureFlagToggleAllRequest(BaseModel):
+    action: str = "enable" # "enable" or "disable"
+    category: Optional[str] = None
+
 
 class ScriptVersionCreateRequest(BaseModel):
     version_tag: str
@@ -1932,6 +1942,32 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
         raw_code = row["raw_source"]
 
+        # Fetch and inject real-time dynamic feature flags for this script
+        try:
+            flags_cur = await conn.execute("SELECT flag_name, flag_type, flag_value, is_enabled FROM script_feature_flags WHERE script_id = ?", (row["script_id"],))
+            flag_rows = await flags_cur.fetchall()
+            flags_lua = []
+            for f in flag_rows:
+                fname = f["flag_name"]
+                ftype = f["flag_type"]
+                fval = f["flag_value"]
+                is_en = bool(f["is_enabled"])
+                if not is_en:
+                    flags_lua.append(f'["{fname}"] = false')
+                elif ftype == "NUMBER":
+                    clean_n = fval if fval.replace(".", "", 1).isdigit() else "0"
+                    flags_lua.append(f'["{fname}"] = {clean_n}')
+                elif ftype == "BOOLEAN":
+                    flags_lua.append(f'["{fname}"] = {"true" if fval.lower() == "true" else "false"}')
+                else:
+                    escaped_s = fval.replace('"', '\\"')
+                    flags_lua.append(f'["{fname}"] = "{escaped_s}"')
+            if flags_lua:
+                flags_header = f'pcall(function() local g = getgenv and getgenv(); if g then g.__FLEED_FLAGS = {{ {", ".join(flags_lua)} }} end end);\n'
+                raw_code = flags_header + raw_code
+        except Exception:
+            pass
+
         # FUSE the whitelist re-check + watermark INTO the script body, then
         # virtualize the whole thing together (below). Because the guard lives in
         # the same obfuscated blob, it cannot be stripped without breaking the
@@ -2112,12 +2148,40 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
         except Exception:
             pass
 
+        # Check for active dynamic feature flags for this script to dispatch real-time flag changes
+        flags_dict = {}
+        try:
+            f_cur = await conn.execute("""
+                SELECT flag_name, flag_type, flag_value, is_enabled
+                FROM script_feature_flags
+                WHERE script_id = (SELECT script_id FROM live_sessions WHERE UPPER(license_key) = UPPER(?) LIMIT 1)
+            """, (claims["key"],))
+            f_rows = await f_cur.fetchall()
+            for f in f_rows:
+                fname = f["flag_name"]
+                ftype = f["flag_type"]
+                fval = f["flag_value"]
+                is_en = bool(f["is_enabled"])
+                if not is_en:
+                    flags_dict[fname] = False
+                elif ftype == "NUMBER":
+                    try:
+                        flags_dict[fname] = float(fval) if "." in fval else int(fval)
+                    except Exception:
+                        flags_dict[fname] = 0
+                elif ftype == "BOOLEAN":
+                    flags_dict[fname] = (fval.lower() == "true")
+                else:
+                    flags_dict[fname] = fval
+        except Exception:
+            pass
+
     # Roll the execution token so the fused guard's background re-check keeps
     # validating without needing a long-lived token. Short TTL + rolling means a
     # stolen token is useless within seconds while legit sessions refresh
     # seamlessly in the background (never blocking the game).
     new_token = crypto_engine.generate_exec_token(claims["key"], claims["hwid"])
-    return {"success": True, "token": new_token, "broadcast": broadcast_payload}
+    return {"success": True, "token": new_token, "broadcast": broadcast_payload, "flags": flags_dict}
 
 
 
@@ -3092,7 +3156,7 @@ async def delete_live_broadcast(broadcast_id: int, user: Dict = Depends(get_curr
 
 
 # =========================================================================
-# REMOTE DYNAMIC FEATURE FLAGS API
+# REMOTE DYNAMIC FEATURE FLAGS API (AST SCAN & REAL-TIME GLOBAL TOGGLES)
 # =========================================================================
 
 @app.get("/api/scripts/{slug}/flags")
@@ -3103,9 +3167,137 @@ async def get_script_feature_flags(slug: str, user: Dict = Depends(get_current_u
         if not script:
             raise HTTPException(status_code=404, detail="Script not found")
 
-        cur2 = await conn.execute("SELECT * FROM script_feature_flags WHERE script_id = ? ORDER BY flag_name ASC", (script["id"],))
+        cur2 = await conn.execute("""
+            SELECT id, script_id, flag_name, display_name, category, flag_type, flag_value, is_enabled, source_type, line_number, updated_at
+            FROM script_feature_flags 
+            WHERE script_id = ? 
+            ORDER BY category ASC, flag_name ASC
+        """, (script["id"],))
         rows = await cur2.fetchall()
     return [dict(r) for r in rows]
+
+@app.post("/api/scripts/{slug}/flags/auto-scan")
+async def auto_scan_script_feature_flags(slug: str, user: Dict = Depends(get_current_user)):
+    """
+    Analyzes the Lua / Luau source code of the script using AST / pattern scanner,
+    detects all toggleable features, UI components, routines, and configuration variables,
+    and synchronizes them into the remote feature flags database.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id, raw_source FROM scripts WHERE slug = ? AND user_id = ?", (slug.lower(), user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        raw_source = script["raw_source"] or ""
+        discovered = feature_analyzer.scan_script(raw_source)
+
+        inserted_or_updated = 0
+        for feat in discovered:
+            await conn.execute("""
+                INSERT INTO script_feature_flags (
+                    script_id, flag_name, display_name, category, flag_type, flag_value, is_enabled, source_type, line_number, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(script_id, flag_name) DO UPDATE SET
+                    display_name = COALESCE(excluded.display_name, script_feature_flags.display_name),
+                    category = COALESCE(excluded.category, script_feature_flags.category),
+                    source_type = excluded.source_type,
+                    line_number = excluded.line_number
+            """, (
+                script["id"], 
+                feat["flag_name"], 
+                feat["display_name"], 
+                feat["category"], 
+                feat["flag_type"], 
+                feat["default_value"], 
+                feat["source_type"], 
+                feat["line_number"], 
+                now_iso
+            ))
+            inserted_or_updated += 1
+
+        await conn.commit()
+
+        # Return updated list of flags
+        cur2 = await conn.execute("""
+            SELECT id, script_id, flag_name, display_name, category, flag_type, flag_value, is_enabled, source_type, line_number, updated_at
+            FROM script_feature_flags 
+            WHERE script_id = ? 
+            ORDER BY category ASC, flag_name ASC
+        """, (script["id"],))
+        rows = await cur2.fetchall()
+
+    return {
+        "success": True, 
+        "discovered_count": len(discovered), 
+        "message": f"Successfully analyzed script! Discovered {len(discovered)} toggleable features across {len(set(f['category'] for f in discovered))} categories.",
+        "flags": [dict(r) for r in rows]
+    }
+
+@app.patch("/api/scripts/{slug}/flags/{flag_id}/toggle")
+async def toggle_single_feature_flag(slug: str, flag_id: int, user: Dict = Depends(get_current_user)):
+    """
+    Instantly toggles a feature flag ON/OFF globally with 1-click.
+    Active connected in-game Roblox players sync the updated state within seconds!
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT f.id, f.flag_name, f.display_name, f.is_enabled, s.slug
+            FROM script_feature_flags f
+            JOIN scripts s ON f.script_id = s.id
+            WHERE f.id = ? AND s.slug = ? AND s.user_id = ?
+        """, (flag_id, slug.lower(), user["id"]))
+        flag = await cursor.fetchone()
+        if not flag:
+            raise HTTPException(status_code=404, detail="Feature flag not found.")
+
+        new_status = 0 if flag["is_enabled"] else 1
+        await conn.execute("UPDATE script_feature_flags SET is_enabled = ?, updated_at = ? WHERE id = ?", (new_status, now_iso, flag_id))
+        await conn.commit()
+
+    label = flag["display_name"] or flag["flag_name"]
+    state_str = "ENABLED" if new_status == 1 else "DISABLED"
+    return {
+        "success": True,
+        "is_enabled": new_status,
+        "message": f"Feature '{label}' is now globally {state_str} for all connected players."
+    }
+
+@app.post("/api/scripts/{slug}/flags/toggle-all")
+async def toggle_all_feature_flags(slug: str, req: FeatureFlagToggleAllRequest, user: Dict = Depends(get_current_user)):
+    """
+    Globally enables or disables all feature flags in a script hub or specific category with 1-click killswitch.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    new_val = 1 if req.action.lower() == "enable" else 0
+
+    async with db.get_db() as conn:
+        cursor = await conn.execute("SELECT id FROM scripts WHERE slug = ? AND user_id = ?", (slug.lower(), user["id"]))
+        script = await cursor.fetchone()
+        if not script:
+            raise HTTPException(status_code=404, detail="Script not found")
+
+        if req.category and req.category != "all":
+            await conn.execute("""
+                UPDATE script_feature_flags 
+                SET is_enabled = ?, updated_at = ? 
+                WHERE script_id = ? AND category = ?
+            """, (new_val, now_iso, script["id"], req.category))
+        else:
+            await conn.execute("""
+                UPDATE script_feature_flags 
+                SET is_enabled = ?, updated_at = ? 
+                WHERE script_id = ?
+            """, (new_val, now_iso, script["id"]))
+
+        await conn.commit()
+
+    action_label = "enabled" if new_val == 1 else "disabled (Killswitch Active)"
+    scope = f"in category '{req.category}'" if (req.category and req.category != 'all') else "globally"
+    return {"success": True, "message": f"All feature flags {action_label} {scope}."}
 
 @app.post("/api/scripts/{slug}/flags")
 async def set_script_feature_flag(slug: str, req: FeatureFlagCreateRequest, user: Dict = Depends(get_current_user)):
@@ -3116,18 +3308,24 @@ async def set_script_feature_flag(slug: str, req: FeatureFlagCreateRequest, user
         if not script:
             raise HTTPException(status_code=404, detail="Script not found")
 
+        clean_name = feature_analyzer.clean_flag_name(req.flag_name)
+        display = req.display_name or req.flag_name
+        category = req.category or feature_analyzer.categorize_feature(display)
+
         await conn.execute("""
-            INSERT INTO script_feature_flags (script_id, flag_name, flag_type, flag_value, is_enabled, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO script_feature_flags (script_id, flag_name, display_name, category, flag_type, flag_value, is_enabled, source_type, line_number, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(script_id, flag_name) DO UPDATE SET
+                display_name = excluded.display_name,
+                category = excluded.category,
                 flag_type = excluded.flag_type,
                 flag_value = excluded.flag_value,
                 is_enabled = excluded.is_enabled,
                 updated_at = excluded.updated_at
-        """, (script["id"], req.flag_name.strip(), req.flag_type or "BOOLEAN", req.flag_value.strip(), req.is_enabled or 1, now_iso))
+        """, (script["id"], clean_name, display, category, req.flag_type or "BOOLEAN", req.flag_value.strip(), req.is_enabled if req.is_enabled is not None else 1, req.source_type or "Manual", req.line_number or 0, now_iso))
         await conn.commit()
 
-    return {"success": True, "message": f"Feature flag '{req.flag_name}' updated."}
+    return {"success": True, "message": f"Feature flag '{clean_name}' saved."}
 
 @app.delete("/api/scripts/{slug}/flags/{flag_id}")
 async def delete_script_feature_flag(slug: str, flag_id: int, user: Dict = Depends(get_current_user)):

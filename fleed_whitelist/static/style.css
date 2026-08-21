@@ -1362,7 +1362,111 @@ tr.row-selected td {
   font-weight: 700;
 }
 
-.presence-online { background: rgba(34, 197, 94, 0.15); color: var(--success-green); border: 1px solid rgba(34, 197, 94, 0.3); }
-.presence-idle { background: rgba(250, 204, 21, 0.15); color: var(--gold-primary); border: 1px solid var(--border-gold); }
+.presence-online { background: rgba(34, 197, 94, 0.15); color: var(--success-light); border: 1px solid rgba(34, 197, 94, 0.3); }
+.presence-idle { background: rgba(250, 204, 21, 0.15); color: var(--gold-primary); border: 1px solid var(--border-gold-subtle); }
 .presence-kicked { background: rgba(239, 68, 68, 0.15); color: var(--danger-light); border: 1px solid rgba(239, 68, 68, 0.3); }
+
+/* Feature Flags Interactive Toggle Switches */
+.flag-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.flag-toggle-active {
+  background: rgba(34, 197, 94, 0.16);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.35);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.15);
+}
+
+.flag-toggle-active:hover {
+  background: rgba(34, 197, 94, 0.25);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.flag-toggle-disabled {
+  background: rgba(239, 68, 68, 0.14);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.35);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.12);
+}
+
+.flag-toggle-disabled:hover {
+  background: rgba(239, 68, 68, 0.22);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+/* Category Badges */
+.category-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.cat-combat { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+.cat-movement { background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); }
+.cat-visuals { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
+.cat-automation { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+.cat-protection { background: rgba(250, 204, 21, 0.15); color: #facc15; border: 1px solid rgba(250, 204, 21, 0.3); }
+.cat-general { background: rgba(161, 161, 170, 0.15); color: #d4d4d8; border: 1px solid rgba(161, 161, 170, 0.3); }
+
+/* Filter Pills */
+.filter-pills-bar {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.filter-pill-btn {
+  padding: 5px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-zinc-400);
+  border-radius: 16px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.filter-pill-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-white);
+}
+
+.filter-pill-btn.active {
+  background: linear-gradient(135deg, var(--gold-primary), var(--gold-dark));
+  color: var(--bg-deep);
+  border-color: var(--gold-light);
+  font-weight: 700;
+}
+
+/* Radar Scan Pulse Effect */
+@keyframes radar-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0.6); }
+  70% { box-shadow: 0 0 0 10px rgba(250, 204, 21, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(250, 204, 21, 0); }
+}
+
+.btn-scan-radar {
+  animation: radar-pulse 2s infinite;
+}
+
 

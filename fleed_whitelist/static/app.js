@@ -2850,45 +2850,287 @@ async function loadTelemetryData() {
 
 
 // =========================================================================
-// REMOTE FEATURE FLAGS
+// REMOTE DYNAMIC FEATURE FLAGS & AST SCRIPT AUTO-SCANNER
 // =========================================================================
+
+let cachedFeatureFlags = [];
+let activeFlagsCategory = "all";
+let activeFlagsSearchQuery = "";
+let selectedFlagsScriptSlug = "";
+
+function getCategoryBadgeClass(category) {
+  const cat = (category || "").toLowerCase();
+  if (cat.includes("combat") || cat.includes("target")) return "cat-combat";
+  if (cat.includes("move") || cat.includes("physics")) return "cat-movement";
+  if (cat.includes("vis") || cat.includes("esp")) return "cat-visuals";
+  if (cat.includes("auto") || cat.includes("macro")) return "cat-automation";
+  if (cat.includes("protect") || cat.includes("bypass")) return "cat-protection";
+  return "cat-general";
+}
+
+function getCategoryIcon(category) {
+  const cat = (category || "").toLowerCase();
+  if (cat.includes("combat") || cat.includes("target")) return "fa-crosshairs";
+  if (cat.includes("move") || cat.includes("physics")) return "fa-person-running";
+  if (cat.includes("vis") || cat.includes("esp")) return "fa-eye";
+  if (cat.includes("auto") || cat.includes("macro")) return "fa-robot";
+  if (cat.includes("protect") || cat.includes("bypass")) return "fa-shield";
+  return "fa-sliders";
+}
 
 async function loadFeatureFlags() {
   if (currentScripts.length === 0) await loadScripts();
-  const slug = currentScripts[0]?.slug;
+  
+  const select = document.getElementById("flagsScriptSelector");
+  if (select && currentScripts.length > 0) {
+    if (!selectedFlagsScriptSlug) selectedFlagsScriptSlug = currentScripts[0].slug;
+    select.innerHTML = currentScripts.map(s => `
+      <option value="${escapeHtml(s.slug)}" ${s.slug === selectedFlagsScriptSlug ? 'selected' : ''}>
+        ${escapeHtml(s.name)} (${escapeHtml(s.slug)})
+      </option>
+    `).join("");
+  }
+
+  const slug = selectedFlagsScriptSlug || currentScripts[0]?.slug;
   if (!slug) return;
 
   try {
     const flags = await apiCall(`/api/scripts/${slug}/flags`);
+    cachedFeatureFlags = flags || [];
+    updateFlagsCategoryCounts();
+    renderFeatureFlagsTable();
+  } catch (err) {
     const tbody = document.getElementById("flagsTableBody");
-    if (!tbody) return;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-flag" style="margin-right:6px;"></i>No dynamic feature flags found. Click "Auto-Scan Script Features" to discover toggles!</td></tr>`;
+  }
+}
 
-    if (flags.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-flag" style="margin-right:6px;"></i>No dynamic feature flags set. Create your first flag above!</td></tr>`;
-      return;
+function updateFlagsCategoryCounts() {
+  const counts = {
+    all: cachedFeatureFlags.length,
+    combat: 0,
+    movement: 0,
+    visuals: 0,
+    automation: 0,
+    protection: 0,
+    utilities: 0
+  };
+
+  cachedFeatureFlags.forEach(f => {
+    const cat = (f.category || "").toLowerCase();
+    if (cat.includes("combat") || cat.includes("target")) counts.combat++;
+    else if (cat.includes("move") || cat.includes("physics")) counts.movement++;
+    else if (cat.includes("vis") || cat.includes("esp")) counts.visuals++;
+    else if (cat.includes("auto") || cat.includes("macro")) counts.automation++;
+    else if (cat.includes("protect") || cat.includes("bypass")) counts.protection++;
+    else counts.utilities++;
+  });
+
+  const setCnt = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.innerText = val;
+  };
+
+  setCnt("countFlagsAll", counts.all);
+  setCnt("countFlagsCombat", counts.combat);
+  setCnt("countFlagsMovement", counts.movement);
+  setCnt("countFlagsVisuals", counts.visuals);
+  setCnt("countFlagsAutomation", counts.automation);
+  setCnt("countFlagsProtection", counts.protection);
+  setCnt("countFlagsUtilities", counts.utilities);
+}
+
+function renderFeatureFlagsTable() {
+  const tbody = document.getElementById("flagsTableBody");
+  if (!tbody) return;
+
+  let filtered = cachedFeatureFlags;
+
+  // Filter by category
+  if (activeFlagsCategory !== "all") {
+    filtered = filtered.filter(f => (f.category || "General Utilities") === activeFlagsCategory);
+  }
+
+  // Filter by search query
+  if (activeFlagsSearchQuery.trim()) {
+    const q = activeFlagsSearchQuery.toLowerCase();
+    filtered = filtered.filter(f => 
+      (f.flag_name && f.flag_name.toLowerCase().includes(q)) ||
+      (f.display_name && f.display_name.toLowerCase().includes(q)) ||
+      (f.category && f.category.toLowerCase().includes(q)) ||
+      (f.source_type && f.source_type.toLowerCase().includes(q))
+    );
+  }
+
+  if (filtered.length === 0) {
+    if (cachedFeatureFlags.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="6" style="text-align:center; padding:40px 20px;">
+            <div style="font-size:14px; font-weight:700; color:var(--text-white); margin-bottom:6px;">
+              <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--gold-primary); margin-right:8px;"></i>No Features Discovered Yet
+            </div>
+            <p style="font-size:12px; color:var(--text-zinc-400); max-width:480px; margin:0 auto 16px auto;">
+              Click <strong>"Auto-Scan Script Features"</strong> above. FleedGuard will parse your Lua script, detect all UI toggles, config tables, and function routines automatically!
+            </p>
+            <button class="btn btn-primary btn-sm" onclick="triggerAutoScanFlags()">
+              <i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Scan Script Features Now
+            </button>
+          </td>
+        </tr>
+      `;
+    } else {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-filter" style="margin-right:6px;"></i>No features match the selected filter.</td></tr>`;
     }
+    return;
+  }
 
-    tbody.innerHTML = flags.map(f => `
+  const slug = selectedFlagsScriptSlug || currentScripts[0]?.slug;
+
+  tbody.innerHTML = filtered.map(f => {
+    const isEn = Boolean(f.is_enabled);
+    const catClass = getCategoryBadgeClass(f.category);
+    const catIcon = getCategoryIcon(f.category);
+    const displayName = f.display_name || f.flag_name;
+    const sourceLabel = f.line_number > 0 ? `${escapeHtml(f.source_type || 'Script')} (Line ${f.line_number})` : escapeHtml(f.source_type || 'Manual Override');
+
+    return `
       <tr>
-        <td><span style="font-family:var(--font-mono); font-weight:700; color:var(--gold-light);">${escapeHtml(f.flag_name)}</span></td>
-        <td><span class="badge badge-zinc">${escapeHtml(f.flag_type)}</span></td>
-        <td><span style="font-family:var(--font-mono);">${escapeHtml(f.flag_value)}</span></td>
-        <td><span class="badge ${f.is_enabled ? 'badge-success' : 'badge-danger'}">${f.is_enabled ? 'Active' : 'Disabled'}</span></td>
-        <td><span style="font-size:11px; color:var(--text-zinc-500);">${formatTimeAgo(f.updated_at)}</span></td>
         <td>
-          <button class="btn btn-danger btn-sm" onclick="deleteFeatureFlag('${slug}', ${f.id})">
+          <div style="display:flex; flex-direction:column; gap:4px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-weight:700; color:var(--text-white); font-size:13px;">${escapeHtml(displayName)}</span>
+              <span class="category-badge ${catClass}"><i class="fa-solid ${catIcon}"></i> ${escapeHtml(f.category || 'General')}</span>
+            </div>
+            <div style="font-size:11px; font-family:var(--font-mono); color:var(--gold-light); opacity:0.85;">
+              <code>getgenv().GetFlag("${escapeHtml(f.flag_name)}")</code>
+            </div>
+          </div>
+        </td>
+        <td>
+          <div style="font-size:11px; color:var(--text-zinc-300);">
+            <i class="fa-solid fa-code" style="color:var(--text-zinc-500); margin-right:4px;"></i>
+            ${sourceLabel}
+          </div>
+        </td>
+        <td><span class="badge badge-zinc" style="font-family:var(--font-mono);">${escapeHtml(f.flag_type)}</span></td>
+        <td>
+          <span style="font-family:var(--font-mono); font-size:11px; color:var(--text-bright); background:var(--bg-input); padding:3px 8px; border-radius:6px; border:1px solid var(--border-subtle);">
+            ${escapeHtml(f.flag_value)}
+          </span>
+        </td>
+        <td>
+          <button class="flag-toggle-btn ${isEn ? 'flag-toggle-active' : 'flag-toggle-disabled'}" onclick="toggleFeatureFlag('${slug}', ${f.id})" title="Click to instantly toggle feature globally">
+            <i class="fa-solid ${isEn ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
+            <span>${isEn ? 'ENABLED' : 'DISABLED'}</span>
+          </button>
+        </td>
+        <td style="text-align:right;">
+          <button class="btn btn-danger btn-sm" onclick="deleteFeatureFlag('${slug}', ${f.id})" title="Remove flag">
             <i class="fa-solid fa-trash"></i>
           </button>
         </td>
       </tr>
-    `).join("");
-  } catch (err) {}
+    `;
+  }).join("");
+}
+
+function handleFlagsScriptChange(slug) {
+  selectedFlagsScriptSlug = slug;
+  loadFeatureFlags();
+}
+
+function filterFlagsByCategory(category, btn) {
+  activeFlagsCategory = category;
+  const container = document.getElementById("flagsCategoryFilters");
+  if (container) {
+    container.querySelectorAll(".filter-pill-btn").forEach(b => b.classList.remove("active"));
+  }
+  if (btn) btn.classList.add("active");
+  renderFeatureFlagsTable();
+}
+
+function handleFlagsSearch(query) {
+  activeFlagsSearchQuery = query;
+  renderFeatureFlagsTable();
+}
+
+async function triggerAutoScanFlags() {
+  const slug = selectedFlagsScriptSlug || currentScripts[0]?.slug;
+  if (!slug) {
+    showToast("No script hub selected to scan.", "error");
+    return;
+  }
+
+  const btn = document.getElementById("btnAutoScanFlags");
+  const origHtml = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Analyzing AST...`;
+  }
+
+  try {
+    const res = await apiCall(`/api/scripts/${slug}/flags/auto-scan`, "POST");
+    showToast(res.message || `Discovered ${res.discovered_count} features!`, "success");
+    cachedFeatureFlags = res.flags || [];
+    updateFlagsCategoryCounts();
+    renderFeatureFlagsTable();
+  } catch (err) {
+    showToast("Failed to auto-scan script features: " + (err.message || err), "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  }
+}
+
+async function toggleFeatureFlag(slug, flagId) {
+  try {
+    const res = await apiCall(`/api/scripts/${slug}/flags/${flagId}/toggle`, "PATCH");
+    showToast(res.message, res.is_enabled ? "success" : "warning");
+    
+    // Update locally in cache for instant responsive UI
+    const target = cachedFeatureFlags.find(f => f.id === flagId);
+    if (target) {
+      target.is_enabled = res.is_enabled;
+      renderFeatureFlagsTable();
+    } else {
+      loadFeatureFlags();
+    }
+  } catch (err) {
+    showToast("Failed to toggle feature: " + (err.message || err), "error");
+  }
+}
+
+async function handleToggleAllFlags(action) {
+  const slug = selectedFlagsScriptSlug || currentScripts[0]?.slug;
+  if (!slug) return;
+
+  const actionName = action === "enable" ? "ENABLE ALL" : "KILLSWITCH (DISABLE ALL)";
+  const scope = activeFlagsCategory !== "all" ? `in category '${activeFlagsCategory}'` : "globally";
+  
+  if (!confirm(`Are you sure you want to ${actionName} feature flags ${scope}? Connected players will sync this state in real time.`)) {
+    return;
+  }
+
+  try {
+    const res = await apiCall(`/api/scripts/${slug}/flags/toggle-all`, "POST", { action, category: activeFlagsCategory });
+    showToast(res.message, action === "enable" ? "success" : "warning");
+    loadFeatureFlags();
+  } catch (err) {
+    showToast("Failed to update features: " + (err.message || err), "error");
+  }
 }
 
 async function openAddFlagModal() {
   const select = document.getElementById("flagScriptSlug");
   if (select) {
-    select.innerHTML = currentScripts.map(s => `<option value="${escapeHtml(s.slug)}">${escapeHtml(s.name)}</option>`).join("");
+    select.innerHTML = currentScripts.map(s => `
+      <option value="${escapeHtml(s.slug)}" ${s.slug === selectedFlagsScriptSlug ? 'selected' : ''}>
+        ${escapeHtml(s.name)}
+      </option>
+    `).join("");
   }
   document.getElementById("modalAddFlag").classList.add("active");
 }
@@ -2909,6 +3151,7 @@ async function handleSaveFeatureFlag(e) {
 }
 
 async function deleteFeatureFlag(slug, flagId) {
+  if (!confirm("Are you sure you want to remove this feature flag?")) return;
   try {
     const res = await apiCall(`/api/scripts/${slug}/flags/${flagId}`, "DELETE");
     showToast(res.message, "success");

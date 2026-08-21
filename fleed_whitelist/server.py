@@ -2491,6 +2491,7 @@ async def kick_player_session(req: KickPlayerRequest, user: Dict = Depends(get_c
     return {"success": True, "message": f"Kick command issued for player/session ({reason})"}
 
 
+@app.get("/api/sessions")
 @app.get("/api/sessions/active")
 async def get_active_sessions(show_all: bool = False, user: Dict = Depends(get_current_user)):
     """

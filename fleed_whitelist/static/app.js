@@ -2699,7 +2699,10 @@ async function loadLiveSessions() {
         </tr>
       `;
     }).join("");
-  } catch (err) {}
+  } catch (err) {
+    const tbody = document.getElementById("sessionsTableBody");
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-gamepad" style="margin-right:6px;"></i>No players currently in-game.</td></tr>`;
+  }
 }
 
 function openRemoteKickModal(key = "", hwid = "", username = "") {

@@ -847,7 +847,7 @@ function renderScripts(scripts) {
             </p>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button class="btn btn-secondary btn-sm" onclick="previewObfuscatedSource(${s.id})"><i class="fa-solid fa-eye"></i> Preview Obfuscated</button>
+            <button class="btn btn-secondary btn-sm" style="border-color:var(--border-gold); color:var(--gold-primary);" onclick="previewObfuscatedSource(${s.id})"><i class="fa-solid fa-eye" style="color:var(--gold-primary);"></i> Preview Obfuscated</button>
             <button class="btn btn-secondary btn-sm" onclick="openLoadstringModal('${s.slug}', '${escapeHtml(s.name)}')"><i class="fa-solid fa-terminal"></i> Loadstring Studio</button>
             <button class="btn btn-secondary btn-sm" onclick="openEditScriptModal(${s.id})"><i class="fa-solid fa-pen-to-square"></i> Edit Source</button>
             ${s.discord_webhook ? `<button class="btn btn-secondary btn-sm" onclick="testScriptWebhook(${s.id})" title="Test Discord Webhook"><i class="fa-brands fa-discord" style="color:#5865F2;"></i> Test Webhook</button>` : ''}

@@ -1650,35 +1650,79 @@ async function createLicense(slug, key, discordId, note) {
     </div>
   </div>
 
-  <!-- MODAL: Add In-Game Announcement -->
+  <!-- MODAL: Broadcast Message to Live Players -->
   <div id="modalAddAnnouncement" class="modal-overlay">
-    <div class="modal-content">
+    <div class="modal-content" style="max-width:560px;">
       <div class="modal-header">
-        <h3 class="modal-title"><i class="fa-solid fa-bullhorn" style="color:var(--gold-primary);"></i> In-Game Broadcast Announcement</h3>
+        <h3 class="modal-title"><i class="fa-solid fa-bullhorn" style="color:var(--gold-primary);"></i> Broadcast Message to Active Players</h3>
         <button class="modal-close" onclick="closeModal('modalAddAnnouncement')">&times;</button>
       </div>
-      <form onsubmit="handleSaveAnnouncement(event)">
-        <div class="form-group">
-          <label class="form-label">Script Hub</label>
-          <select id="annScriptSlug" class="form-select" required></select>
+      <form onsubmit="handleSendLiveBroadcast(event)">
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+          <div class="form-group">
+            <label class="form-label">Target Audience</label>
+            <select id="annTargetType" class="form-select" onchange="toggleBroadcastTargetInput(this.value)">
+              <option value="GLOBAL">🌐 All Active Players (Global)</option>
+              <option value="SCRIPT">📜 Specific Script Hub</option>
+              <option value="USERNAME">👤 Specific Roblox Username</option>
+              <option value="KEY">🔑 Specific License Key</option>
+            </select>
+          </div>
+          <div class="form-group" id="annScriptSelectGroup" style="display:none;">
+            <label class="form-label">Script Hub</label>
+            <select id="annScriptSlug" class="form-select"></select>
+          </div>
+          <div class="form-group" id="annTargetValueGroup" style="display:none;">
+            <label class="form-label" id="annTargetValueLabel">Target Value</label>
+            <input type="text" id="annTargetValue" class="form-input" placeholder="e.g. Roblox Username or Key">
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label">Banner Type</label>
-          <select id="annBannerType" class="form-select">
-            <option value="INFO">Information (Blue)</option>
-            <option value="UPDATE">Update Release (Gold)</option>
-            <option value="WARNING">Security Warning (Amber)</option>
-            <option value="MAINTENANCE">Maintenance Alert (Red)</option>
-          </select>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+          <div class="form-group">
+            <label class="form-label">Notification Title</label>
+            <input type="text" id="annTitle" class="form-input" value="FleedGuard Announcement" placeholder="e.g. [UPDATE] Script Patched!" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Banner Style / Theme</label>
+            <select id="annBannerType" class="form-select">
+              <option value="UPDATE">👑 Gold (Update Release)</option>
+              <option value="INFO">ℹ️ Blue (Information)</option>
+              <option value="WARNING">⚠️ Amber (Security Notice)</option>
+              <option value="EMERGENCY">🚨 Red (Emergency / Maintenance)</option>
+            </select>
+          </div>
         </div>
+
         <div class="form-group">
-          <label class="form-label">Broadcast Message</label>
-          <textarea id="annMessage" class="form-textarea" placeholder="Enter message to display on player screen..." required></textarea>
+          <label class="form-label">Broadcast Message (Shows on Player Screen)</label>
+          <textarea id="annMessage" class="form-textarea" placeholder="Type message to display on player's screen..." style="min-height:90px;" required></textarea>
         </div>
-        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px;"><i class="fa-solid fa-bullhorn"></i> Deploy Broadcast to Game</button>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-bottom:16px;">
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">On-Screen Duration</label>
+            <select id="annDuration" class="form-select">
+              <option value="5">5 Seconds</option>
+              <option value="10" selected>10 Seconds (Recommended)</option>
+              <option value="15">15 Seconds</option>
+              <option value="30">30 Seconds</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0;">
+            <label class="form-label">Sound Notification</label>
+            <select id="annPlaySound" class="form-select">
+              <option value="1">🔊 Play Audio Chime on Client</option>
+              <option value="0">🔇 Silent Notification</option>
+            </select>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px; font-weight:700;"><i class="fa-solid fa-paper-plane"></i> Dispatch Live Broadcast Now</button>
       </form>
     </div>
   </div>
+
 
   <!-- MODAL: Publish Version Snapshot -->
   <div id="modalPublishVersion" class="modal-overlay">
@@ -1774,6 +1818,6 @@ async function createLicense(slug, key, discordId, note) {
   <!-- Dynamic Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <script src="/static/app.js?v=2.3.6"></script>
+  <script src="/static/app.js?v=2.3.7"></script>
 </body>
 </html>

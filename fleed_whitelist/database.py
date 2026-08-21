@@ -309,11 +309,12 @@ class WhitelistDB:
                 )
             """)
 
-            # 11. In-Game Announcements & Maintenance Banners
+            # 11. In-Game Announcements & Live Broadcasts
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS script_announcements (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     script_id INTEGER NOT NULL,
+                    title TEXT DEFAULT 'Announcement',
                     message TEXT NOT NULL,
                     banner_type TEXT DEFAULT 'INFO', -- 'INFO', 'UPDATE', 'WARNING', 'MAINTENANCE'
                     is_active INTEGER DEFAULT 1,
@@ -321,6 +322,25 @@ class WhitelistDB:
                     FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
                 )
             """)
+
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS live_broadcasts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    script_id INTEGER,
+                    target_type TEXT DEFAULT 'GLOBAL', -- 'GLOBAL', 'SCRIPT', 'KEY', 'USERNAME'
+                    target_value TEXT,
+                    title TEXT DEFAULT 'FleedGuard Announcement',
+                    message TEXT NOT NULL,
+                    banner_type TEXT DEFAULT 'INFO',
+                    duration INTEGER DEFAULT 10,
+                    play_sound INTEGER DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT,
+                    FOREIGN KEY (script_id) REFERENCES scripts(id) ON DELETE CASCADE
+                )
+            """)
+
 
             # 12. Remote Dynamic Script Feature Flags
             await conn.execute("""

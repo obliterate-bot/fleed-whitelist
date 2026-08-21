@@ -258,6 +258,18 @@ class KickPlayerRequest(BaseModel):
     roblox_username: Optional[str] = None
     reason: Optional[str] = "Terminated by developer"
 
+class BroadcastSendRequest(BaseModel):
+    target_type: Optional[str] = "GLOBAL" # 'GLOBAL', 'SCRIPT', 'KEY', 'USERNAME'
+    target_value: Optional[str] = ""
+    script_id: Optional[int] = None
+    title: Optional[str] = "FleedGuard Announcement"
+    message: str
+    banner_type: Optional[str] = "INFO" # 'INFO', 'UPDATE', 'WARNING', 'MAINTENANCE', 'EMERGENCY'
+    duration: Optional[int] = 10
+    play_sound: Optional[int] = 1
+    expires_minutes: Optional[int] = 60
+
+
 
 
 async def send_discord_security_alert(webhook_url: str, title: str, description: str, fields: List[Dict], color: int = 0xEF4444):
@@ -2063,12 +2075,42 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
         except Exception:
             pass
 
+        # Check for active live broadcasts to dispatch to this player client
+        broadcast_payload = None
+        try:
+            b_cur = await conn.execute("""
+                SELECT b.id, b.title, b.message, b.banner_type, b.duration, b.play_sound
+                FROM live_broadcasts b
+                WHERE (b.expires_at IS NULL OR b.expires_at > ?)
+                  AND (
+                      b.target_type = 'GLOBAL'
+                      OR (b.target_type = 'KEY' AND UPPER(b.target_value) = UPPER(?))
+                      OR (b.target_type = 'HWID' AND UPPER(b.target_value) = UPPER(?))
+                      OR (b.target_type = 'USERNAME' AND LOWER(b.target_value) = (SELECT LOWER(roblox_username) FROM live_sessions WHERE UPPER(license_key) = UPPER(?) LIMIT 1))
+                      OR (b.target_type = 'SCRIPT' AND (b.script_id = (SELECT script_id FROM live_sessions WHERE UPPER(license_key) = UPPER(?) LIMIT 1) OR LOWER(b.target_value) = (SELECT LOWER(s.slug) FROM live_sessions ls JOIN scripts s ON ls.script_id = s.id WHERE UPPER(ls.license_key) = UPPER(?) LIMIT 1)))
+                  )
+                ORDER BY b.id DESC LIMIT 1
+            """, (now_iso, claims["key"], presented, claims["key"], claims["key"], claims["key"]))
+            b_row = await b_cur.fetchone()
+            if b_row:
+                broadcast_payload = {
+                    "id": b_row["id"],
+                    "title": b_row["title"] or "FleedGuard Broadcast",
+                    "message": b_row["message"],
+                    "banner_type": b_row["banner_type"] or "INFO",
+                    "duration": b_row["duration"] or 10,
+                    "play_sound": bool(b_row["play_sound"])
+                }
+        except Exception:
+            pass
+
     # Roll the execution token so the fused guard's background re-check keeps
     # validating without needing a long-lived token. Short TTL + rolling means a
     # stolen token is useless within seconds while legit sessions refresh
     # seamlessly in the background (never blocking the game).
     new_token = crypto_engine.generate_exec_token(claims["key"], claims["hwid"])
-    return {"success": True, "token": new_token}
+    return {"success": True, "token": new_token, "broadcast": broadcast_payload}
+
 
 
 # ----------------- Leak Intelligence & Forensic Attribution API -----------------
@@ -2981,6 +3023,63 @@ async def delete_script_announcement(slug: str, ann_id: int, user: Dict = Depend
         await conn.execute("DELETE FROM script_announcements WHERE id = ?", (ann_id,))
         await conn.commit()
     return {"success": True, "message": "Announcement deleted."}
+
+
+# =========================================================================
+# LIVE IN-GAME BROADCASTS API (DIRECT TO CLIENT SCREENS)
+# =========================================================================
+
+@app.get("/api/broadcasts")
+async def get_live_broadcasts(user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        cursor = await conn.execute("""
+            SELECT b.*, s.name as script_name, s.slug as script_slug
+            FROM live_broadcasts b
+            LEFT JOIN scripts s ON b.script_id = s.id
+            ORDER BY b.id DESC
+            LIMIT 50
+        """)
+        rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+@app.post("/api/broadcasts")
+async def send_live_broadcast(req: BroadcastSendRequest, user: Dict = Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    expires_mins = max(1, min(req.expires_minutes or 60, 1440))
+    expires_at = (now + timedelta(minutes=expires_mins)).isoformat()
+
+    msg = req.message.strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="Broadcast message cannot be empty.")
+
+    target_type = (req.target_type or "GLOBAL").upper()
+    target_value = (req.target_value or "").strip()
+
+    async with db.get_db() as conn:
+        # Count currently active target clients for immediate feedback
+        cur_count = await conn.execute("SELECT COUNT(*) as active_cnt FROM live_sessions WHERE last_heartbeat >= datetime('now', '-2 minutes') AND is_kicked = 0")
+        active_cnt = (await cur_count.fetchone())["active_cnt"]
+
+        await conn.execute("""
+            INSERT INTO live_broadcasts (user_id, script_id, target_type, target_value, title, message, banner_type, duration, play_sound, created_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user["id"], req.script_id, target_type, target_value, req.title or "FleedGuard Announcement", msg, req.banner_type or "INFO", req.duration or 10, req.play_sound if req.play_sound is not None else 1, now_iso, expires_at))
+        await conn.commit()
+
+    return {
+        "success": True,
+        "message": f"Broadcast sent! Dispatching to {active_cnt} active player client(s).",
+        "active_clients": active_cnt
+    }
+
+@app.delete("/api/broadcasts/{broadcast_id}")
+async def delete_live_broadcast(broadcast_id: int, user: Dict = Depends(get_current_user)):
+    async with db.get_db() as conn:
+        await conn.execute("DELETE FROM live_broadcasts WHERE id = ?", (broadcast_id,))
+        await conn.commit()
+    return {"success": True, "message": "Broadcast removed from active queue."}
+
 
 
 # =========================================================================

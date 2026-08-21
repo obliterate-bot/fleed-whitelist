@@ -3053,26 +3053,87 @@ class WhitelistCog(commands.Cog, name="whitelist"):
         except Exception:
             pass
 
-        await ctx.send(embed=success_embed(
-            f"successfully configured private whitelist staff chat in {channel.mention}.\n"
-            f"only authorized managers and admins have permission to view and send messages there.",
-            ctx.author
-        ))
-
-    @whitelist_group.command(name="staffpanel", aliases=["managerpanel"])
-    async def staff_panel_cmd(self, ctx, slug: str = "all"):
+    @whitelist_group.command(name="broadcast", aliases=["ingamebroadcast", "notifyplayers"])
+    async def broadcast_cmd(self, ctx, *, message: str):
         """
-        Sends the interactive staff whitelist control panel into the current channel.
-        Usage: ,whitelist staffpanel [slug]
+        Broadcasts an instant on-screen notification and audio chime to all active players running your script in Roblox.
+        Usage: ,whitelist broadcast <message>
+        """
+        clean_msg = message.strip()
+        if not clean_msg:
+            return await ctx.send(embed=error_embed("please provide a broadcast message to send to active players.", ctx.author))
+
+        # Check permission: developer or admin
+        ok, err_msg, _ = await check_script_permission(ctx, None)
+        if not ok and ctx.author.id not in config.OWNER_IDS:
+            return await ctx.send(embed=error_embed("you do not have permission to send global in-game broadcasts.", ctx.author))
+
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        expires_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)).isoformat()
+
+        async with db.get_db() as conn:
+            # Count currently active sessions
+            cur = await conn.execute("SELECT COUNT(*) as active_cnt FROM live_sessions WHERE last_heartbeat >= datetime('now', '-2 minutes') AND is_kicked = 0")
+            row = await cur.fetchone()
+            active_cnt = row["active_cnt"] if row else 0
+
+            await conn.execute("""
+                INSERT INTO live_broadcasts (script_id, target_type, target_value, title, message, banner_type, duration, play_sound, created_at, expires_at)
+                VALUES (NULL, 'GLOBAL', '', 'FleedGuard Announcement', ?, 'UPDATE', 10, 1, ?, ?)
+            """, (clean_msg, now_iso, expires_at))
+            await conn.commit()
+
+        embed = success_embed(
+            f"**📢 In-Game Broadcast Dispatched!**\n\n"
+            f"**Message:** `{clean_msg}`\n"
+            f"**Target:** 🌐 All Active Players (Global)\n"
+            f"**Delivering to:** `{active_cnt}` live connected Roblox client(s)\n"
+            f"**Sound:** 🔊 Audio Chime Enabled",
+            ctx.author
+        )
+        await ctx.send(embed=embed)
+
+    @whitelist_group.command(name="announce", aliases=["hubannounce"])
+    async def announce_cmd(self, ctx, slug: str, *, message: str):
+        """
+        Broadcasts an in-game message specifically to players running a specific Script Hub.
+        Usage: ,whitelist announce <slug> <message>
         """
         clean_slug = slug.strip().lower()
-        ok, err_msg, _ = await check_script_permission(ctx, clean_slug if clean_slug != "all" else None)
+        clean_msg = message.strip()
+
+        ok, err_msg, script = await check_script_permission(ctx, clean_slug)
         if not ok:
             return await ctx.send(embed=error_embed(err_msg, ctx.author))
 
-        panel_embed = await create_staff_panel_embed(ctx.guild, self.bot, clean_slug)
-        view = StaffWhitelistPanelView(slug=clean_slug)
-        await ctx.send(embed=panel_embed, view=view)
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        expires_at = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)).isoformat()
+
+        async with db.get_db() as conn:
+            cur = await conn.execute("""
+                SELECT COUNT(*) as active_cnt 
+                FROM live_sessions ls
+                JOIN scripts s ON ls.script_id = s.id
+                WHERE LOWER(s.slug) = ? AND ls.last_heartbeat >= datetime('now', '-2 minutes') AND ls.is_kicked = 0
+            """, (clean_slug,))
+            row = await cur.fetchone()
+            active_cnt = row["active_cnt"] if row else 0
+
+            await conn.execute("""
+                INSERT INTO live_broadcasts (script_id, target_type, target_value, title, message, banner_type, duration, play_sound, created_at, expires_at)
+                VALUES (?, 'SCRIPT', ?, 'FleedGuard Update', ?, 'UPDATE', 10, 1, ?, ?)
+            """, (script["id"], clean_slug, clean_msg, now_iso, expires_at))
+            await conn.commit()
+
+        embed = success_embed(
+            f"**📢 Script In-Game Broadcast Dispatched!**\n\n"
+            f"**Script Hub:** `{clean_slug}`\n"
+            f"**Message:** `{clean_msg}`\n"
+            f"**Delivering to:** `{active_cnt}` live `{clean_slug}` player client(s)",
+            ctx.author
+        )
+        await ctx.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(WhitelistCog(bot))
+

@@ -2687,9 +2687,14 @@ async function loadLiveSessions() {
           <td><span class="badge badge-zinc">${escapeHtml(s.executor_name || 'Generic')}</span></td>
           <td><span style="font-size:12px; color:var(--text-zinc-400);">${formatTimeAgo(s.last_heartbeat)}</span></td>
           <td>
-            <button class="btn btn-danger btn-sm" onclick="openRemoteKickModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.hwid)}', '${escapeHtml(s.roblox_username || '')}')">
-              <i class="fa-solid fa-bolt"></i> Kick
-            </button>
+            <div style="display:flex; gap:6px;">
+              <button class="btn btn-secondary btn-sm" onclick="openTargetedBroadcastModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Send In-Game Message to this Player">
+                <i class="fa-solid fa-bullhorn" style="color:var(--gold-light);"></i>
+              </button>
+              <button class="btn btn-danger btn-sm" onclick="openRemoteKickModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.hwid)}', '${escapeHtml(s.roblox_username || '')}')" title="Kick Player from Game">
+                <i class="fa-solid fa-bolt"></i> Kick
+              </button>
+            </div>
           </td>
         </tr>
       `;
@@ -2910,69 +2915,160 @@ async function deleteFeatureFlag(slug, flagId) {
 
 
 // =========================================================================
-// IN-GAME ANNOUNCEMENTS & MAINTENANCE BANNERS
+// IN-GAME BROADCASTS & MAINTENANCE BANNERS
 // =========================================================================
 
-async function loadAnnouncements() {
-  if (currentScripts.length === 0) await loadScripts();
-  const slug = currentScripts[0]?.slug;
-  if (!slug) return;
+function toggleBroadcastTargetInput(targetType) {
+  const scriptGroup = document.getElementById("annScriptSelectGroup");
+  const targetGroup = document.getElementById("annTargetValueGroup");
+  const targetLabel = document.getElementById("annTargetValueLabel");
+  const targetInput = document.getElementById("annTargetValue");
 
+  if (!scriptGroup || !targetGroup) return;
+
+  if (targetType === "SCRIPT") {
+    scriptGroup.style.display = "block";
+    targetGroup.style.display = "none";
+  } else if (targetType === "USERNAME") {
+    scriptGroup.style.display = "none";
+    targetGroup.style.display = "block";
+    targetLabel.innerText = "Roblox Username";
+    targetInput.placeholder = "e.g. Builderman";
+  } else if (targetType === "KEY") {
+    scriptGroup.style.display = "none";
+    targetGroup.style.display = "block";
+    targetLabel.innerText = "Target License Key";
+    targetInput.placeholder = "e.g. FLEED-XXXX-XXXX";
+  } else {
+    // GLOBAL
+    scriptGroup.style.display = "none";
+    targetGroup.style.display = "none";
+  }
+}
+
+function openTargetedBroadcastModal(key = "", username = "") {
+  openAddAnnouncementModal();
+  const select = document.getElementById("annTargetType");
+  const valInput = document.getElementById("annTargetValue");
+  if (username && select && valInput) {
+    select.value = "USERNAME";
+    valInput.value = username;
+    toggleBroadcastTargetInput("USERNAME");
+    document.getElementById("annTitle").value = `Message to ${username}`;
+  } else if (key && select && valInput) {
+    select.value = "KEY";
+    valInput.value = key;
+    toggleBroadcastTargetInput("KEY");
+    document.getElementById("annTitle").value = "Staff Message";
+  }
+}
+
+async function loadAnnouncements() {
   try {
-    const announcements = await apiCall(`/api/scripts/${slug}/announcements`);
+    const broadcasts = await apiCall("/api/broadcasts");
     const tbody = document.getElementById("announcementsTableBody");
     if (!tbody) return;
 
-    if (announcements.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-bullhorn" style="margin-right:6px;"></i>No broadcasts deployed for this script.</td></tr>`;
+    if (!broadcasts || broadcasts.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-bullhorn" style="margin-right:6px;"></i>No active in-game broadcasts queued. Send your first broadcast above!</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = announcements.map(a => `
-      <tr>
-        <td><span class="badge badge-gold">${escapeHtml(a.banner_type)}</span></td>
-        <td><span style="font-size:13px; color:var(--text-white); font-weight:500;">${escapeHtml(a.message)}</span></td>
-        <td><span class="badge ${a.is_active ? 'badge-success' : 'badge-zinc'}">${a.is_active ? 'Active' : 'Archived'}</span></td>
-        <td><span style="font-size:11px; color:var(--text-zinc-500);">${formatTimeAgo(a.created_at)}</span></td>
-        <td>
-          <button class="btn btn-danger btn-sm" onclick="deleteAnnouncement('${slug}', ${a.id})">
-            <i class="fa-solid fa-trash"></i>
-          </button>
-        </td>
-      </tr>
-    `).join("");
+    tbody.innerHTML = broadcasts.map(b => {
+      let audienceBadge = '<span class="badge badge-zinc">Global</span>';
+      if (b.target_type === 'SCRIPT') {
+        audienceBadge = `<span class="badge badge-gold">${escapeHtml(b.script_name || b.script_slug || 'Script')}</span>`;
+      } else if (b.target_type === 'USERNAME') {
+        audienceBadge = `<span class="badge badge-primary"><i class="fa-solid fa-user"></i> ${escapeHtml(b.target_value)}</span>`;
+      } else if (b.target_type === 'KEY') {
+        audienceBadge = `<span class="badge badge-warning"><i class="fa-solid fa-key"></i> Key</span>`;
+      }
+
+      return `
+        <tr>
+          <td>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span class="badge badge-gold">${escapeHtml(b.banner_type || 'INFO')}</span>
+              ${audienceBadge}
+            </div>
+          </td>
+          <td>
+            <div style="font-weight:600; color:var(--text-white); font-size:13px;">${escapeHtml(b.title || 'Announcement')}</div>
+            <div style="font-size:12px; color:var(--text-zinc-400); margin-top:2px;">${escapeHtml(b.message)}</div>
+          </td>
+          <td>
+            <span class="badge badge-success"><i class="fa-solid fa-signal"></i> Active (${b.duration || 10}s)</span>
+          </td>
+          <td><span style="font-size:11px; color:var(--text-zinc-500);">${formatTimeAgo(b.created_at)}</span></td>
+          <td>
+            <button class="btn btn-danger btn-sm" onclick="deleteBroadcast(${b.id})" title="Cancel Broadcast">
+              <i class="fa-solid fa-trash"></i>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join("");
   } catch (err) {}
 }
 
 async function openAddAnnouncementModal() {
+  if (currentScripts.length === 0) await loadScripts();
   const select = document.getElementById("annScriptSlug");
   if (select) {
-    select.innerHTML = currentScripts.map(s => `<option value="${escapeHtml(s.slug)}">${escapeHtml(s.name)}</option>`).join("");
+    select.innerHTML = currentScripts.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
   }
+  const targetType = document.getElementById("annTargetType");
+  if (targetType) {
+    targetType.value = "GLOBAL";
+    toggleBroadcastTargetInput("GLOBAL");
+  }
+  document.getElementById("annMessage").value = "";
   document.getElementById("modalAddAnnouncement").classList.add("active");
 }
 
-async function handleSaveAnnouncement(e) {
+async function handleSendLiveBroadcast(e) {
   e.preventDefault();
-  const slug = document.getElementById("annScriptSlug").value;
+  const target_type = document.getElementById("annTargetType").value;
+  let target_value = "";
+  let script_id = null;
+
+  if (target_type === "SCRIPT") {
+    script_id = parseInt(document.getElementById("annScriptSlug").value) || null;
+  } else if (target_type === "USERNAME" || target_type === "KEY") {
+    target_value = document.getElementById("annTargetValue").value.trim();
+  }
+
+  const title = document.getElementById("annTitle").value.trim();
   const banner_type = document.getElementById("annBannerType").value;
   const message = document.getElementById("annMessage").value.trim();
+  const duration = parseInt(document.getElementById("annDuration").value) || 10;
+  const play_sound = parseInt(document.getElementById("annPlaySound").value) || 1;
 
   try {
-    const res = await apiCall(`/api/scripts/${slug}/announcements`, "POST", { banner_type, message, is_active: 1 });
+    const res = await apiCall("/api/broadcasts", "POST", {
+      target_type,
+      target_value,
+      script_id,
+      title,
+      message,
+      banner_type,
+      duration,
+      play_sound
+    });
     showToast(res.message, "success");
     closeModal("modalAddAnnouncement");
     loadAnnouncements();
   } catch (err) {}
 }
 
-async function deleteAnnouncement(slug, annId) {
+async function deleteBroadcast(broadcastId) {
   try {
-    const res = await apiCall(`/api/scripts/${slug}/announcements/${annId}`, "DELETE");
+    const res = await apiCall(`/api/broadcasts/${broadcastId}`, "DELETE");
     showToast(res.message, "success");
     loadAnnouncements();
   } catch (err) {}
 }
+
 
 
 // =========================================================================

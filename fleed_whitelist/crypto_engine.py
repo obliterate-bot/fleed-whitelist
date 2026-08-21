@@ -413,6 +413,30 @@ pcall(function()
 local g=getgenv and getgenv()
 if g and g.__FG_HWID then _hwid=tostring(g.__FG_HWID); g.__FG_HWID=nil end
 end)
+local _seen_broadcasts={}
+local function _notify(title,text,dur,snd)
+pcall(function()
+local sg=game:GetService("StarterGui")
+if sg then
+sg:SetCore("SendNotification",{
+Title=title or "FleedGuard Broadcast",
+Text=text or "",
+Duration=dur or 10,
+Icon="rbxassetid://10804470355"
+})
+end
+end)
+pcall(function()
+if snd and snd>0 then
+local s=Instance.new("Sound")
+s.SoundId="rbxassetid://"..tostring(snd)
+s.Volume=1
+s.Parent=game:GetService("SoundService")
+s:Play()
+pcall(function() game:GetService("Debris"):AddItem(s,5) end)
+end
+end)
+end
 local function _beat(tok)
 if not _req then return false,nil,0,"" end
 local sent,resp=pcall(function()
@@ -423,8 +447,19 @@ local code=resp.StatusCode or resp.Status or 0
 local kick_msg=""
 local okd,data=pcall(function() return _hs:JSONDecode(resp.Body) end)
 if okd and type(data)=="table" then
+if data.broadcast and type(data.broadcast)=="table" then
+local bid=data.broadcast.id or data.broadcast.message
+if not _seen_broadcasts[bid] then
+_seen_broadcasts[bid]=true
+local b_title=data.broadcast.title or "FleedGuard Broadcast"
+local b_msg=data.broadcast.message or ""
+local b_dur=data.broadcast.duration or 10
+local b_snd=data.broadcast.play_sound and 4590662766 or 0
+_spawn(function() _notify(b_title,b_msg,b_dur,b_snd) end)
+end
+end
 if data.kick_reason then kick_msg=tostring(data.kick_reason) end
-if (not kick_msg) and data.message then kick_msg=tostring(data.message) end
+if (not kick_msg) and data.message and (not data.success) then kick_msg=tostring(data.message) end
 if code==200 and data.success then return true,data.token,200,"" end
 end
 return false,nil,code,kick_msg
@@ -450,6 +485,7 @@ end
             .replace("__WM__", watermark)
             .replace("__TOK__", exec_token)
             .replace("__SRV__", srv))
+
 
 crypto_engine = CryptoEngine()
 

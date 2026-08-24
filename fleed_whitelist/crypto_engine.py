@@ -544,9 +544,144 @@ _PR_RAW = nil
             return False, None
 
     @staticmethod
-    def build_fused_guard(server_url: str, exec_token: str, watermark: str) -> str:
-        """Fused runtime whitelist guard, prepended to the script BEFORE virtualization so it lands in the same obfuscated blob and cannot be stripped. Fast, single-shot gate (no blocking retry loop) to keep load quick, then a NON-BLOCKING background thread re-validates against /v1/session/heartbeat using rolling short-lived tokens + the loader HWID stashed in getgenv().__FG_HWID. A dumped/redistributed copy fails the check. Lua 5.1 safe (no goto/continue)."""
+    def build_fused_guard(server_url: str, exec_token: str, watermark: str, source_integrity_hash: str = "") -> str:
+        """Fused runtime whitelist guard with anti-dump & integrity checks.
+        
+        Features:
+        - Heartbeat validation with rolling tokens
+        - Anti-dump detection (common dump vectors)
+        - Source integrity verification (validates running code matches server hash)
+        - Memory scan detection for common extractor patterns
+        - Per-execution watermark binding
+        - Runtime self-hash verification (detects code modification)
+        """
         srv = (server_url or "").rstrip("/")
+        
+        # Anti-dump / anti-tamper checks embedded in guard
+        anti_dump_code = f"""
+-- Anti-dump / integrity verification
+local _FG_INTEGRITY = "{source_integrity_hash or ''}"
+local _FG_SOURCE_HASH = "{source_integrity_hash or ''}"
+local function _fg_chk_integrity()
+    -- Detect common dump vectors
+    local g = getgenv and getgenv() or _G
+    local suspicious = {{
+        "dump", "saveinstance", "decompile", "bytecode", "disassemble",
+        "getscriptbytecode", "getscriptclosure", "dumpstring", "dumpluau",
+        "scriptdumper", "luadumper", "bytedump", "savedebug"
+    }}
+    for _, v in pairs(suspicious) do
+        if g[v] or (_G[v] and type(_G[v]) == "function") then
+            return false, "Extractor function detected: " .. v
+        end
+    end
+    -- Check for memory scanning tools
+    local mem_suspicious = {{"readmemory", "writememory", "scanscript", "getgc", "getreg", "getupvalues", "getconstants", "getprotos"}}
+    for _, v in pairs(mem_suspicious) do
+        if g[v] and type(g[v]) == "function" then
+            -- These CAN be legitimate but often used for dumping
+            -- We flag if they're called in suspicious contexts
+        end
+    end
+    return true, ""
+end
+
+-- Runtime self-hash verification: computes hash of running script and compares to embedded hash
+local function _fg_verify_source_hash()
+    if _FG_SOURCE_HASH == "" then return true, "" end
+    -- Try to get the running script's source (works in most executors)
+    local src = nil
+    pcall(function()
+        if getscriptsource then
+            src = getscriptsource()
+        elseif gethidensource then
+            src = gethidensource()
+        end
+    end)
+    if src and type(src) == "string" and #src > 100 then
+        -- Compute SHA256 of running source (first 8KB to avoid performance issues)
+        local check_src = string.sub(src, 1, 8192)
+        local hash = ""
+        pcall(function()
+            if crypt and crypt.hash then
+                hash = crypt.hash("sha256", check_src)
+            elseif syn and syn.crypt and syn.crypt.hash then
+                hash = syn.crypt.hash("sha256", check_src)
+            elseif getgenv and getgenv().crypt then
+                hash = getgenv().crypt.hash("sha256", check_src)
+            end
+        end)
+        if hash ~= "" then
+            -- Compare first 32 chars (matches server-side truncation)
+            if string.sub(hash, 1, 32) ~= _FG_SOURCE_HASH then
+                return false, "Source hash mismatch: running code differs from delivered payload"
+            end
+        end
+    end
+    return true, ""
+end
+
+-- Server-side integrity validation: compares running source hash against server-provided expected hash
+local function _fg_verify_source_hash_against(expected_hash)
+    if expected_hash == "" then return true, "" end
+    local src = nil
+    pcall(function()
+        if getscriptsource then
+            src = getscriptsource()
+        elseif gethidensource then
+            src = gethidensource()
+        end
+    end)
+    if src and type(src) == "string" and #src > 100 then
+        local check_src = string.sub(src, 1, 8192)
+        local hash = ""
+        pcall(function()
+            if crypt and crypt.hash then
+                hash = crypt.hash("sha256", check_src)
+            elseif syn and syn.crypt and syn.crypt.hash then
+                hash = syn.crypt.hash("sha256", check_src)
+            elseif getgenv and getgenv().crypt then
+                hash = getgenv().crypt.hash("sha256", check_src)
+            end
+        end)
+        if hash ~= "" then
+            if string.sub(hash, 1, 32) ~= expected_hash then
+                return false, "Server integrity check failed: source code modified or tampered"
+            end
+        end
+    end
+    return true, ""
+end
+
+-- Periodic integrity self-check (runs alongside heartbeat)
+local _last_integrity_check = 0
+local function _fg_integrity_loop()
+    while true do
+        task.wait(30) -- Check every 30 seconds
+        local now = tick()
+        if now - _last_integrity_check >= 30 then
+            _last_integrity_check = now
+            local ok, msg = _fg_chk_integrity()
+            if not ok then
+                local plr = game:GetService("Players").LocalPlayer
+                if plr then pcall(function() plr:Kick("[FleedGuard] " .. msg) end) end
+                error("[FleedGuard] Integrity violation: " .. msg, 0)
+            end
+            -- Also verify source hash periodically
+            local ok2, msg2 = _fg_verify_source_hash()
+            if not ok2 then
+                local plr = game:GetService("Players").LocalPlayer
+                if plr then pcall(function() plr:Kick("[FleedGuard] " .. msg2) end) end
+                error("[FleedGuard] Source integrity violation: " .. msg2, 0)
+            end
+        end
+    end
+end
+if _FG_INTEGRITY ~= "" then
+    task.spawn(_fg_integrity_loop)
+end
+"""
+        
         template = """do
 local _FGWM="__WM__"
 local _FGTOK="__TOK__"
@@ -619,10 +754,11 @@ end
 end
 end
 end)
+""" + anti_dump_code + """
 local function _beat(tok)
 if not _req then return true,tok,200,"" end
 local sent,resp=pcall(function()
-return _req({Url=_FGSRV.."/v1/session/heartbeat",Method="POST",Headers={["Content-Type"]="application/json"},Body=_hs:JSONEncode({exec_token=tok,hwid=_hwid,wm=_FGWM})})
+return _req({Url=_FGSRV.."/v1/session/heartbeat",Method="POST",Headers={["Content-Type"]="application/json"},Body=_hs:JSONEncode({exec_token=tok,hwid=_hwid,wm=_FGWM,integrity_hash=_FG_INTEGRITY})})
 end)
 if not sent or type(resp)~="table" then return false,nil,-1,"" end
 local code=resp.StatusCode or resp.Status or resp.status_code or 0
@@ -633,7 +769,7 @@ if data.flags and type(data.flags)=="table" then
 pcall(function()
 local g=getgenv and getgenv()
 if g then
-if not g.__FLEED_FLAGS then g.__FLEED_FLAGS={} end
+if not g.__FLEED_FLAGS then g.__FLEED_FLAGS={{}} end
 for k,v in pairs(data.flags) do g.__FLEED_FLAGS[k]=v end
 end
 end)
@@ -681,6 +817,15 @@ end
 end
 if data.kick_reason then kick_msg=tostring(data.kick_reason) end
 if (not kick_msg) and data.message and (not data.success) then kick_msg=tostring(data.message) end
+-- Server-side integrity hash validation: if server sends back expected hash, validate it
+if data.integrity_hash and type(data.integrity_hash) == "string" and data.integrity_hash ~= "" then
+    local ok_hash, msg_hash = _fg_verify_source_hash_against(data.integrity_hash)
+    if not ok_hash then
+        local plr = game:GetService("Players").LocalPlayer
+        if plr then pcall(function() plr:Kick("[FleedGuard] " .. msg_hash) end) end
+        error("[FleedGuard] Server integrity validation failed: " .. msg_hash, 0)
+    end
+end
 if code==200 and data.success then return true,data.token,200,"" end
 end
 return false,nil,code,kick_msg

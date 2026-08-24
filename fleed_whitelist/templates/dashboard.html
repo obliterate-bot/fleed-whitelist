@@ -274,24 +274,44 @@
       </div>
 
       <!-- Active In-Game Sessions (Live Players) -->
-      <div class="card" style="margin-top:24px; border:1px solid var(--border-gold-subtle);">
-        <div class="card-header">
-          <h3 class="card-title"><i class="fa-solid fa-signal" style="color:var(--gold-primary);"></i> Active In-Game Sessions (Live Players)</h3>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <span class="badge badge-success"><i class="fa-solid fa-circle-dot"></i> Live Heartbeat Tracking</span>
-            <button class="btn btn-secondary btn-sm" onclick="loadActiveSessions()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+      <div class="card" style="margin-top:20px;">
+        <div class="card-header" style="margin-bottom:12px;">
+          <div>
+            <h3 class="card-title"><i class="fa-solid fa-signal" style="color:var(--gold-light);"></i> Active In-Game Sessions (Live Players)</h3>
+            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Real-time continuous presence sync with live pulse ticker and zero manual refresh.</p>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <div class="filter-pills-group" id="overviewSessionsFilterGroup">
+              <button class="filter-pill-btn active" data-filter="all" onclick="setSessionsFilter('all', 'overview')">
+                All <span class="pill-count" id="countSessionsAll">0</span>
+              </button>
+              <button class="filter-pill-btn" data-filter="online" onclick="setSessionsFilter('online', 'overview')">
+                <span class="radar-dot online"></span> Online <span class="pill-count" id="countSessionsOnline">0</span>
+              </button>
+              <button class="filter-pill-btn" data-filter="idle" onclick="setSessionsFilter('idle', 'overview')">
+                <span class="radar-dot idle"></span> Idle <span class="pill-count" id="countSessionsIdle">0</span>
+              </button>
+              <button class="filter-pill-btn" data-filter="offline" onclick="setSessionsFilter('offline', 'overview')">
+                <span class="radar-dot offline"></span> Disconnected <span class="pill-count" id="countSessionsOffline">0</span>
+              </button>
+              <button class="filter-pill-btn" data-filter="kicked" onclick="setSessionsFilter('kicked', 'overview')">
+                <span class="radar-dot kicked"></span> Kicked <span class="pill-count" id="countSessionsKicked">0</span>
+              </button>
+            </div>
+            <input type="text" id="searchActiveSessionsInput" class="form-input" placeholder="Search player, key, game..." style="width:190px; padding:5px 10px; font-size:12px;" oninput="filterActiveSessionsTable(this.value)">
+            <button class="btn btn-secondary btn-sm" onclick="loadActiveSessions(true)" title="Force Sync Now"><i class="fa-solid fa-arrows-rotate"></i> Sync</button>
           </div>
         </div>
         <div class="table-container">
           <table>
             <thead>
               <tr>
+                <th>Status & Presence</th>
                 <th>Roblox Player</th>
-                <th>Game / Place ID</th>
-                <th>Hub</th>
+                <th>Game / Experience</th>
+                <th>Script Hub</th>
                 <th>License Key</th>
                 <th>Executor</th>
-                <th>Last Active</th>
                 <th>Remote Action</th>
               </tr>
             </thead>
@@ -898,33 +918,51 @@ async function createLicense(slug, key, discordId, note) {
     <!-- ======================================================== -->
     <section id="view-sessions" class="tab-view" style="display:none;">
       <div class="card">
-        <div class="card-header">
+        <div class="card-header" style="margin-bottom:12px;">
           <div>
-            <h3 class="card-title"><i class="fa-solid fa-gamepad" style="color:var(--gold-primary);"></i> Real-Time In-Game Players & Remote Kick</h3>
-            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Live monitoring of players executing your scripts in Roblox. Issue instant remote kicks with 1-click.</p>
+            <h3 class="card-title"><i class="fa-solid fa-gamepad" style="color:var(--gold-light);"></i> Real-Time In-Game Players & Remote Control</h3>
+            <p style="color:var(--text-zinc-400); font-size:12px; margin-top:2px;">Live monitoring of players executing your scripts in Roblox. Instant remote luau executions, targeted messages, and 1-click kicks.</p>
           </div>
-          <div style="display:flex; gap:10px;">
-            <button class="btn btn-primary btn-sm" onclick="openRemoteExecModal()"><i class="fa-solid fa-bolt"></i> Remote Luau Exec</button>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <div class="filter-pills-group" id="liveSessionsFilterGroup">
+              <button class="filter-pill-btn active" data-filter="all" onclick="setSessionsFilter('all', 'sessions')">
+                All <span class="pill-count" id="tabCountSessionsAll">0</span>
+              </button>
+              <button class="filter-pill-btn" data-filter="online" onclick="setSessionsFilter('online', 'sessions')">
+                <span class="radar-dot online"></span> Online <span class="pill-count" id="tabCountSessionsOnline">0</span>
+              </button>
+              <button class="filter-pill-btn" data-filter="idle" onclick="setSessionsFilter('idle', 'sessions')">
+                <span class="radar-dot idle"></span> Idle <span class="pill-count" id="tabCountSessionsIdle">0</span>
+              </button>
+              <button class="filter-pill-btn" data-filter="offline" onclick="setSessionsFilter('offline', 'sessions')">
+                <span class="radar-dot offline"></span> Disconnected <span class="pill-count" id="tabCountSessionsOffline">0</span>
+              </button>
+              <button class="filter-pill-btn" data-filter="kicked" onclick="setSessionsFilter('kicked', 'sessions')">
+                <span class="radar-dot kicked"></span> Kicked <span class="pill-count" id="tabCountSessionsKicked">0</span>
+              </button>
+            </div>
+            <input type="text" id="searchLiveSessionsTabInput" class="form-input" placeholder="Search player, key, game..." style="width:190px; padding:5px 10px; font-size:12px;" oninput="filterLiveSessionsTab(this.value)">
+            <button class="btn btn-primary btn-sm" onclick="openRemoteExecModal()"><i class="fa-solid fa-bolt"></i> Remote Luau</button>
             <button class="btn btn-danger btn-sm" onclick="openRemoteKickModal()"><i class="fa-solid fa-power-off"></i> Remote Kick</button>
-            <button class="btn btn-secondary btn-sm" onclick="loadLiveSessions()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadLiveSessions(true)"><i class="fa-solid fa-arrows-rotate"></i> Sync</button>
           </div>
         </div>
 
         <div class="table-container">
-          <table class="table">
+          <table>
             <thead>
               <tr>
-                <th>Status</th>
+                <th>Status & Presence</th>
                 <th>Player / Roblox User</th>
                 <th>Script Hub</th>
-                <th>Game / Place</th>
+                <th>Game / Experience</th>
                 <th>Executor</th>
-                <th>Started / Latency</th>
-                <th>Actions</th>
+                <th>Session Duration</th>
+                <th>Remote Actions</th>
               </tr>
             </thead>
             <tbody id="sessionsTableBody">
-              <tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Loading in-game sessions...</td></tr>
+              <tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-zinc-500);">Scanning for in-game sessions...</td></tr>
             </tbody>
           </table>
         </div>

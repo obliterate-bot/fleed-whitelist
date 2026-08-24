@@ -2235,83 +2235,289 @@ function renderPaletteResults(query) {
   container.innerHTML = results.length > 0 ? results.join("") : `<div style="text-align:center; padding:20px; color:var(--text-zinc-500);">No matching commands or records.</div>`;
 }
 
-// ----------------- In-Game Remote Player Kicking -----------------
-async function loadActiveSessions() {
+// =========================================================================
+// REAL-TIME IN-GAME PRESENCE ENGINE & ZERO-REFRESH SESSIONS CONTROLLER
+// =========================================================================
+window.liveSessionsData = [];
+window.overviewSessionsFilter = 'all';
+window.liveSessionsTabFilter = 'all';
+window.overviewSessionsSearch = '';
+window.liveSessionsTabSearch = '';
+let livePresenceTickerInterval = null;
+
+function formatSecsAgo(seconds) {
+  if (seconds < 60) return `${seconds}s ago`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ago`;
+}
+
+function formatDuration(seconds) {
+  if (!seconds || seconds <= 0) return '0s';
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins < 60) return `${mins}m ${secs}s`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return `${hrs}h ${remMins}m`;
+}
+
+function startLiveSessionsPresenceTicker() {
+  if (livePresenceTickerInterval) return;
+  livePresenceTickerInterval = setInterval(() => {
+    if (!window.liveSessionsData || window.liveSessionsData.length === 0) return;
+
+    // Locally tick presence states and elapsed seconds with zero lag
+    window.liveSessionsData.forEach(s => {
+      if (s.presence_state !== "kicked") {
+        s.seconds_ago = (s.seconds_ago || 0) + 1;
+      }
+      s.duration_seconds = (s.duration_seconds || 0) + 1;
+
+      if (s.is_kicked) {
+        s.presence_state = "kicked";
+        s.presence_label = "KICKED";
+      } else if (s.seconds_ago <= 35) {
+        s.presence_state = "online";
+        s.presence_label = "ONLINE";
+      } else if (s.seconds_ago <= 120) {
+        s.presence_state = "idle";
+        s.presence_label = "IDLE";
+      } else {
+        s.presence_state = "offline";
+        s.presence_label = "DISCONNECTED";
+      }
+    });
+
+    updateSessionsCountBadges();
+    renderActiveSessionsTable();
+    renderLiveSessionsTabTable();
+  }, 1000);
+}
+
+function updateSessionsCountBadges() {
+  const all = window.liveSessionsData || [];
+  const onlineCount = all.filter(s => s.presence_state === "online").length;
+  const idleCount = all.filter(s => s.presence_state === "idle").length;
+  const offlineCount = all.filter(s => s.presence_state === "offline").length;
+  const kickedCount = all.filter(s => s.presence_state === "kicked").length;
+
+  // Update Overview tab badge counts
+  const cAll = document.getElementById("countSessionsAll"); if (cAll) cAll.innerText = all.length;
+  const cOn = document.getElementById("countSessionsOnline"); if (cOn) cOn.innerText = onlineCount;
+  const cId = document.getElementById("countSessionsIdle"); if (cId) cId.innerText = idleCount;
+  const cOff = document.getElementById("countSessionsOffline"); if (cOff) cOff.innerText = offlineCount;
+  const cKick = document.getElementById("countSessionsKicked"); if (cKick) cKick.innerText = kickedCount;
+
+  // Update In-Game Tab badge counts
+  const tAll = document.getElementById("tabCountSessionsAll"); if (tAll) tAll.innerText = all.length;
+  const tOn = document.getElementById("tabCountSessionsOnline"); if (tOn) tOn.innerText = onlineCount;
+  const tId = document.getElementById("tabCountSessionsIdle"); if (tId) tId.innerText = idleCount;
+  const tOff = document.getElementById("tabCountSessionsOffline"); if (tOff) tOff.innerText = offlineCount;
+  const tKick = document.getElementById("tabCountSessionsKicked"); if (tKick) tKick.innerText = kickedCount;
+
+  // Header tab badge count (Live players)
+  const bLive = document.getElementById("badgeLiveSessionsCount");
+  if (bLive) bLive.innerText = onlineCount + idleCount;
+}
+
+function setSessionsFilter(filter, context) {
+  if (context === "overview") {
+    window.overviewSessionsFilter = filter;
+    document.querySelectorAll("#overviewSessionsFilterGroup .filter-pill-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.getAttribute("data-filter") === filter);
+    });
+    renderActiveSessionsTable();
+  } else {
+    window.liveSessionsTabFilter = filter;
+    document.querySelectorAll("#liveSessionsFilterGroup .filter-pill-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.getAttribute("data-filter") === filter);
+    });
+    renderLiveSessionsTabTable();
+  }
+}
+
+function filterActiveSessionsTable(query) {
+  window.overviewSessionsSearch = (query || "").trim().toLowerCase();
+  renderActiveSessionsTable();
+}
+
+function filterLiveSessionsTab(query) {
+  window.liveSessionsTabSearch = (query || "").trim().toLowerCase();
+  renderLiveSessionsTabTable();
+}
+
+function handleRealtimeSessionEvent(data) {
+  if (!data) return;
+  const ev = data.event;
+  if (ev === "heartbeat") {
+    const key = (data.license_key || "").toUpperCase();
+    const found = (window.liveSessionsData || []).find(s => (s.license_key || "").toUpperCase() === key);
+    if (found) {
+      found.last_heartbeat = data.last_heartbeat || new Date().toISOString();
+      found.seconds_ago = 0;
+      found.presence_state = "online";
+      found.presence_label = "ONLINE";
+      found.is_kicked = 0;
+      updateSessionsCountBadges();
+      renderActiveSessionsTable();
+      renderLiveSessionsTabTable();
+    } else {
+      loadActiveSessions(false);
+    }
+  } else if (ev === "join") {
+    const key = (data.license_key || "").toUpperCase();
+    const existingIdx = (window.liveSessionsData || []).findIndex(s => (s.license_key || "").toUpperCase() === key);
+    const newSession = {
+      license_key: data.license_key,
+      roblox_username: data.roblox_username,
+      roblox_user_id: data.roblox_user_id,
+      game_name: data.game_name,
+      place_id: data.place_id,
+      executor_name: data.executor_name,
+      last_heartbeat: data.last_heartbeat || new Date().toISOString(),
+      started_at: data.started_at || new Date().toISOString(),
+      seconds_ago: 0,
+      duration_seconds: 0,
+      presence_state: "online",
+      presence_label: "ONLINE",
+      is_kicked: 0
+    };
+    if (existingIdx >= 0) {
+      window.liveSessionsData[existingIdx] = { ...window.liveSessionsData[existingIdx], ...newSession };
+    } else {
+      window.liveSessionsData.unshift(newSession);
+    }
+    updateSessionsCountBadges();
+    renderActiveSessionsTable();
+    renderLiveSessionsTabTable();
+  } else if (ev === "kicked") {
+    const key = (data.license_key || "").toUpperCase();
+    const user = (data.roblox_username || "").toLowerCase();
+    (window.liveSessionsData || []).forEach(s => {
+      if ((key && (s.license_key || "").toUpperCase() === key) ||
+          (user && (s.roblox_username || "").toLowerCase() === user) ||
+          (data.hwid && s.hwid === data.hwid) ||
+          (data.roblox_user_id && s.roblox_user_id === data.roblox_user_id)) {
+        s.is_kicked = 1;
+        s.presence_state = "kicked";
+        s.presence_label = "KICKED";
+        s.kick_reason = data.reason || "Kicked by admin";
+      }
+    });
+    updateSessionsCountBadges();
+    renderActiveSessionsTable();
+    renderLiveSessionsTabTable();
+  }
+}
+
+async function loadActiveSessions(force = false) {
+  try {
+    const sessions = await apiCall("/api/sessions?show_all=true");
+    if (sessions && Array.isArray(sessions)) {
+      window.liveSessionsData = sessions;
+      updateSessionsCountBadges();
+      renderActiveSessionsTable();
+      renderLiveSessionsTabTable();
+      startLiveSessionsPresenceTicker();
+    }
+  } catch (e) {}
+}
+
+function renderActiveSessionsTable() {
   const tableBody = document.getElementById("activeSessionsTableBody");
   if (!tableBody) return;
 
-  try {
-    const sessions = await apiCall("/api/sessions/active");
-    const activeList = (sessions || []).filter(s => s.presence_state === "online" || s.presence_state === "idle" || s.is_kicked);
+  const sessions = window.liveSessionsData || [];
+  const filter = window.overviewSessionsFilter || "all";
+  const search = window.overviewSessionsSearch || "";
 
-    if (!activeList || activeList.length === 0) {
-      tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color:var(--text-zinc-500);"><i class="fa-solid fa-signal" style="color:var(--gold-primary); margin-right:6px;"></i> No players currently in-game (Online or Idle). Scanning every 5s...</td></tr>`;
-      return;
+  let filtered = sessions.filter(s => {
+    if (filter === "online" && s.presence_state !== "online") return false;
+    if (filter === "idle" && s.presence_state !== "idle") return false;
+    if (filter === "offline" && s.presence_state !== "offline") return false;
+    if (filter === "kicked" && s.presence_state !== "kicked") return false;
+
+    if (search) {
+      const match = (s.roblox_username && s.roblox_username.toLowerCase().includes(search)) ||
+                    (s.game_name && s.game_name.toLowerCase().includes(search)) ||
+                    (s.license_key && s.license_key.toLowerCase().includes(search)) ||
+                    (s.hwid && s.hwid.toLowerCase().includes(search)) ||
+                    (s.executor_name && s.executor_name.toLowerCase().includes(search)) ||
+                    (s.script_name && s.script_name.toLowerCase().includes(search));
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 24px; color:var(--text-zinc-500);"><i class="fa-solid fa-signal" style="color:var(--gold-light); margin-right:6px;"></i> No player sessions match this filter. Live presence active (0s refresh).</td></tr>`;
+    return;
+  }
+
+  tableBody.innerHTML = filtered.map(s => {
+    const avatarUrl = (s.roblox_user_id && s.roblox_user_id > 0)
+      ? `/api/roblox/avatar/${s.roblox_user_id}`
+      : `/api/roblox/avatar/1`;
+    const profileUrl = (s.roblox_user_id && s.roblox_user_id > 0) ? `https://www.roblox.com/users/${s.roblox_user_id}/profile` : '#';
+    const placeUrl = s.place_id > 0 ? `https://www.roblox.com/games/${s.place_id}` : '#';
+
+    let presenceBadge = "";
+    if (s.presence_state === "kicked") {
+      presenceBadge = `<span class="presence-pill kicked"><span class="radar-dot kicked"></span> KICKED</span>`;
+    } else if (s.presence_state === "online") {
+      presenceBadge = `<span class="presence-pill online"><span class="radar-dot online"></span> LIVE (${s.seconds_ago || 0}s ago)</span>`;
+    } else if (s.presence_state === "idle") {
+      presenceBadge = `<span class="presence-pill idle"><span class="radar-dot idle"></span> IDLE (${s.seconds_ago || 0}s ago)</span>`;
+    } else {
+      presenceBadge = `<span class="presence-pill offline"><span class="radar-dot offline"></span> LEFT (${formatSecsAgo(s.seconds_ago || 0)})</span>`;
     }
 
-    tableBody.innerHTML = activeList.map(s => {
-      const avatarUrl = (s.roblox_user_id && s.roblox_user_id > 0)
-        ? `/api/roblox/avatar/${s.roblox_user_id}`
-        : `/api/roblox/avatar/1`;
-      const profileUrl = (s.roblox_user_id && s.roblox_user_id > 0) ? `https://www.roblox.com/users/${s.roblox_user_id}/profile` : '#';
-      const placeUrl = s.place_id > 0 ? `https://www.roblox.com/games/${s.place_id}` : '#';
-
-      let presenceBadge = "";
-      if (s.is_kicked) {
-        presenceBadge = `
-          <span class="badge badge-danger" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:700;">
-            <i class="fa-solid fa-bolt"></i> KICKED
-          </span>
-        `;
-      } else if (s.presence_state === "online") {
-        presenceBadge = `
-          <span class="badge badge-success" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:700; background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.4); color:#4ade80;">
-            <span class="live-radar-dot" style="width:7px; height:7px; background:#22c55e; border-radius:50%; box-shadow:0 0 8px #22c55e; display:inline-block;"></span>
-            LIVE (${s.seconds_ago}s ago)
-          </span>
-        `;
-      } else {
-        presenceBadge = `
-          <span class="badge badge-zinc" style="display:inline-flex; align-items:center; gap:5px; font-size:10px; color:#facc15; border-color:rgba(250,204,21,0.3); font-weight:600;">
-            <i class="fa-solid fa-clock" style="font-size:8px;"></i> IDLE (${s.seconds_ago}s ago)
-          </span>
-        `;
-      }
-
-      return `
-        <tr>
-          <td>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <img src="${avatarUrl}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle);">
-              <div>
-                <a href="${profileUrl}" target="_blank" style="color:var(--gold-light); font-weight:600; text-decoration:none; font-size:12px; display:flex; align-items:center; gap:4px;">
-                  ${escapeHtml(s.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
-                </a>
-                <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${s.roblox_user_id || '—'}</span>
-              </div>
+    return `
+      <tr>
+        <td>${presenceBadge}</td>
+        <td>
+          <div style="display:flex; align-items:center; gap:9px;">
+            <div class="avatar-badge-wrap">
+              <img src="${avatarUrl}" alt="Avatar">
+              <span class="status-indicator ${s.presence_state}"></span>
             </div>
-          </td>
-          <td>
-            <a href="${placeUrl}" target="_blank" style="color:var(--text-white); font-size:12px; font-weight:500; text-decoration:none; display:flex; align-items:center; gap:4px;">
-              ${escapeHtml(s.game_name || 'Roblox Experience')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
-            </a>
-            <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${s.place_id || '—'}</span>
-          </td>
-          <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(s.script_name || 'Hub')}</strong></td>
-          <td>
-            <span class="key-badge" style="font-size:11px;" onclick="copyText('${s.license_key}')">${s.license_key.substring(0, 14)}... <i class="fa-solid fa-copy"></i></span>
-          </td>
-          <td><span class="badge badge-gold" style="font-size:10px;">${escapeHtml(s.executor_name || 'Universal')}</span></td>
-          <td>${presenceBadge}</td>
-          <td>
-            <button class="btn btn-danger btn-sm" onclick="openKickModal({ key: '${s.license_key || ''}', hwid: '${s.hwid || ''}', userId: ${s.roblox_user_id || 0}, username: '${s.roblox_username || ''}', displayName: '${s.roblox_username || s.license_key || 'Player'}' })">
-              <i class="fa-solid fa-bolt"></i> Kick
+            <div>
+              <a href="${profileUrl}" target="_blank" style="color:var(--text-white); font-weight:650; text-decoration:none; font-size:13px; display:flex; align-items:center; gap:4px;">
+                ${escapeHtml(s.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
+              </a>
+              <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${s.roblox_user_id || '—'}</span>
+            </div>
+          </div>
+        </td>
+        <td>
+          <a href="${placeUrl}" target="_blank" style="color:var(--gold-light); font-size:12px; font-weight:550; text-decoration:none; display:flex; align-items:center; gap:4px;">
+            <i class="fa-solid fa-gamepad" style="font-size:11px; opacity:0.8;"></i> ${escapeHtml(s.game_name || 'Roblox Experience')}
+          </a>
+          <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${s.place_id || '—'}</span>
+        </td>
+        <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(s.script_name || s.script_slug || 'Hub')}</strong></td>
+        <td>
+          <span class="key-badge" style="font-size:11px;" onclick="copyText('${s.license_key}', 'License Key copied!')" title="Click to copy key">${escapeHtml((s.license_key || '').substring(0, 14))}... <i class="fa-solid fa-copy"></i></span>
+        </td>
+        <td><span class="badge badge-zinc" style="font-size:11px;">${escapeHtml(s.executor_name || 'Universal')}</span></td>
+        <td>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-primary btn-sm" onclick="openRemoteExecModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Execute Remote Luau">
+              <i class="fa-solid fa-bolt"></i>
             </button>
-          </td>
-        </tr>
-      `;
-    }).join("");
-  } catch (e) {}
+            <button class="btn btn-secondary btn-sm" onclick="openTargetedBroadcastModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Send In-Game Message">
+              <i class="fa-solid fa-bullhorn" style="color:var(--gold-light);"></i>
+            </button>
+            <button class="btn btn-danger btn-sm" onclick="openKickModal({ key: '${escapeHtml(s.license_key || '')}', hwid: '${escapeHtml(s.hwid || '')}', userId: ${s.roblox_user_id || 0}, username: '${escapeHtml(s.roblox_username || '')}', displayName: '${escapeHtml(s.roblox_username || s.license_key || 'Player')}' })" title="Kick Player from Game">
+              <i class="fa-solid fa-power-off"></i> Kick
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
 }
 
 async function loadRecentKicks() {
@@ -2511,6 +2717,8 @@ function initChatWebSocket() {
           }
         } else if (data.type === "presence") {
           updateChatPresence(data);
+        } else if (data.type === "session_event") {
+          handleRealtimeSessionEvent(data);
         }
       } catch (err) {}
     };
@@ -2688,75 +2896,7 @@ function sendFloatingChatMessage(e) {
 // IN-GAME SESSIONS & LIVE REMOTE KICK
 // =========================================================================
 
-async function loadLiveSessions() {
-  try {
-    const sessions = await apiCall("/api/sessions?show_all=true");
-    const badge = document.getElementById("badgeLiveSessionsCount");
-    if (badge) badge.innerText = sessions.filter(s => s.presence_state === 'online').length;
 
-    const tbody = document.getElementById("sessionsTableBody");
-    if (!tbody) return;
-
-    if (sessions.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-gamepad" style="margin-right:6px;"></i>No players currently in-game.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = sessions.map(s => {
-      const avatar = s.roblox_user_id > 0 
-        ? `<img src="/api/roblox/avatar/${s.roblox_user_id}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle);">`
-        : `<div style="width:28px; height:28px; border-radius:50%; background:#222; display:flex; align-items:center; justify-content:center; font-size:11px;">R</div>`;
-
-      let presenceBadge = `<span class="presence-badge presence-online"><span class="live-pulse"></span> ONLINE</span>`;
-      if (s.presence_state === "idle") {
-        presenceBadge = `<span class="presence-badge presence-idle"><i class="fa-regular fa-clock"></i> IDLE</span>`;
-      } else if (s.is_kicked) {
-        presenceBadge = `<span class="presence-badge presence-kicked"><i class="fa-solid fa-bolt"></i> KICKED</span>`;
-      }
-
-      return `
-        <tr>
-          <td>${presenceBadge}</td>
-          <td>
-            <div style="display:flex; align-items:center; gap:8px;">
-              ${avatar}
-              <div>
-                <a href="https://www.roblox.com/users/${s.roblox_user_id || 1}/profile" target="_blank" style="color:var(--text-white); font-weight:700; font-size:12px; text-decoration:none;">
-                  ${escapeHtml(s.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
-                </a>
-                <div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">Key: ${escapeHtml(s.license_key.substring(0, 14))}...</div>
-              </div>
-            </div>
-          </td>
-          <td><span class="badge badge-gold">${escapeHtml(s.script_name || s.script_slug || 'Hub')}</span></td>
-          <td>
-            <a href="https://www.roblox.com/games/${s.place_id || 0}" target="_blank" style="color:var(--gold-light); font-weight:600; font-size:12px; text-decoration:none;">
-              ${escapeHtml(s.game_name || 'Roblox Place')}
-            </a>
-          </td>
-          <td><span class="badge badge-zinc">${escapeHtml(s.executor_name || 'Generic')}</span></td>
-          <td><span style="font-size:12px; color:var(--text-zinc-400);">${formatTimeAgo(s.last_heartbeat)}</span></td>
-          <td>
-            <div style="display:flex; gap:6px;">
-              <button class="btn btn-primary btn-sm" onclick="openRemoteExecModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Execute Luau on this Player">
-                <i class="fa-solid fa-bolt"></i> Exec
-              </button>
-              <button class="btn btn-secondary btn-sm" onclick="openTargetedBroadcastModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Send In-Game Message to this Player">
-                <i class="fa-solid fa-bullhorn" style="color:var(--gold-light);"></i>
-              </button>
-              <button class="btn btn-danger btn-sm" onclick="openRemoteKickModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.hwid)}', '${escapeHtml(s.roblox_username || '')}')" title="Kick Player from Game">
-                <i class="fa-solid fa-power-off"></i>
-              </button>
-            </div>
-          </td>
-        </tr>
-      `;
-    }).join("");
-  } catch (err) {
-    const tbody = document.getElementById("sessionsTableBody");
-    if (tbody) tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-gamepad" style="margin-right:6px;"></i>No players currently in-game.</td></tr>`;
-  }
-}
 
 function openRemoteKickModal(key = "", hwid = "", username = "") {
   if (key) {

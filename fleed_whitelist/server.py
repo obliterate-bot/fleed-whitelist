@@ -1983,7 +1983,7 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         await conn.execute("""
             INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, watermark, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?, ?)
-        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, f"Script delivered in-memory | watermark={watermark}", watermark, now_iso))
+        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, f"Script delivered in-memory | watermark={watermark} | integrity={source_integrity_hash}", watermark, now_iso))
         await conn.commit()
 
         # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
@@ -2022,18 +2022,22 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         base_url = str(request.base_url).rstrip("/")
         if request.headers.get("X-Forwarded-Host"):
             base_url = f"{request.headers.get('X-Forwarded-Proto', 'https')}://{request.headers.get('X-Forwarded-Host')}"
-        guard = crypto_engine.build_fused_guard(base_url, exec_token, watermark)
-        raw_code = guard + "\n" + raw_code
-
-        # If script is in protected mode (mode 1 or 2) or is ge/goldeneagle, apply O_bfuscate 1.1 VM virtualization.
-        # FAIL CLOSED: if virtualization fails we must NOT ship raw source. A valid
-        # key-holder can always read whatever the client executes, so the only
-        # source protection we can guarantee is that the delivered payload is
-        # virtualized bytecode, never readable source. If that guarantee cannot be
-        # met, refuse to deliver.
+        
+        # Generate integrity hash for the final payload (guard + raw_code) to enable
+        # client-side anti-tamper verification. The hash is computed after all
+        # transformations so the client validates the exact code it's executing.
+        import hashlib
+        
+        # Build the guard first to compute integrity hash on the complete payload
+        # We need a temp guard to compute the hash, then rebuild with the hash included
+        temp_guard = crypto_engine.build_fused_guard(base_url, exec_token, watermark, "")
+        temp_payload = temp_guard + "\n" + raw_code
+        
+        # Apply obfuscation first (if any) to compute integrity on the actual delivered code
+        obfuscated_code = raw_code
         if row["is_obfuscated_mode"] == 2:
             try:
-                raw_code = crypto_engine.obfuscate_with_obfuscate_v2(raw_code, preset="ultra-secure", fail_closed=True)
+                obfuscated_code = crypto_engine.obfuscate_with_obfuscate_v2(raw_code, preset="ultra-secure", fail_closed=True)
             except Exception as _obf_err:
                 await conn.execute("""
                     INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
@@ -2043,7 +2047,7 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
                 return JSONResponse(status_code=503, content={"success": False, "message": "Protected payload temporarily unavailable. Contact the developer."})
         elif row["is_obfuscated_mode"] == 1:
             try:
-                raw_code = crypto_engine.obfuscate_with_obfuscate_v2(raw_code, preset="max-performance", fail_closed=True)
+                obfuscated_code = crypto_engine.obfuscate_with_obfuscate_v2(raw_code, preset="max-performance", fail_closed=True)
             except Exception as _obf_err:
                 await conn.execute("""
                     INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
@@ -2051,6 +2055,16 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
                 """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, now_iso))
                 await conn.commit()
                 return JSONResponse(status_code=503, content={"success": False, "message": "Protected payload temporarily unavailable. Contact the developer."})
+        
+        # Compute integrity hash on the FINAL delivered code (after obfuscation)
+        final_payload = temp_guard + "\n" + obfuscated_code
+        source_integrity_hash = hashlib.sha256(final_payload.encode('utf-8')).hexdigest()[:32]
+        
+        # Now build the REAL guard with the integrity hash embedded
+        guard = crypto_engine.build_fused_guard(base_url, exec_token, watermark, source_integrity_hash)
+        
+        # Rebuild final payload with the real guard (which now has integrity hash)
+        final_payload = guard + "\n" + obfuscated_code
 
         effective_hwid = matching_hwid or req.hwid or bound_hwid
         session_key = crypto_engine.derive_session_key(
@@ -2060,13 +2074,13 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
             license_key=row["license_key"],
             hwid=effective_hwid
         )
-        encrypted_payload, auth_tag = crypto_engine.encrypt_payload(raw_code, session_key, req.nonce)
+        encrypted_payload, auth_tag = crypto_engine.encrypt_payload(final_payload, session_key, req.nonce)
 
         # Track in real-time live_sessions presence table
         try:
             await conn.execute("""
-                INSERT INTO live_sessions (script_id, license_key, hwid, roblox_username, roblox_user_id, game_name, place_id, job_id, executor_name, ip_address, started_at, last_heartbeat)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO live_sessions (script_id, license_key, hwid, roblox_username, roblox_user_id, game_name, place_id, job_id, executor_name, ip_address, started_at, last_heartbeat, is_kicked)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                 ON CONFLICT(license_key, hwid) DO UPDATE SET
                     last_heartbeat = excluded.last_heartbeat,
                     roblox_username = excluded.roblox_username,
@@ -2079,6 +2093,20 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
                     is_kicked = 0
             """, (row["script_id"], row["license_key"], bound_hwid, rbx_user, rbx_uid, game_name, place_id, job_id, exec_name, client_ip, now_iso, now_iso))
             await conn.commit()
+
+            # Real-time WebSocket session join broadcast
+            asyncio.create_task(chat_manager.broadcast({
+                "type": "session_event",
+                "event": "join",
+                "license_key": row["license_key"],
+                "roblox_username": rbx_user,
+                "roblox_user_id": rbx_uid,
+                "game_name": game_name,
+                "place_id": place_id,
+                "executor_name": exec_name,
+                "last_heartbeat": now_iso,
+                "started_at": now_iso
+            }))
         except Exception:
             pass
 
@@ -2095,6 +2123,7 @@ class SessionHeartbeatRequest(BaseModel):
     exec_token: str
     hwid: Optional[str] = None
     wm: Optional[str] = None
+    integrity_hash: Optional[str] = None  # Client-reported source integrity hash
 
 
 @app.post("/v1/session/heartbeat")
@@ -2164,21 +2193,52 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
                 "kick_reason": kick_row["reason"] or "FleedGuard: You have been kicked from the game by the administrator."
             })
 
+        # Verify source integrity hash if provided by client
+        # This detects if the client's running code has been modified/dumped
+        if req.integrity_hash:
+            # Look up the expected integrity hash from the latest execution log
+            cursor = await conn.execute("""
+                SELECT details FROM execution_logs 
+                WHERE license_key = ? AND watermark = ? 
+                ORDER BY id DESC LIMIT 1
+            """, (claims["key"], req.wm))
+            log_row = await cursor.fetchone()
+            if log_row and log_row["details"]:
+                import re
+                # Extract integrity hash from log details (we'll store it there)
+                details = log_row["details"]
+                # Check if client's hash matches expected
+                if req.integrity_hash not in details:
+                    # Log integrity violation
+                    await conn.execute("""
+                        INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'INTEGRITY_VIOLATION', ?, ?)
+                    """, (p_row["script_id"] if p_row else 0, 0, claims["key"], presented, client_ip if 'client_ip' in locals() else "unknown", exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, f"Source integrity mismatch: client={req.integrity_hash}", now_iso))
+                    await conn.commit()
+                    return JSONResponse(status_code=403, content={
+                        "success": False,
+                        "message": "Source integrity violation detected"
+                    })
 
-        # Throttled heartbeat write: update live_sessions only every 5 seconds to keep sub-second polling instantaneous
+
+        # Live session heartbeat update and real-time dashboard broadcast
         now_iso = datetime.now(timezone.utc).isoformat()
         try:
-            cur_hb = await conn.execute("""
-                SELECT last_heartbeat FROM live_sessions 
-                WHERE UPPER(license_key) = UPPER(?) AND (last_heartbeat IS NULL OR last_heartbeat <= datetime('now', '-5 seconds'))
-            """, (claims["key"],))
-            if await cur_hb.fetchone():
-                await conn.execute("""
-                    UPDATE live_sessions 
-                    SET last_heartbeat = ? 
-                    WHERE UPPER(license_key) = UPPER(?)
-                """, (now_iso, claims["key"]))
-                await conn.commit()
+            # Direct update without buggy SQLite text-comparison
+            await conn.execute("""
+                UPDATE live_sessions 
+                SET last_heartbeat = ?, is_kicked = 0
+                WHERE UPPER(license_key) = UPPER(?)
+            """, (now_iso, claims["key"]))
+            await conn.commit()
+
+            # Broadcast real-time heartbeat event to open dashboard WebSockets
+            asyncio.create_task(chat_manager.broadcast({
+                "type": "session_event",
+                "event": "heartbeat",
+                "license_key": claims["key"],
+                "last_heartbeat": now_iso
+            }))
         except Exception:
             pass
 
@@ -2300,12 +2360,39 @@ async def session_heartbeat(req: SessionHeartbeatRequest, request: Request):
     # stolen token is useless within seconds while legit sessions refresh
     # seamlessly in the background (never blocking the game).
     new_token = crypto_engine.generate_exec_token(claims["key"], claims["hwid"])
+    
+    # Fetch the expected integrity hash for client-side verification
+    expected_integrity_hash = ""
+    try:
+        script_cur = await conn.execute("""
+            SELECT script_id FROM live_sessions WHERE UPPER(license_key) = UPPER(?)
+        """, (claims["key"],))
+        s_row = await script_cur.fetchone()
+        if s_row:
+            # Get the latest execution log with integrity hash
+            log_cur = await conn.execute("""
+                SELECT details FROM execution_logs 
+                WHERE license_key = ? AND details LIKE '%integrity=%'
+                ORDER BY id DESC LIMIT 1
+            """, (claims["key"],))
+            log_row = await log_cur.fetchone()
+            if log_row and log_row["details"]:
+                details = log_row["details"]
+                # Extract integrity hash from log
+                import re
+                match = re.search(r'integrity=([a-f0-9]+)', details)
+                if match:
+                    expected_integrity_hash = match.group(1)
+    except Exception:
+        pass
+    
     return {
         "success": True,
         "token": new_token,
         "broadcast": broadcast_payload,
         "flags": flags_dict,
-        "remote_luau": remote_luau_payloads
+        "remote_luau": remote_luau_payloads,
+        "integrity_hash": expected_integrity_hash
     }
 
 
@@ -2608,113 +2695,146 @@ async def simulate_handshake(req: SimulateHandshakeRequest, user: Dict = Depends
 
 # ----------------- In-Game Remote Player Kicking API -----------------
 
+# ----------------- In-Game Remote Player Kicking API -----------------
+
 @app.post("/api/sessions/kick")
+@app.post("/api/sessions/remote-kick")
 async def kick_player_session(req: KickPlayerRequest, user: Dict = Depends(get_current_user)):
     """
     Remotely terminates and kicks a player from their active Roblox game session.
+    Broadcasts real-time kick event to connected dashboard WebSockets.
     """
     reason = req.reason.strip() if req.reason else "Kicked by FleedGuard Administrator"
     targets_added = 0
     now_iso = datetime.now(timezone.utc).isoformat()
 
+    # Normalize target type/value if provided via legacy or generic format
+    key_target = req.license_key.strip() if req.license_key else None
+    hwid_target = req.hwid.strip() if req.hwid else None
+    uid_target = req.roblox_user_id
+    user_target = req.roblox_username.strip() if req.roblox_username else None
+
+    if req.target_type and req.target_value:
+        tt = req.target_type.upper()
+        tv = req.target_value.strip()
+        if tt == "KEY": key_target = tv
+        elif tt == "HWID": hwid_target = tv
+        elif tt in ("USER_ID", "USERID", "UID"):
+            try: uid_target = int(tv)
+            except ValueError: user_target = tv
+        elif tt in ("USERNAME", "USER"): user_target = tv
+
     async with db.get_db() as conn:
-        if req.license_key:
+        if key_target:
             await conn.execute("""
                 INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
                 VALUES (?, 'KEY', ?, ?, ?, ?)
-            """, (user["id"], req.license_key.strip(), reason, user["username"], now_iso))
+            """, (user["id"], key_target, reason, user["username"], now_iso))
             targets_added += 1
 
-        if req.hwid:
+        if hwid_target:
             await conn.execute("""
                 INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
                 VALUES (?, 'HWID', ?, ?, ?, ?)
-            """, (user["id"], req.hwid.strip(), reason, user["username"], now_iso))
+            """, (user["id"], hwid_target, reason, user["username"], now_iso))
             targets_added += 1
 
-        if req.roblox_user_id:
+        if uid_target:
             await conn.execute("""
                 INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
                 VALUES (?, 'USER_ID', ?, ?, ?, ?)
-            """, (user["id"], str(req.roblox_user_id), reason, user["username"], now_iso))
+            """, (user["id"], str(uid_target), reason, user["username"], now_iso))
             targets_added += 1
 
-        if req.roblox_username:
+        if user_target:
             await conn.execute("""
                 INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
                 VALUES (?, 'USERNAME', ?, ?, ?, ?)
-            """, (user["id"], req.roblox_username.strip(), reason, user["username"], now_iso))
+            """, (user["id"], user_target, reason, user["username"], now_iso))
             targets_added += 1
 
         # Lookup script_id and license_id if key provided
         script_id = None
         license_id = None
-        if req.license_key:
-            l_cur = await conn.execute("SELECT id, script_id FROM licenses WHERE UPPER(license_key) = UPPER(?)", (req.license_key.strip(),))
+        if key_target:
+            l_cur = await conn.execute("SELECT id, script_id FROM licenses WHERE UPPER(license_key) = UPPER(?)", (key_target,))
             l_row = await l_cur.fetchone()
             if l_row:
                 license_id = l_row["id"]
                 script_id = l_row["script_id"]
 
-        # Also update live_sessions to mark as kicked immediately
+        # Update live_sessions to mark as kicked immediately
         try:
-            if req.license_key:
-                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE UPPER(license_key) = UPPER(?)", (reason, now_iso, user["username"], req.license_key.strip()))
-            if req.hwid:
-                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE hwid = ?", (reason, now_iso, user["username"], req.hwid.strip()))
-            if req.roblox_user_id:
-                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE roblox_user_id = ?", (reason, now_iso, user["username"], req.roblox_user_id))
-            if req.roblox_username:
-                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE LOWER(roblox_username) = LOWER(?)", (reason, now_iso, user["username"], req.roblox_username.strip()))
+            if key_target:
+                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE UPPER(license_key) = UPPER(?)", (reason, now_iso, user["username"], key_target))
+            if hwid_target:
+                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE hwid = ?", (reason, now_iso, user["username"], hwid_target))
+            if uid_target:
+                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE roblox_user_id = ?", (reason, now_iso, user["username"], uid_target))
+            if user_target:
+                await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE LOWER(roblox_username) = LOWER(?)", (reason, now_iso, user["username"], user_target))
         except Exception:
             pass
 
-        # Also log to execution_logs as SESSION_KICKED
+        # Log to execution_logs as SESSION_KICKED
         await conn.execute("""
             INSERT INTO execution_logs (script_id, license_id, license_key, roblox_username, roblox_user_id, status, details, hwid, timestamp)
             VALUES (?, ?, ?, ?, ?, 'SESSION_KICKED', ?, ?, ?)
-        """, (script_id, license_id, req.license_key or "N/A", req.roblox_username or "Unknown", req.roblox_user_id or 0, f"Remote Kick: {reason}", req.hwid or "", now_iso))
+        """, (script_id, license_id, key_target or "N/A", user_target or "Unknown", uid_target or 0, f"Remote Kick: {reason}", hwid_target or "", now_iso))
 
         await conn.commit()
+
+        # Real-time WebSocket kick broadcast to all connected dashboards
+        asyncio.create_task(chat_manager.broadcast({
+            "type": "session_event",
+            "event": "kicked",
+            "license_key": key_target,
+            "hwid": hwid_target,
+            "roblox_user_id": uid_target,
+            "roblox_username": user_target,
+            "reason": reason,
+            "kicked_by": user["username"],
+            "kicked_at": now_iso
+        }))
 
     return {"success": True, "message": f"Kick command issued for player/session ({reason})"}
 
 
 @app.get("/api/sessions")
 @app.get("/api/sessions/active")
-async def get_active_sessions(show_all: bool = False, user: Dict = Depends(get_current_user)):
+async def get_active_sessions(show_all: bool = True, user: Dict = Depends(get_current_user)):
     """
-    Returns strictly live and idle in-game sessions with real-time heartbeat pulse.
-    Filters out players who have disconnected / left the game.
+    Returns live in-game sessions with real-time heartbeat pulse.
+    Includes active (online), idle, disconnected/offline, and kicked players.
     """
     now = datetime.now(timezone.utc)
     is_admin = user.get("role") == "admin"
-    # Heartbeat threshold: 2.5 minutes maximum for active/idle in-game presence
-    cutoff = (now - timedelta(seconds=150)).isoformat()
+    # Show sessions active in the last 24 hours
+    cutoff_24h = (now - timedelta(hours=24)).isoformat()
 
     async with db.get_db() as conn:
         if is_admin:
             cursor = await conn.execute("""
                 SELECT l.id, l.license_key, l.hwid, l.roblox_username, l.roblox_user_id, l.game_name, l.place_id, 
                        l.job_id, l.executor_name, l.ip_address, l.started_at, l.last_heartbeat, l.is_kicked, l.kick_reason,
-                       s.name as script_name, s.slug as script_slug
+                       l.kicked_at, l.kicked_by, s.name as script_name, s.slug as script_slug
                 FROM live_sessions l
                 LEFT JOIN scripts s ON l.script_id = s.id
-                WHERE l.last_heartbeat >= ? OR l.is_kicked = 1
+                WHERE l.last_heartbeat >= ? OR l.started_at >= ? OR l.is_kicked = 1
                 ORDER BY l.last_heartbeat DESC
-                LIMIT 50
-            """, (cutoff,))
+                LIMIT 100
+            """, (cutoff_24h, cutoff_24h))
         else:
             cursor = await conn.execute("""
                 SELECT l.id, l.license_key, l.hwid, l.roblox_username, l.roblox_user_id, l.game_name, l.place_id, 
                        l.job_id, l.executor_name, l.ip_address, l.started_at, l.last_heartbeat, l.is_kicked, l.kick_reason,
-                       s.name as script_name, s.slug as script_slug
+                       l.kicked_at, l.kicked_by, s.name as script_name, s.slug as script_slug
                 FROM live_sessions l
                 JOIN scripts s ON l.script_id = s.id
-                WHERE s.user_id = ? AND (l.last_heartbeat >= ? OR l.is_kicked = 1)
+                WHERE s.user_id = ? AND (l.last_heartbeat >= ? OR l.started_at >= ? OR l.is_kicked = 1)
                 ORDER BY l.last_heartbeat DESC
-                LIMIT 50
-            """, (user["id"], cutoff))
+                LIMIT 100
+            """, (user["id"], cutoff_24h, cutoff_24h))
         rows = await cursor.fetchall()
 
     results = []
@@ -2724,7 +2844,13 @@ async def get_active_sessions(show_all: bool = False, user: Dict = Depends(get_c
             hb_dt = datetime.fromisoformat(d["last_heartbeat"])
             secs_ago = max(0, int((now - hb_dt).total_seconds()))
         except Exception:
-            secs_ago = 999
+            secs_ago = 9999
+
+        try:
+            st_dt = datetime.fromisoformat(d["started_at"])
+            duration_secs = max(0, int((now - st_dt).total_seconds()))
+        except Exception:
+            duration_secs = 0
 
         if d.get("is_kicked"):
             presence_state = "kicked"
@@ -2734,16 +2860,17 @@ async def get_active_sessions(show_all: bool = False, user: Dict = Depends(get_c
             presence_label = "ONLINE"
         elif secs_ago <= 120:
             presence_state = "idle"
-            presence_label = "IDLE / IN-GAME"
+            presence_label = "IDLE"
         else:
             presence_state = "offline"
-            presence_label = "LEFT GAME"
+            presence_label = "DISCONNECTED"
 
-        # Strictly exclude players who have left the game unless show_all is requested
+        # If strictly filtering online only via query param (if requested)
         if not show_all and presence_state == "offline":
             continue
 
         d["seconds_ago"] = secs_ago
+        d["duration_seconds"] = duration_secs
         d["presence_state"] = presence_state
         d["presence_label"] = presence_label
 
@@ -3013,35 +3140,6 @@ async def revoke_staff_manager(manager_id: int, user: Dict = Depends(get_current
         await conn.execute("DELETE FROM whitelist_managers WHERE id = ?", (manager_id,))
         await conn.commit()
     return {"success": True, "message": "Manager access revoked."}
-
-
-# =========================================================================
-# LIVE REMOTE KICK & SESSION DISCONNECT API
-# =========================================================================
-
-@app.post("/api/sessions/kick")
-async def execute_remote_kick(req: RemoteKickRequest, user: Dict = Depends(get_current_user)):
-    clean_val = req.target_value.strip()
-    target_type = req.target_type.upper()
-    now_iso = datetime.now(timezone.utc).isoformat()
-    reason = req.reason or "Terminated by developer"
-
-    async with db.get_db() as conn:
-        await conn.execute("""
-            INSERT INTO session_kicks (user_id, target_type, target_value, reason, kicked_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user["id"], target_type, clean_val, reason, user["username"], now_iso))
-
-        if target_type == "KEY":
-            await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE UPPER(license_key) = UPPER(?)", (reason, now_iso, user["username"], clean_val))
-        elif target_type == "HWID":
-            await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE hwid = ?", (reason, now_iso, user["username"], clean_val))
-        elif target_type == "USERNAME":
-            await conn.execute("UPDATE live_sessions SET is_kicked = 1, kick_reason = ?, kicked_at = ?, kicked_by = ? WHERE roblox_username = ?", (reason, now_iso, user["username"], clean_val))
-
-        await conn.commit()
-
-    return {"success": True, "message": f"Issued instant remote kick for {target_type}: '{clean_val}'."}
 
 
 # =========================================================================

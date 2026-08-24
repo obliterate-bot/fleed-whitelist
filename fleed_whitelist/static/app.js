@@ -37,14 +37,52 @@ function showToast(message, type = "success") {
   }, 4000);
 }
 
-// Copy to Clipboard Utility
+// Copy to Clipboard Utility with Robust Fallback
 function copyText(text, label = "Copied to clipboard!") {
   if (!text) return;
-  navigator.clipboard.writeText(text).then(() => {
-    showToast(label, "success");
-  }).catch(() => {
-    showToast("Failed to copy", "error");
-  });
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast(label, "success");
+    }).catch(() => {
+      fallbackCopyText(text, label);
+    });
+  } else {
+    fallbackCopyText(text, label);
+  }
+}
+
+function fallbackCopyText(text, label = "Copied to clipboard!") {
+  try {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.top = "-9999px";
+    textArea.style.left = "-9999px";
+    textArea.style.opacity = "0";
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    const successful = document.execCommand("copy");
+    document.body.removeChild(textArea);
+    if (successful) {
+      showToast(label, "success");
+    } else {
+      showToast("Unable to copy to clipboard", "error");
+    }
+  } catch (err) {
+    showToast("Copy error: " + err.message, "error");
+  }
+}
+
+function copyBuyerLoadstring(licenseKey, scriptSlug = "") {
+  let slug = scriptSlug;
+  if (!slug) {
+    const script = currentScripts.find(s => s.id === selectedScriptId) || currentScripts[0];
+    slug = script ? script.slug : "hoopz_hub_v1";
+  }
+  const origin = window.location.origin;
+  const loadstringCode = `getgenv().FleedKey = "${licenseKey}"\nloadstring(game:HttpGet("${origin}/v1/loader/${slug}?key=${licenseKey}"))()`;
+  copyText(loadstringCode, "Personalized buyer loadstring copied!");
 }
 
 // Modal Helpers
@@ -1264,13 +1302,12 @@ function renderLicenses(licenses) {
     return;
   }
 
-  const script = currentScripts.find(s => s.id === selectedScriptId);
-  const slug = script ? script.slug : "";
-  const origin = window.location.origin;
+  const script = currentScripts.find(s => s.id === selectedScriptId) || currentScripts[0];
+  const slug = script ? script.slug : (licenses[0]?.script_slug || "hoopz_hub_v1");
 
   tableBody.innerHTML = licenses.map(l => {
     const isChecked = selectedLicenseIds.has(l.id);
-    const personalLoadstring = `getgenv().FleedKey = "${l.license_key}"\nloadstring(game:HttpGet("${origin}/v1/loader/${slug}?key=${l.license_key}"))()`;
+    const keySlug = l.script_slug || slug;
 
     return `
       <tr class="${isChecked ? 'row-selected' : ''}">
@@ -1279,13 +1316,13 @@ function renderLicenses(licenses) {
         </td>
         <td>
           <span class="key-badge" onclick="openLicenseDetailModal(${l.id})" title="Click to view full forensic record">
-            ${l.license_key} <i class="fa-solid fa-magnifying-glass" style="font-size:10px; opacity:0.6;"></i>
+            ${escapeHtml(l.license_key)} <i class="fa-solid fa-magnifying-glass" style="font-size:10px; opacity:0.6;"></i>
           </span>
         </td>
         <td>${formatCustomerCell(l)}</td>
         <td>
           <span style="font-family:var(--font-mono); font-size:11px;">
-            ${l.hwid ? '<i class="fa-solid fa-fingerprint" style="color:var(--gold-primary); margin-right:4px;"></i>' + l.hwid.substring(0, 14) + '...' : '<span style="color:var(--text-zinc-500)">Unbound</span>'}
+            ${l.hwid ? '<i class="fa-solid fa-fingerprint" style="color:var(--gold-primary); margin-right:4px;"></i>' + escapeHtml(l.hwid.substring(0, 14)) + '...' : '<span style="color:var(--text-zinc-500)">Unbound</span>'}
           </span>
         </td>
         <td>${l.execution_count} / ${l.max_executions === -1 ? '<i class="fa-solid fa-infinity"></i>' : l.max_executions}</td>
@@ -1297,7 +1334,7 @@ function renderLicenses(licenses) {
         </td>
         <td>
           <div style="display:flex; gap:6px;">
-            <button class="btn btn-secondary btn-sm" onclick="copyText('${personalLoadstring.replace(/'/g, "\\'")}', 'Personalized buyer loadstring copied!')" title="Copy buyer loadstring"><i class="fa-solid fa-terminal"></i></button>
+            <button class="btn btn-secondary btn-sm" onclick="copyBuyerLoadstring('${escapeHtml(l.license_key)}', '${escapeHtml(keySlug)}')" title="Copy buyer loadstring"><i class="fa-solid fa-terminal"></i></button>
             <button class="btn btn-secondary btn-sm" onclick="openLicenseDetailModal(${l.id})" title="Inspect key history"><i class="fa-solid fa-chart-line"></i></button>
             <button class="btn btn-secondary btn-sm" onclick="resetHWID(${l.id})" title="Reset bound device"><i class="fa-solid fa-arrows-rotate"></i></button>
             <button class="btn ${l.is_banned ? 'btn-secondary' : 'btn-danger'} btn-sm" onclick="toggleBanLicense(${l.id}, ${l.is_banned})" title="${l.is_banned ? 'Unban key' : 'Ban key'}">
@@ -1626,7 +1663,8 @@ async function openLicenseDetailModal(licenseId) {
           <h3 style="color:var(--gold-light); font-family:var(--font-mono); font-size:18px; margin:6px 0 2px 0;">${lic.license_key}</h3>
           <span style="font-size:12px; color:var(--text-zinc-400);">Hub: <strong>${escapeHtml(lic.script_name)}</strong> (${lic.script_slug})</span>
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-sm" onclick="copyBuyerLoadstring('${escapeHtml(lic.license_key)}', '${escapeHtml(lic.script_slug)}')"><i class="fa-solid fa-terminal"></i> Copy Loadstring</button>
           <button class="btn btn-danger btn-sm" onclick="openKickModal({ key: '${lic.license_key}', hwid: '${lic.hwid || ''}', displayName: '${lic.license_key}' })"><i class="fa-solid fa-bolt"></i> Kick Session</button>
           <button class="btn btn-secondary btn-sm" onclick="resetHWID(${lic.id})"><i class="fa-solid fa-arrows-rotate"></i> Reset HWID</button>
           <button class="btn ${lic.is_banned ? 'btn-secondary' : 'btn-danger'} btn-sm" onclick="toggleBanLicense(${lic.id}, ${lic.is_banned})">

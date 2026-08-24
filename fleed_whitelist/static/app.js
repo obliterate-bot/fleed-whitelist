@@ -2740,12 +2740,12 @@ async function loadRecentKicks() {
   try {
     const kicks = await apiCall("/api/kicks?limit=30");
     if (badge) {
-      badge.innerText = `${kicks.length} Kick${kicks.length === 1 ? '' : 's'} Logged`;
+      badge.innerText = `${kicks.length} Kick${kicks.length === 1 ? '' : 's'}`;
       badge.style.display = kicks.length > 0 ? "inline-block" : "none";
     }
 
     if (kicks.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:6px;"></i> No in-game kicks or security disconnects logged yet.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:6px;"></i> No in-game kicks logged yet.</td></tr>`;
       return;
     }
 
@@ -2755,53 +2755,42 @@ async function loadRecentKicks() {
         : `/api/roblox/avatar/1`;
       const profileUrl = (k.roblox_user_id && k.roblox_user_id > 0) ? `https://www.roblox.com/users/${k.roblox_user_id}/profile` : '#';
       const timeStr = formatTimeAgo(k.timestamp);
-      const placeName = escapeHtml(k.game_name || (k.place_id > 0 ? `Place #${k.place_id}` : 'Roblox Experience'));
+      const placeName = escapeHtml(k.game_name || (k.place_id > 0 ? `Place #${k.place_id}` : 'Experience'));
 
       const placeHtml = k.place_id > 0
-        ? `<a href="https://www.roblox.com/games/${k.place_id}" target="_blank" style="color:var(--gold-light); font-size:12px; font-weight:550; text-decoration:none; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-gamepad" style="font-size:10px; opacity:0.8;"></i> ${placeName} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i></a>`
-        : `<span style="color:var(--text-zinc-400); font-size:12px; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-gamepad" style="font-size:10px; opacity:0.6;"></i> ${placeName}</span>`;
+        ? `<a href="https://www.roblox.com/games/${k.place_id}" target="_blank" style="color:var(--gold-light); font-size:11px; font-weight:550; text-decoration:none; display:inline-flex; align-items:center; gap:3px;"><i class="fa-solid fa-gamepad" style="font-size:9px; opacity:0.8;"></i> ${placeName}</a>`
+        : `<span style="color:var(--text-zinc-400); font-size:11px;">${placeName}</span>`;
 
       return `
         <tr>
           <td>
-            <div style="display:flex; align-items:center; gap:8px;">
-              <img src="${avatarSrc}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle); flex-shrink:0;">
+            <div style="display:flex; align-items:center; gap:6px;">
+              <img src="${avatarSrc}" style="width:24px; height:24px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle); flex-shrink:0;">
               <div>
-                <a href="${profileUrl}" target="_blank" style="color:var(--text-white); font-weight:650; font-size:12px; text-decoration:none; display:flex; align-items:center; gap:3px;">
-                  ${escapeHtml(k.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:8px; opacity:0.6;"></i>
+                <a href="${profileUrl}" target="_blank" style="color:var(--text-white); font-weight:650; font-size:11.5px; text-decoration:none; display:flex; align-items:center; gap:3px;">
+                  ${escapeHtml(k.roblox_username || 'Unknown')}
                 </a>
-                <div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">${k.roblox_user_id > 0 ? `ID: ${k.roblox_user_id}` : 'ID: —'}</div>
               </div>
             </div>
           </td>
           <td>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <span class="badge ${k.badge_class || 'badge-danger'}" style="font-weight:650; font-size:11px; white-space:normal; text-align:left; line-height:1.3; max-width:280px;">
-                <i class="fa-solid ${k.icon || 'fa-bolt'}"></i> ${escapeHtml(k.kick_reason || 'Session Terminated')}
-              </span>
-            </div>
-          </td>
-          <td>
-            <span style="font-size:12px; color:var(--text-zinc-300); font-weight:600;">
-              ${escapeHtml(k.source || 'FleedGuard Engine')}
+            <span class="badge ${k.badge_class || 'badge-danger'}" style="font-weight:650; font-size:10.5px; white-space:nowrap;">
+              <i class="fa-solid ${k.icon || 'fa-bolt'}"></i> ${escapeHtml(k.kick_reason || 'Terminated')}
             </span>
           </td>
           <td>${placeHtml}</td>
           <td>
-            <span class="badge badge-zinc" style="font-size:10px;">${escapeHtml(k.script_name || k.script_slug || 'Hub')}</span>
+            <span style="font-size:10.5px; color:var(--text-zinc-400); white-space:nowrap; font-family:var(--font-mono);">${timeStr}</span>
           </td>
           <td>
-            <span style="font-size:11px; color:var(--text-zinc-400); white-space:nowrap;">${timeStr}</span>
-          </td>
-          <td>
-            <div style="display:flex; gap:6px;">
+            <div style="display:flex; gap:4px;">
               ${k.license_key && k.license_key !== 'N/A' ? `
-                <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:10px;" onclick="copyText('${escapeHtml(k.license_key)}', 'License key copied!')" title="Copy License Key">
+                <button class="btn btn-secondary btn-sm" style="padding:2px 6px; font-size:9.5px;" onclick="copyText('${escapeHtml(k.license_key)}', 'License key copied!')" title="Copy License Key">
                   <i class="fa-solid fa-copy"></i>
                 </button>
               ` : ''}
               ${k.hwid ? `
-                <button class="btn btn-danger btn-sm" style="padding:4px 8px; font-size:10px;" onclick="openBlacklistModal({ target: '${escapeHtml(k.hwid)}', type: 'HWID', reason: 'Security Interception / Kicked session' })" title="Blacklist HWID">
+                <button class="btn btn-danger btn-sm" style="padding:2px 6px; font-size:9.5px;" onclick="openBlacklistModal({ target: '${escapeHtml(k.hwid)}', type: 'HWID', reason: 'Security Interception / Kicked session' })" title="Blacklist HWID">
                   <i class="fa-solid fa-ban"></i>
                 </button>
               ` : ''}
@@ -2811,7 +2800,7 @@ async function loadRecentKicks() {
       `;
     }).join("");
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--danger-light);">Error loading kicks: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:16px; color:var(--danger-light);">Error loading kicks: ${err.message}</td></tr>`;
   }
 }
 

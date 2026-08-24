@@ -311,11 +311,12 @@
             </div>
           </div>
 
-          <!-- 24-Hour Telemetry Volume Chart & Defense Matrix -->
-          <div class="dashboard-grid-2">
+          <!-- Mid Cockpit Row (Velocity Chart, Defense Matrix, Top Games, Executors) -->
+          <div class="overview-mid-grid">
+            <!-- 1. 24-Hour Velocity Chart -->
             <div class="card">
               <div class="card-header">
-                <h3 class="card-title"><i class="fa-solid fa-chart-column gold-accent"></i> 24-Hour Execution & Threat Velocity</h3>
+                <h3 class="card-title"><i class="fa-solid fa-chart-column gold-accent"></i> 24h Velocity</h3>
                 <div class="chart-legend-group">
                   <span class="legend-item"><span class="legend-dot gold-dot"></span> Payloads</span>
                   <span class="legend-item"><span class="legend-dot danger-dot"></span> Threats</span>
@@ -326,134 +327,129 @@
               </div>
             </div>
 
-            <!-- Active Defense Matrix Status -->
+            <!-- 2. Active Defense Matrix -->
             <div class="card">
               <div class="card-header">
-                <h3 class="card-title"><i class="fa-solid fa-shield-halved gold-accent"></i> Active Defense Matrix</h3>
+                <h3 class="card-title"><i class="fa-solid fa-shield-halved gold-accent"></i> Defense Matrix</h3>
                 <span class="badge badge-success"><i class="fa-solid fa-lock"></i> 100% ARMED</span>
               </div>
               <div class="matrix-list">
                 <div class="matrix-item">
-                  <span class="matrix-label"><i class="fa-solid fa-microchip gold-accent"></i> O_bfuscate 1.1 Virtual VM</span>
+                  <span class="matrix-label"><i class="fa-solid fa-microchip gold-accent"></i> VM Armor</span>
                   <span class="badge badge-gold">VIRTUALIZED</span>
                 </div>
                 <div class="matrix-item">
-                  <span class="matrix-label"><i class="fa-solid fa-fingerprint gold-accent"></i> HWID Strict Hardware Gate</span>
+                  <span class="matrix-label"><i class="fa-solid fa-fingerprint gold-accent"></i> HWID Gate</span>
                   <span class="badge badge-success">ACTIVE</span>
                 </div>
                 <div class="matrix-item">
-                  <span class="matrix-label"><i class="fa-solid fa-shield-cat gold-accent"></i> Memory Anti-Hook Trap</span>
+                  <span class="matrix-label"><i class="fa-solid fa-shield-cat gold-accent"></i> Anti-Hook</span>
                   <span class="badge badge-success">ENGAGED</span>
                 </div>
                 <div class="matrix-item">
-                  <span class="matrix-label"><i class="fa-solid fa-users-slash danger-accent"></i> Multi-Account Leak Shield</span>
-                  <span class="badge badge-danger">AUTO-BAN ON</span>
+                  <span class="matrix-label"><i class="fa-solid fa-users-slash danger-accent"></i> Multi-Acc</span>
+                  <span class="badge badge-danger">AUTO-BAN</span>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Top Roblox Experiences & Executor Breakdown -->
-          <div class="dashboard-grid-2" style="margin-top:20px;">
+            <!-- 3. Top Roblox Experiences -->
             <div class="card">
               <div class="card-header">
-                <h3 class="card-title"><i class="fa-solid fa-gamepad gold-accent"></i> Top Roblox Experiences</h3>
-                <span class="badge badge-zinc">By Executions</span>
+                <h3 class="card-title"><i class="fa-solid fa-gamepad gold-accent"></i> Top Experiences</h3>
+                <span class="badge badge-zinc">By Execs</span>
               </div>
-              <div id="topGamesList">
+              <div id="topGamesList" class="compact-scroll-list">
                 <p class="placeholder-text">Collecting game telemetry...</p>
               </div>
             </div>
 
+            <!-- 4. Executor Breakdown -->
             <div class="card">
               <div class="card-header">
-                <h3 class="card-title"><i class="fa-solid fa-cube gold-accent"></i> Executor Distribution</h3>
-                <span class="badge badge-zinc">Runtime Environments</span>
+                <h3 class="card-title"><i class="fa-solid fa-cube gold-accent"></i> Executors</h3>
+                <span class="badge badge-zinc">Runtimes</span>
               </div>
-              <div id="topExecutorsList">
+              <div id="topExecutorsList" class="compact-scroll-list">
                 <p class="placeholder-text">Collecting executor telemetry...</p>
               </div>
             </div>
           </div>
 
-          <!-- Active In-Game Sessions (Live Players) Mini-Table -->
-          <div class="card" style="margin-top:20px;">
-            <div class="card-header">
-              <div>
-                <h3 class="card-title"><i class="fa-solid fa-signal gold-accent"></i> Active In-Game Sessions (Live Players)</h3>
-                <p class="card-subtitle">Real-time continuous presence sync with live pulse ticker and zero manual refresh.</p>
-              </div>
-              <div class="header-controls">
-                <div class="filter-pills-group" id="overviewSessionsFilterGroup">
-                  <button class="filter-pill-btn active" data-filter="all" onclick="setSessionsFilter('all', 'overview')">
-                    All <span class="pill-count" id="countSessionsAll">0</span>
-                  </button>
-                  <button class="filter-pill-btn" data-filter="online" onclick="setSessionsFilter('online', 'overview')">
-                    <span class="radar-dot online"></span> Online <span class="pill-count" id="countSessionsOnline">0</span>
-                  </button>
-                  <button class="filter-pill-btn" data-filter="idle" onclick="setSessionsFilter('idle', 'overview')">
-                    <span class="radar-dot idle"></span> Idle <span class="pill-count" id="countSessionsIdle">0</span>
-                  </button>
-                  <button class="filter-pill-btn" data-filter="offline" onclick="setSessionsFilter('offline', 'overview')">
-                    <span class="radar-dot offline"></span> Disconnected <span class="pill-count" id="countSessionsOffline">0</span>
-                  </button>
-                  <button class="filter-pill-btn" data-filter="kicked" onclick="setSessionsFilter('kicked', 'overview')">
-                    <span class="radar-dot kicked"></span> Kicked <span class="pill-count" id="countSessionsKicked">0</span>
-                  </button>
+          <!-- Bottom Row: Live Sessions (Left) & Recent Kicks (Right) Side-by-Side -->
+          <div class="overview-bottom-grid">
+            <!-- Active In-Game Sessions (Live Players) Mini-Table -->
+            <div class="card flex-table-card">
+              <div class="card-header">
+                <div class="title-with-badge">
+                  <h3 class="card-title"><i class="fa-solid fa-signal gold-accent"></i> Live Sessions</h3>
+                  <div class="filter-pills-group" id="overviewSessionsFilterGroup">
+                    <button class="filter-pill-btn active" data-filter="all" onclick="setSessionsFilter('all', 'overview')">
+                      All <span class="pill-count" id="countSessionsAll">0</span>
+                    </button>
+                    <button class="filter-pill-btn" data-filter="online" onclick="setSessionsFilter('online', 'overview')">
+                      <span class="radar-dot online"></span> <span class="pill-count" id="countSessionsOnline">0</span>
+                    </button>
+                    <button class="filter-pill-btn" data-filter="idle" onclick="setSessionsFilter('idle', 'overview')">
+                      <span class="radar-dot idle"></span> <span class="pill-count" id="countSessionsIdle">0</span>
+                    </button>
+                    <button class="filter-pill-btn" data-filter="offline" onclick="setSessionsFilter('offline', 'overview')">
+                      <span class="radar-dot offline"></span> <span class="pill-count" id="countSessionsOffline">0</span>
+                    </button>
+                    <button class="filter-pill-btn" data-filter="kicked" onclick="setSessionsFilter('kicked', 'overview')">
+                      <span class="radar-dot kicked"></span> <span class="pill-count" id="countSessionsKicked">0</span>
+                    </button>
+                  </div>
                 </div>
-                <input type="text" id="searchActiveSessionsInput" class="form-input search-mini-input" placeholder="Search player, key, game..." oninput="filterActiveSessionsTable(this.value)">
-                <button class="btn btn-secondary btn-sm" onclick="loadActiveSessions(true)" title="Force Sync Now"><i class="fa-solid fa-arrows-rotate"></i> Sync</button>
+                <div class="header-controls">
+                  <input type="text" id="searchActiveSessionsInput" class="form-input search-mini-input" placeholder="Search..." oninput="filterActiveSessionsTable(this.value)" style="width:130px;">
+                  <button class="btn btn-secondary btn-sm" onclick="loadActiveSessions(true)" title="Force Sync Now"><i class="fa-solid fa-arrows-rotate"></i></button>
+                </div>
+              </div>
+              <div class="table-container compact-table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>Player</th>
+                      <th>Game</th>
+                      <th>Hub</th>
+                      <th>Key</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="activeSessionsTableBody">
+                    <tr><td colspan="6" class="loading-td">Scanning for active game sessions...</td></tr>
+                  </tbody>
+                </table>
               </div>
             </div>
-            <div class="table-container">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Status & Presence</th>
-                    <th>Roblox Player</th>
-                    <th>Game / Experience</th>
-                    <th>Script Hub</th>
-                    <th>License Key</th>
-                    <th>Executor</th>
-                    <th>Remote Action</th>
-                  </tr>
-                </thead>
-                <tbody id="activeSessionsTableBody">
-                  <tr><td colspan="7" class="loading-td">Scanning for active game sessions...</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
 
-          <!-- Real-Time In-Game Kicks & Disconnect Telemetry -->
-          <div class="card danger-border-card" style="margin-top:20px;">
-            <div class="card-header">
-              <div class="title-with-badge">
-                <h3 class="card-title"><i class="fa-solid fa-user-xmark danger-accent"></i> In-Game Kicks & Disconnection Telemetry</h3>
-                <span id="badgeKickCount" class="badge badge-danger">0 Kicks Logged</span>
+            <!-- Real-Time In-Game Kicks & Disconnect Telemetry -->
+            <div class="card danger-border-card flex-table-card">
+              <div class="card-header">
+                <div class="title-with-badge">
+                  <h3 class="card-title"><i class="fa-solid fa-user-xmark danger-accent"></i> Kicks & Interceptions</h3>
+                  <span id="badgeKickCount" class="badge badge-danger">0 Kicks</span>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="loadRecentKicks()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
               </div>
-              <button class="btn btn-secondary btn-sm" onclick="loadRecentKicks()"><i class="fa-solid fa-arrows-rotate"></i> Refresh</button>
-            </div>
-            <p class="card-subtitle">
-              Live stream of all in-game session terminations, remote admin kicks, anti-tamper traps, and license revocations.
-            </p>
-            <div class="table-container">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Target Player</th>
-                    <th>Kick / Disconnect Reason</th>
-                    <th>Enforcement Trigger</th>
-                    <th>Game / Experience</th>
-                    <th>Script Hub</th>
-                    <th>Time</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody id="recentKicksTableBody">
-                  <tr><td colspan="7" class="loading-td">Scanning for in-game kick events...</td></tr>
-                </tbody>
-              </table>
+              <div class="table-container compact-table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Target Player</th>
+                      <th>Reason</th>
+                      <th>Game</th>
+                      <th>Time</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody id="recentKicksTableBody">
+                    <tr><td colspan="5" class="loading-td">Scanning for in-game kick events...</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         </main>

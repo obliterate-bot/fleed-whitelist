@@ -3324,6 +3324,10 @@ function sendFloatingChatMessage(e) {
 
   if (chatSocket && chatSocket.readyState === WebSocket.OPEN) {
     chatSocket.send(JSON.stringify({ type: "message", message: text, channel: "general" }));
+  }
+  input.value = "";
+}
+
 // =========================================================================
 // IN-GAME SESSIONS & LIVE REMOTE KICK
 // =========================================================================
@@ -4003,9 +4007,6 @@ async function loadSystemHealth() {
     showToast("System health & database metrics refreshed!", "success");
   } catch (err) {}
 }
-  } catch (err) {}
-}
-
 
 // =========================================================================
 // LIVE REMOTE LUAU CONSOLE & DISPATCH ENGINE

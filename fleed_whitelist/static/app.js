@@ -541,12 +541,18 @@ function toggleMobileSidebar() {
 
 function switchTab(tabName) {
   document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
-  document.querySelectorAll(".tab-view").forEach(view => view.style.display = "none");
+  document.querySelectorAll(".tab-view").forEach(view => {
+    view.style.display = "none";
+    view.classList.remove("active");
+  });
 
   const activeBtns = document.querySelectorAll(`[data-tab="${tabName}"]`);
   const activeView = document.getElementById(`view-${tabName}`);
   activeBtns.forEach(btn => btn.classList.add("active"));
-  if (activeView) activeView.style.display = "block";
+  if (activeView) {
+    activeView.style.display = (tabName === "chat" || tabName === "overview" || tabName === "sessions" || tabName === "remote-exec" || tabName === "logs" || tabName === "licenses" || tabName === "scripts" || tabName === "bypasses" || tabName === "telemetry") ? "flex" : "block";
+    activeView.classList.add("active");
+  }
 
   // Update Breadcrumb
   const breadcrumbEl = document.getElementById("currentViewBreadcrumb");
@@ -4560,6 +4566,242 @@ async function handleClearRemoteExecHistory() {
     const res = await apiCall("/api/remote-exec/clear", "POST");
     showToast(res.message, "success");
     loadRemoteExecQueue();
+  } catch (err) {}
+}
+
+// =========================================================================
+// LIVE DEVELOPER ROOM CONTROLLER (REAL-TIME WEBSOCKETS + CHANNELS)
+// =========================================================================
+window.currentChatChannel = "general";
+window.chatSoundEnabled = true;
+window.chatSocket = null;
+window.chatMessagesMap = { general: [], security: [], dev: [] };
+
+function initChatWebSocket() {
+  if (window.chatSocket && window.chatSocket.readyState === WebSocket.OPEN) {
+    return;
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${protocol}//${window.location.host}/ws/chat`;
+
+  try {
+    window.chatSocket = new WebSocket(wsUrl);
+
+    window.chatSocket.onopen = () => {
+      console.log("[FleedGuard Chat] Connected to live room stream.");
+    };
+
+    window.chatSocket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "message") {
+          appendChatMessage(data);
+          if (data.channel !== window.currentChatChannel) {
+            playChatSound();
+          } else {
+            playChatSound();
+          }
+        } else if (data.type === "presence") {
+          updateChatPresence(data.count || 1, data.users || []);
+        } else if (data.type === "session_event") {
+          // Real-time live player session broadcast
+          handleLiveSessionStreamEvent(data);
+        }
+      } catch (err) {}
+    };
+
+    window.chatSocket.onclose = () => {
+      setTimeout(() => {
+        if (document.getElementById("view-chat")?.style.display === "flex") {
+          initChatWebSocket();
+        }
+      }, 3000);
+    };
+  } catch (err) {}
+}
+
+async function loadChatMessages(channel = window.currentChatChannel || "general") {
+  const container = document.getElementById("chatMessagesContainer");
+  if (!container) return;
+
+  try {
+    const messages = await apiCall(`/api/chat/messages?channel=${encodeURIComponent(channel)}&limit=50`);
+    window.chatMessagesMap[channel] = Array.isArray(messages) ? messages : [];
+    renderChatMessages(window.chatMessagesMap[channel]);
+  } catch (err) {
+    container.innerHTML = `<div style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-comments gold-accent"></i> Welcome to #${escapeHtml(channel)} chat! Start the conversation.</div>`;
+  }
+}
+
+function renderChatMessages(messages) {
+  const container = document.getElementById("chatMessagesContainer");
+  if (!container) return;
+
+  if (!messages || messages.length === 0) {
+    container.innerHTML = `<div style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-comments gold-accent"></i> Welcome to #${escapeHtml(window.currentChatChannel)} room! Send a message or paste Luau code below.</div>`;
+    return;
+  }
+
+  const myUsername = (window.currentUser?.username || "").toLowerCase();
+
+  container.innerHTML = messages.map(m => {
+    const isSelf = (m.username || "").toLowerCase() === myUsername;
+    const role = (m.role || "developer").toLowerCase();
+    const roleClass = role === "admin" ? "chat-msg-role-admin" : (role === "developer" ? "chat-msg-role-dev" : "chat-msg-role-user");
+    const avatarLetter = (m.username || "D").charAt(0).toUpperCase();
+    const avatarHtml = m.avatar_url
+      ? `<img src="${escapeHtml(m.avatar_url)}" alt="Avatar">`
+      : avatarLetter;
+    const timeStr = m.created_at ? formatTimeAgo(m.created_at) : "just now";
+
+    return `
+      <div class="chat-msg-row ${isSelf ? 'chat-msg-self' : ''}">
+        <div class="chat-msg-avatar">${avatarHtml}</div>
+        <div class="chat-msg-content">
+          <div class="chat-msg-meta">
+            <span class="chat-msg-user">${escapeHtml(m.username || 'Developer')}</span>
+            <span class="chat-msg-role-badge ${roleClass}">${escapeHtml(role)}</span>
+            <span class="chat-msg-time">${timeStr}</span>
+          </div>
+          <div class="chat-msg-bubble">${escapeHtml(m.message)}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  container.scrollTop = container.scrollHeight;
+}
+
+function appendChatMessage(msg) {
+  const channel = msg.channel || "general";
+  if (!window.chatMessagesMap[channel]) window.chatMessagesMap[channel] = [];
+  window.chatMessagesMap[channel].push(msg);
+
+  if (channel === window.currentChatChannel) {
+    const container = document.getElementById("chatMessagesContainer");
+    if (!container) return;
+
+    const myUsername = (window.currentUser?.username || "").toLowerCase();
+    const isSelf = (msg.username || "").toLowerCase() === myUsername;
+    const role = (msg.role || "developer").toLowerCase();
+    const roleClass = role === "admin" ? "chat-msg-role-admin" : (role === "developer" ? "chat-msg-role-dev" : "chat-msg-role-user");
+    const avatarLetter = (msg.username || "D").charAt(0).toUpperCase();
+    const avatarHtml = msg.avatar_url
+      ? `<img src="${escapeHtml(msg.avatar_url)}" alt="Avatar">`
+      : avatarLetter;
+    const timeStr = msg.created_at ? formatTimeAgo(msg.created_at) : "just now";
+
+    const msgHtml = `
+      <div class="chat-msg-row ${isSelf ? 'chat-msg-self' : ''}">
+        <div class="chat-msg-avatar">${avatarHtml}</div>
+        <div class="chat-msg-content">
+          <div class="chat-msg-meta">
+            <span class="chat-msg-user">${escapeHtml(msg.username || 'Developer')}</span>
+            <span class="chat-msg-role-badge ${roleClass}">${escapeHtml(role)}</span>
+            <span class="chat-msg-time">${timeStr}</span>
+          </div>
+          <div class="chat-msg-bubble">${escapeHtml(msg.message)}</div>
+        </div>
+      </div>
+    `;
+
+    container.insertAdjacentHTML("beforeend", msgHtml);
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+function switchChatChannel(channel) {
+  window.currentChatChannel = channel;
+  document.querySelectorAll(".channel-pill").forEach(pill => {
+    pill.classList.toggle("active", pill.getAttribute("data-channel") === channel);
+  });
+  loadChatMessages(channel);
+}
+
+function handleSendChatMessage(e) {
+  e.preventDefault();
+  const input = document.getElementById("chatInputMessage");
+  if (!input) return;
+  const message = input.value.trim();
+  if (!message) return;
+
+  if (window.chatSocket && window.chatSocket.readyState === WebSocket.OPEN) {
+    window.chatSocket.send(JSON.stringify({
+      type: "message",
+      message: message,
+      channel: window.currentChatChannel || "general"
+    }));
+    input.value = "";
+    input.focus();
+  } else {
+    // Fallback REST POST if socket is reconnecting
+    apiCall("/api/chat/messages", "POST", {
+      message: message,
+      channel: window.currentChatChannel || "general"
+    }).then(() => {
+      input.value = "";
+      loadChatMessages(window.currentChatChannel);
+    }).catch(err => {
+      showToast("Unable to send chat message: " + err.message, "error");
+    });
+  }
+}
+
+function updateChatPresence(count, users) {
+  const pill = document.getElementById("chatOnlinePill");
+  if (pill) {
+    pill.innerHTML = `<i class="fa-solid fa-circle"></i> ${count} Online`;
+  }
+
+  const userListEl = document.getElementById("chatActiveUsersList");
+  if (userListEl) {
+    if (!users || users.length === 0) {
+      userListEl.innerHTML = `<div style="color:var(--text-zinc-500); font-size:11px; padding:6px;">No other users active</div>`;
+      return;
+    }
+
+    userListEl.innerHTML = users.map(u => {
+      const name = escapeHtml(u.username || "Guest");
+      const role = escapeHtml(u.role || "Developer");
+      const initial = name.charAt(0).toUpperCase();
+      return `
+        <div class="chat-user-item">
+          <div class="chat-user-avatar">${initial}</div>
+          <span class="chat-user-name">${name}</span>
+          <span class="badge badge-zinc" style="font-size:8.5px;">${role}</span>
+        </div>
+      `;
+    }).join("");
+  }
+}
+
+function toggleChatSound() {
+  window.chatSoundEnabled = !window.chatSoundEnabled;
+  const btn = document.getElementById("chatSoundBtn");
+  if (btn) {
+    btn.innerHTML = window.chatSoundEnabled
+      ? '<i class="fa-solid fa-volume-high"></i> Sound: ON'
+      : '<i class="fa-solid fa-volume-xmark"></i> Sound: OFF';
+  }
+  showToast(`Chat sound notifications: ${window.chatSoundEnabled ? 'ENABLED' : 'MUTED'}`, "info");
+}
+
+function playChatSound() {
+  if (!window.chatSoundEnabled) return;
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+    osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1); // A5
+    gain.gain.setValueAtTime(0.06, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.12);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.12);
   } catch (err) {}
 }
 

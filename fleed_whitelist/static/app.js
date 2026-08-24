@@ -2251,74 +2251,116 @@ async function loadSystemHealth() {
 }
 
 // ----------------- Command Search Palette (Ctrl+K) -----------------
+const PALETTE_ACTIONS = {
+  kick: { title: "Remote Kick In-Game Player", icon: "fa-solid fa-bolt", fn: () => { closeSearchPalette(); openKickModal(); } },
+  create_script: { title: "Create New Script Hub", icon: "fa-solid fa-plus", fn: () => { closeSearchPalette(); openCreateScriptModal(); } },
+  bulk_keys: { title: "Bulk Generate License Keys", icon: "fa-solid fa-layer-group", fn: () => { closeSearchPalette(); openBulkGenModal(); } },
+  import_keys: { title: "Import Keys from CSV/TXT", icon: "fa-solid fa-file-import", fn: () => { closeSearchPalette(); openImportKeysModal(); } },
+  trace_watermark: { title: "Trace Leaker / Forensic Watermark", icon: "fa-solid fa-fingerprint", fn: () => { closeSearchPalette(); switchTab("bypasses"); } },
+  audit_logs: { title: "View Live Security Audit Feed", icon: "fa-solid fa-shield-halved", fn: () => { closeSearchPalette(); switchTab("logs"); } },
+  backup_db: { title: "Download Database Backup", icon: "fa-solid fa-cloud-arrow-down", fn: () => { closeSearchPalette(); window.location.href = "/api/system/backup"; } },
+  tab_overview: { title: "Go to: Command Overview & Telemetry", icon: "fa-solid fa-chart-line", fn: () => { closeSearchPalette(); switchTab("overview"); } },
+  tab_sessions: { title: "Go to: Live Players & In-Game Sessions", icon: "fa-solid fa-signal", fn: () => { closeSearchPalette(); switchTab("sessions"); } },
+  tab_scripts: { title: "Go to: Script Hubs & Luau Obfuscation", icon: "fa-solid fa-code", fn: () => { closeSearchPalette(); switchTab("scripts"); } },
+  tab_licenses: { title: "Go to: License Whitelist & HWID Keys", icon: "fa-solid fa-key", fn: () => { closeSearchPalette(); switchTab("licenses"); } },
+  tab_bypasses: { title: "Go to: Threat Radar & Leaker Forensics", icon: "fa-solid fa-shield-virus", fn: () => { closeSearchPalette(); switchTab("bypasses"); } },
+  tab_logs: { title: "Go to: Live Security Audit Logs", icon: "fa-solid fa-terminal", fn: () => { closeSearchPalette(); switchTab("logs"); } },
+  tab_telemetry: { title: "Go to: Executor Analytics & Runtimes", icon: "fa-solid fa-chart-pie", fn: () => { closeSearchPalette(); switchTab("telemetry"); } },
+  tab_remote: { title: "Go to: Remote Luau Console IDE", icon: "fa-solid fa-laptop-code", fn: () => { closeSearchPalette(); switchTab("remote-exec"); } },
+  tab_versions: { title: "Go to: Script Versions & Rollbacks", icon: "fa-solid fa-clock-rotate-left", fn: () => { closeSearchPalette(); switchTab("versions"); } },
+  tab_flags: { title: "Go to: Feature Flags & Overrides", icon: "fa-solid fa-toggle-on", fn: () => { closeSearchPalette(); switchTab("flags"); } },
+  tab_api: { title: "Go to: Developer REST API & Simulator", icon: "fa-solid fa-network-wired", fn: () => { closeSearchPalette(); switchTab("api"); } },
+  tab_chat: { title: "Go to: Developer Live Chat Room", icon: "fa-solid fa-comments", fn: () => { closeSearchPalette(); switchTab("chat"); } },
+  tab_announcements: { title: "Go to: Global In-Game Broadcasts", icon: "fa-solid fa-bullhorn", fn: () => { closeSearchPalette(); switchTab("announcements"); } },
+  tab_webhooks: { title: "Go to: Discord Webhooks & Telemetry", icon: "fa-brands fa-discord", fn: () => { closeSearchPalette(); switchTab("webhooks"); } },
+  tab_staff: { title: "Go to: Staff & Resellers Management", icon: "fa-solid fa-user-shield", fn: () => { closeSearchPalette(); switchTab("staff"); } },
+  tab_system: { title: "Go to: System Engine Health", icon: "fa-solid fa-server", fn: () => { closeSearchPalette(); switchTab("system"); } },
+  tab_settings: { title: "Go to: Security & 2FA Settings", icon: "fa-solid fa-gears", fn: () => { closeSearchPalette(); switchTab("settings"); } }
+};
+
+function executePaletteAction(actionKey) {
+  const item = PALETTE_ACTIONS[actionKey];
+  if (item && typeof item.fn === "function") {
+    item.fn();
+  }
+}
+
 function openSearchPalette() {
-  const modal = document.getElementById("modalSearchPalette");
+  const modal = document.getElementById("searchPaletteModal") || document.getElementById("modalSearchPalette");
   const input = document.getElementById("paletteSearchInput");
-  if (modal && input) {
+  if (modal) {
+    modal.style.display = "flex";
     modal.classList.add("active");
-    input.value = "";
-    input.focus();
+    if (input) {
+      input.value = "";
+      setTimeout(() => input.focus(), 50);
+    }
     renderPaletteResults("");
   }
 }
 
+function closeSearchPalette() {
+  const modal = document.getElementById("searchPaletteModal") || document.getElementById("modalSearchPalette");
+  if (modal) {
+    modal.style.display = "none";
+    modal.classList.remove("active");
+  }
+}
+
 function handlePaletteSearch(val) {
-  renderPaletteResults(val.toLowerCase().trim());
+  renderPaletteResults((val || "").toLowerCase().trim());
 }
 
 function renderPaletteResults(query) {
-  const container = document.getElementById("paletteResults");
+  const container = document.getElementById("paletteResultsList") || document.getElementById("paletteResults");
   if (!container) return;
 
   const results = [];
 
-  // Static quick actions
-  const actions = [
-    { title: "Remote Kick In-Game Player", icon: "fa-solid fa-bolt", tab: "overview", action: () => { closeModal("modalSearchPalette"); openKickModal(); } },
-    { title: "Create New Script Hub", icon: "fa-solid fa-plus", tab: "scripts", action: () => { closeModal("modalSearchPalette"); openCreateScriptModal(); } },
-    { title: "Bulk Generate License Keys", icon: "fa-solid fa-layer-group", tab: "licenses", action: () => { closeModal("modalSearchPalette"); openBulkGenModal(); } },
-    { title: "Import Keys from CSV/TXT", icon: "fa-solid fa-file-import", tab: "licenses", action: () => { closeModal("modalSearchPalette"); openImportKeysModal(); } },
-    { title: "Trace Leaker / Watermark", icon: "fa-solid fa-fingerprint", tab: "bypasses", action: () => { closeModal("modalSearchPalette"); switchTab("bypasses"); } },
-    { title: "View Live Security Audit Feed", icon: "fa-solid fa-shield-halved", tab: "logs", action: () => { closeModal("modalSearchPalette"); switchTab("logs"); } },
-    { title: "Download Database Backup", icon: "fa-solid fa-cloud-arrow-down", tab: "system", action: () => { window.location.href = "/api/system/backup"; } }
-  ];
-
-  actions.forEach(a => {
+  // Match quick actions
+  Object.keys(PALETTE_ACTIONS).forEach(key => {
+    const a = PALETTE_ACTIONS[key];
     if (!query || a.title.toLowerCase().includes(query)) {
       results.push(`
-        <div class="palette-item" onclick="(${a.action.toString()})()">
-          <span style="display:flex; align-items:center; gap:10px;"><i class="${a.icon}" style="color:var(--gold-primary);"></i> ${escapeHtml(a.title)}</span>
-          <span class="badge badge-zinc">Action</span>
+        <div class="palette-item" onclick="executePaletteAction('${key}')">
+          <span style="display:flex; align-items:center; gap:8px;"><i class="${a.icon}" style="color:var(--gold-primary); width:16px; text-align:center;"></i> ${escapeHtml(a.title)}</span>
+          <span class="badge badge-zinc" style="font-size:9.5px;">Jump</span>
         </div>
       `);
     }
   });
 
   // Hub matches
-  currentScripts.forEach(s => {
-    if (query && (s.name.toLowerCase().includes(query) || s.slug.toLowerCase().includes(query))) {
-      results.push(`
-        <div class="palette-item" onclick="closeModal('modalSearchPalette'); switchTab('scripts'); openEditScriptModal(${s.id});">
-          <span style="display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-code" style="color:var(--gold-primary);"></i> Hub: ${escapeHtml(s.name)} (<code>${s.slug}</code>)</span>
-          <span class="badge badge-gold">Hub</span>
-        </div>
-      `);
-    }
-  });
+  if (Array.isArray(currentScripts)) {
+    currentScripts.forEach(s => {
+      if (query && (s.name.toLowerCase().includes(query) || (s.slug && s.slug.toLowerCase().includes(query)))) {
+        results.push(`
+          <div class="palette-item" onclick="closeSearchPalette(); switchTab('scripts'); openEditScriptModal(${s.id});">
+            <span style="display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-code" style="color:var(--gold-primary); width:16px; text-align:center;"></i> Hub: ${escapeHtml(s.name)} (<code>${escapeHtml(s.slug)}</code>)</span>
+            <span class="badge badge-gold" style="font-size:9.5px;">Hub</span>
+          </div>
+        `);
+      }
+    });
+  }
 
   // License matches
-  currentLicenses.forEach(l => {
-    if (query && (l.license_key.toLowerCase().includes(query) || (l.note && l.note.toLowerCase().includes(query)))) {
-      results.push(`
-        <div class="palette-item" onclick="closeModal('modalSearchPalette'); switchTab('licenses'); openLicenseDetailModal(${l.id});">
-          <span style="display:flex; align-items:center; gap:10px;"><i class="fa-solid fa-key" style="color:var(--gold-primary);"></i> Key: ${escapeHtml(l.license_key)} ${l.note ? '(' + escapeHtml(l.note) + ')' : ''}</span>
-          <span class="badge badge-zinc">License</span>
-        </div>
-      `);
-    }
-  });
+  if (Array.isArray(currentLicenses)) {
+    currentLicenses.forEach(l => {
+      if (query && ((l.license_key && l.license_key.toLowerCase().includes(query)) || (l.note && l.note.toLowerCase().includes(query)) || (l.roblox_username && l.roblox_username.toLowerCase().includes(query)))) {
+        results.push(`
+          <div class="palette-item" onclick="closeSearchPalette(); switchTab('licenses'); openLicenseDetailModal(${l.id});">
+            <span style="display:flex; align-items:center; gap:8px;"><i class="fa-solid fa-key" style="color:var(--gold-primary); width:16px; text-align:center;"></i> Key: ${escapeHtml(l.license_key)} ${l.note ? '(' + escapeHtml(l.note) + ')' : ''}</span>
+            <span class="badge badge-zinc" style="font-size:9.5px;">License</span>
+          </div>
+        `);
+      }
+    });
+  }
 
-  container.innerHTML = results.length > 0 ? results.join("") : `<div style="text-align:center; padding:20px; color:var(--text-zinc-500);">No matching commands or records.</div>`;
+  container.innerHTML = results.length > 0
+    ? results.join("")
+    : `<div style="text-align:center; padding:18px; color:var(--text-zinc-500); font-size:11px;">No matching commands or records found.</div>`;
 }
 
 // =========================================================================

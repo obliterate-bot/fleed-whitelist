@@ -1675,6 +1675,32 @@ async function createLicense(slug, key, discordId, note) {
     </div>
   </div>
 
+  <!-- 14. Loadstring Studio Modal -->
+  <div id="modalLoadstring" class="modal-overlay" style="display:none;">
+    <div class="modal-card modal-card-lg">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalLoadstringTitle"><i class="fa-solid fa-terminal gold-accent"></i> Loadstring Studio</h3>
+        <button type="button" class="modal-close-btn" onclick="closeModal('modalLoadstring')"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div>
+        <p class="card-subtitle" style="margin-bottom:14px;">Select execution format to distribute to buyers or paste in executor:</p>
+        <div class="snippet-tabs-bar" style="margin-bottom:14px;">
+          <button type="button" class="snippet-tab-btn active" id="btnTabOneliner" onclick="switchLoadstringStyle('oneliner')"><i class="fa-solid fa-code"></i> Standard One-Liner</button>
+          <button type="button" class="snippet-tab-btn" id="btnTabKeygated" onclick="switchLoadstringStyle('keygated')"><i class="fa-solid fa-key"></i> Key-Gated Wrapper</button>
+          <button type="button" class="snippet-tab-btn" id="btnTabHeaders" onclick="switchLoadstringStyle('luau_headers')"><i class="fa-solid fa-shield"></i> Synapse / HTTP Headers</button>
+        </div>
+        <div style="position:relative; margin-bottom:16px;">
+          <button type="button" class="btn btn-secondary btn-sm copy-snippet-btn" onclick="copyModalLoadstring()"><i class="fa-solid fa-copy"></i> Copy</button>
+          <pre id="modalLoadstringCode" class="code-viewer" style="max-height:260px;"></pre>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modalLoadstring')">Close</button>
+          <button type="button" class="btn btn-primary" onclick="copyModalLoadstring()"><i class="fa-solid fa-copy"></i> Copy Loadstring</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container"></div>
 

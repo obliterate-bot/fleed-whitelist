@@ -1220,83 +1220,92 @@ function handleLuaFileUpload(e) {
   reader.readAsText(file);
 }
 
+// ----------------- Script Hub Modals & Form Handlers -----------------
 function openCreateScriptModal() {
-  document.getElementById("scriptModalTitle").innerHTML = '<i class="fa-solid fa-code" style="color:var(--gold-primary); margin-right:8px;"></i>Create Script Hub';
-  document.getElementById("scriptEditId").value = "";
-  document.getElementById("scriptName").value = "";
-  document.getElementById("scriptSlug").value = "";
-  document.getElementById("scriptVersion").value = "1.0.0";
-  document.getElementById("scriptSource").value = "-- Paste your Lua / Luau script here\nprint(\"Hello from FleedGuard Protected Script!\")\n";
-  document.getElementById("scriptMode").value = "2";
-  document.getElementById("scriptWebhook").value = "";
-  updateScriptSizeCounter();
-  document.getElementById("modalScript").classList.add("active");
+  const nameEl = document.getElementById("createScriptName");
+  const slugEl = document.getElementById("createScriptSlug");
+  const codeEl = document.getElementById("createScriptCode");
+  const webEl = document.getElementById("createScriptWebhook");
+
+  if (nameEl) nameEl.value = "";
+  if (slugEl) slugEl.value = "";
+  if (codeEl) codeEl.value = '-- Paste your Lua / Luau script here\nprint("Hello from FleedGuard Protected Script!")\n';
+  if (webEl) webEl.value = "";
+
+  openModal("createScriptModal");
+}
+
+async function handleCreateScript(e) {
+  e.preventDefault();
+  const name = document.getElementById("createScriptName")?.value.trim();
+  const slug = document.getElementById("createScriptSlug")?.value.trim();
+  const raw_source = document.getElementById("createScriptCode")?.value;
+  const discord_webhook = document.getElementById("createScriptWebhook")?.value.trim() || null;
+
+  if (!name || !slug || !raw_source) {
+    return showToast("Please fill in all required fields", "error");
+  }
+
+  try {
+    await apiCall("/api/scripts", "POST", {
+      name,
+      slug,
+      version: "1.0.0",
+      raw_source,
+      is_obfuscated_mode: 1,
+      discord_webhook
+    });
+    showToast(`Script Hub '${name}' created successfully!`, "success");
+    closeModal("createScriptModal");
+    loadScripts();
+    loadOverviewStats();
+  } catch (err) {}
 }
 
 async function openEditScriptModal(id) {
-  const script = currentScripts.find(s => s.id === id);
+  let script = currentScripts.find(s => s.id === id);
+  if (!script) {
+    try {
+      script = await apiCall(`/api/scripts/${id}`);
+    } catch (e) {
+      return showToast("Failed to load script details", "error");
+    }
+  }
   if (!script) return;
 
-  document.getElementById("scriptModalTitle").innerHTML = `<i class="fa-solid fa-pen-to-square" style="color:var(--gold-primary); margin-right:8px;"></i>Edit Hub: ${escapeHtml(script.name)}`;
-  document.getElementById("scriptEditId").value = script.id;
-  document.getElementById("scriptName").value = script.name;
-  document.getElementById("scriptSlug").value = script.slug;
-  document.getElementById("scriptVersion").value = script.version;
-  document.getElementById("scriptSource").value = script.raw_source;
-  document.getElementById("scriptMode").value = script.is_obfuscated_mode ? String(script.is_obfuscated_mode) : "0";
-  document.getElementById("scriptWebhook").value = script.discord_webhook || "";
-  updateScriptSizeCounter();
-  document.getElementById("modalScript").classList.add("active");
+  const idEl = document.getElementById("editScriptId");
+  const nameEl = document.getElementById("editScriptName");
+  const codeEl = document.getElementById("editScriptCode");
+  const webEl = document.getElementById("editScriptWebhook");
+
+  if (idEl) idEl.value = script.id;
+  if (nameEl) nameEl.value = script.name || "";
+  if (codeEl) codeEl.value = script.raw_source || "";
+  if (webEl) webEl.value = script.discord_webhook || "";
+
+  openModal("editScriptModal");
 }
 
-async function saveScript(e) {
+async function handleSaveEditScript(e) {
   e.preventDefault();
-  const id = document.getElementById("scriptEditId").value;
-  const name = document.getElementById("scriptName").value;
-  const slug = document.getElementById("scriptSlug").value;
-  const version = document.getElementById("scriptVersion").value;
-  const raw_source = document.getElementById("scriptSource").value;
-  const is_obfuscated_mode = parseInt(document.getElementById("scriptMode").value);
-  const discord_webhook = document.getElementById("scriptWebhook").value;
+  const id = document.getElementById("editScriptId")?.value;
+  const name = document.getElementById("editScriptName")?.value.trim();
+  const raw_source = document.getElementById("editScriptCode")?.value;
+  const discord_webhook = document.getElementById("editScriptWebhook")?.value.trim() || null;
+
+  if (!id || !name || !raw_source) {
+    return showToast("Please fill in all required fields", "error");
+  }
 
   try {
-    if (id) {
-      await apiCall(`/api/scripts/${id}`, "PATCH", { name, version, raw_source, is_obfuscated_mode, discord_webhook });
-      showToast("Script hub updated successfully!");
-    } else {
-      await apiCall("/api/scripts", "POST", { name, slug, version, raw_source, is_obfuscated_mode, discord_webhook });
-      showToast("Script hub created and deployed!");
-    }
-    closeModal("modalScript");
+    await apiCall(`/api/scripts/${id}`, "PATCH", {
+      name,
+      raw_source,
+      discord_webhook
+    });
+    showToast("Script source updated successfully!", "success");
+    closeModal("editScriptModal");
     loadScripts();
-    loadOverviewStats();
-  } catch (err) {}
-}
-
-async function testScriptWebhook(scriptId) {
-  try {
-    const res = await apiCall(`/api/scripts/${scriptId}/test-webhook`, "POST", {});
-    showToast(res.message, "success");
-  } catch (err) {}
-}
-
-async function toggleKillswitch(id, currentStatus) {
-  const newStatus = currentStatus ? 0 : 1;
-  const reason = newStatus ? prompt("Enter Killswitch Reason:", "Emergency security update in progress") : "";
-  try {
-    await apiCall(`/api/scripts/${id}`, "PATCH", { killswitch_active: newStatus, killswitch_reason: reason });
-    showToast(newStatus ? "Killswitch ACTIVATED! Executions blocked." : "Killswitch deactivated.", newStatus ? "error" : "success");
-    loadScripts();
-  } catch (err) {}
-}
-
-async function deleteScript(id) {
-  if (!confirm("Are you sure you want to delete this script hub and all associated license keys?")) return;
-  try {
-    await apiCall(`/api/scripts/${id}`, "DELETE");
-    showToast("Script hub deleted.");
-    loadScripts();
-    loadOverviewStats();
   } catch (err) {}
 }
 
@@ -1306,79 +1315,106 @@ async function previewObfuscatedSource(scriptId) {
   try {
     const data = await apiCall(`/api/scripts/${scriptId}/preview`);
     if (!data || !data.success) {
-      showToast("Failed to compile preview", "danger");
+      showToast("Failed to compile preview", "error");
       return;
     }
 
-    document.getElementById("previewModalTitle").innerHTML = `<i class="fa-solid fa-eye" style="color:var(--gold-primary); margin-right:8px;"></i>Preview: ${escapeHtml(data.name)} (Delivered Obfuscated Output)`;
-    document.getElementById("previewTabTitle").innerText = `${data.slug}.obfuscated.luau`;
-    document.getElementById("previewCodeArea").value = data.obfuscated_source;
-    document.getElementById("previewEngineStatus").innerText = `${data.mode_name} Engine`;
-    document.getElementById("previewSizeStatus").innerText = `${(data.size_bytes / 1024).toFixed(1)} KB`;
+    const titleEl = document.getElementById("scriptCodeModalTitle");
+    if (titleEl) {
+      titleEl.innerHTML = `<i class="fa-solid fa-eye gold-accent"></i> Preview: ${escapeHtml(data.name)} (${escapeHtml(data.mode_name)})`;
+    }
 
-    document.getElementById("previewMetaBadges").innerHTML = `
-      <span class="badge badge-gold"><i class="fa-solid fa-shield-halved"></i> ${escapeHtml(data.mode_name)}</span>
-      <span class="badge badge-zinc">${(data.size_bytes / 1024).toFixed(1)} KB</span>
-    `;
+    const contentEl = document.getElementById("scriptCodeModalContent");
+    if (contentEl) {
+      contentEl.innerText = data.obfuscated_source;
+    }
 
-    updateLineNumbers(document.getElementById("previewCodeArea"), "previewLineNumbers");
-    document.getElementById("modalPreviewSource").classList.add("active");
+    openModal("scriptCodeModal");
   } catch (err) {
-    showToast("Error generating preview: " + (err.message || err), "danger");
+    showToast("Error generating preview: " + (err.message || err), "error");
   }
-}
-
-function copyPreviewSource() {
-  const code = document.getElementById("previewCodeArea").value;
-  copyText(code, "Obfuscated source copied to clipboard!");
-}
-
-function downloadPreviewSource() {
-  const code = document.getElementById("previewCodeArea").value;
-  const tabTitle = document.getElementById("previewTabTitle").innerText || "obfuscated.luau";
-  const blob = new Blob([code], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = tabTitle;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  showToast(`Downloaded ${tabTitle}`);
 }
 
 // ----------------- Loadstring Studio -----------------
+let currentLoadstringSlug = "";
+let currentLoadstringName = "";
+let currentLoadstringStyle = "oneliner";
+
 function openLoadstringModal(slug, name) {
-  modalSelectedScript = { slug, name };
-  document.getElementById("loadstringKeyInput").value = "";
-  renderModalLoadstring();
-  document.getElementById("modalLoadstring").classList.add("active");
-}
+  currentLoadstringSlug = slug;
+  currentLoadstringName = name;
+  currentLoadstringStyle = "oneliner";
 
-function renderModalLoadstring() {
-  if (!modalSelectedScript) return;
-  const origin = window.location.origin;
-  const style = document.getElementById("loadstringStyleSelect").value;
-  const key = document.getElementById("loadstringKeyInput").value.trim() || "FLEED-XXXX-XXXX-XXXX";
-
-  let code = "";
-  if (style === "standard") {
-    code = `getgenv().FleedKey = "${key}"\nloadstring(game:HttpGet("${origin}/v1/loader/${modalSelectedScript.slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;
-  } else if (style === "direct") {
-    code = `loadstring(game:HttpGet("${origin}/v1/loader/${modalSelectedScript.slug}?key=${key}"))()`;
-  } else if (style === "inline") {
-    code = `getgenv().FleedKey="${key}";loadstring(game:HttpGet("${origin}/v1/loader/${modalSelectedScript.slug}?key=${key}"))()`;
-  } else if (style === "luau_headers") {
-    code = `local req = (syn and syn.request) or (http and http.request) or http_request or request\nlocal res = req({Url = "${origin}/v1/loader/${modalSelectedScript.slug}", Method = "GET", Headers = {["X-License-Key"] = "${key}"}})\nloadstring(res.Body)()`;
+  const titleEl = document.getElementById("modalLoadstringTitle");
+  if (titleEl) {
+    titleEl.innerHTML = `<i class="fa-solid fa-terminal gold-accent"></i> Loadstring Studio: ${escapeHtml(name)}`;
   }
 
-  document.getElementById("modalLoadstringCode").innerText = code;
+  document.querySelectorAll("#modalLoadstring .snippet-tab-btn").forEach(btn => btn.classList.remove("active"));
+  document.getElementById("btnTabOneliner")?.classList.add("active");
+
+  updateLoadstringModalCode();
+  openModal("modalLoadstring");
+}
+
+function switchLoadstringStyle(style) {
+  currentLoadstringStyle = style;
+  document.querySelectorAll("#modalLoadstring .snippet-tab-btn").forEach(btn => btn.classList.remove("active"));
+  if (style === "oneliner") document.getElementById("btnTabOneliner")?.classList.add("active");
+  if (style === "keygated") document.getElementById("btnTabKeygated")?.classList.add("active");
+  if (style === "luau_headers") document.getElementById("btnTabHeaders")?.classList.add("active");
+  updateLoadstringModalCode();
+}
+
+function updateLoadstringModalCode() {
+  const origin = window.location.origin;
+  const slug = currentLoadstringSlug || "script";
+  let code = "";
+
+  if (currentLoadstringStyle === "oneliner") {
+    code = `loadstring(game:HttpGet("${origin}/v1/loader/${slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;
+  } else if (currentLoadstringStyle === "keygated") {
+    code = `getgenv().FleedKey = "YOUR_LICENSE_KEY"\nloadstring(game:HttpGet("${origin}/v1/loader/${slug}?key=" .. tostring(getgenv().FleedKey or "")))()`;
+  } else if (currentLoadstringStyle === "luau_headers") {
+    code = `local req = (syn and syn.request) or (http and http.request) or http_request or request\nlocal res = req({\n    Url = "${origin}/v1/loader/${slug}",\n    Method = "GET",\n    Headers = {["X-License-Key"] = tostring(getgenv().FleedKey or "YOUR_KEY")}\n})\nloadstring(res.Body)()`;
+  }
+
+  const codeEl = document.getElementById("modalLoadstringCode");
+  if (codeEl) codeEl.innerText = code;
 }
 
 function copyModalLoadstring() {
-  const text = document.getElementById("modalLoadstringCode").innerText;
-  copyText(text, "Loadstring copied!");
+  const text = document.getElementById("modalLoadstringCode")?.innerText || "";
+  copyText(text, "Loadstring copied to clipboard!");
+}
+
+// ----------------- Webhook, Killswitch & Deletion Actions -----------------
+async function testScriptWebhook(scriptId) {
+  try {
+    const res = await apiCall(`/api/scripts/${scriptId}/test-webhook`, "POST", {});
+    showToast(res.message || "Test webhook alert sent to Discord!", "success");
+  } catch (err) {}
+}
+
+async function toggleKillswitch(id, currentStatus) {
+  const newStatus = currentStatus ? 0 : 1;
+  const reason = newStatus ? prompt("Enter Killswitch Reason (shown to blocked players):", "Emergency security maintenance in progress") : "";
+  if (newStatus && reason === null) return;
+  try {
+    await apiCall(`/api/scripts/${id}`, "PATCH", { killswitch_active: newStatus, killswitch_reason: reason });
+    showToast(newStatus ? "Killswitch ACTIVATED! Executions blocked." : "Killswitch deactivated. Hub is LIVE.", newStatus ? "error" : "success");
+    loadScripts();
+  } catch (err) {}
+}
+
+async function deleteScript(id) {
+  if (!confirm("Are you sure you want to permanently delete this script hub and all associated license keys?")) return;
+  try {
+    await apiCall(`/api/scripts/${id}`, "DELETE");
+    showToast("Script hub deleted successfully.", "success");
+    loadScripts();
+    loadOverviewStats();
+  } catch (err) {}
 }
 
 // ----------------- Licenses Management & Bulk Actions -----------------

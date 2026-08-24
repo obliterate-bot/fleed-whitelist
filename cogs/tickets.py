@@ -187,6 +187,13 @@ class TicketOpenModal(discord.ui.Modal):
         self.add_item(self.desc_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Defer interaction immediately to prevent Discord 3.0s modal timeout error
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except Exception:
+                pass
+
         await create_ticket_channel(
             bot=self.bot,
             interaction=interaction,
@@ -200,15 +207,25 @@ class TicketRenameModal(discord.ui.Modal, title="Rename Ticket"):
     name_input = discord.ui.TextInput(label="New Channel Name", placeholder="e.g. solved-billing", max_length=50)
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except Exception:
+                pass
         new_name = self.name_input.value.lower().replace(" ", "-")
         await interaction.channel.edit(name=new_name, reason=f"ticket renamed by {interaction.user}")
-        await interaction.response.send_message(embed=success_embed(f"renamed ticket to `#{new_name}`", interaction.user))
+        await interaction.followup.send(embed=success_embed(f"renamed ticket to `#{new_name}`", interaction.user), ephemeral=True)
 
 
 class TicketAddUserModal(discord.ui.Modal, title="Add Member to Ticket"):
     user_input = discord.ui.TextInput(label="User ID or Username", placeholder="enter user ID or username...", min_length=2)
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except Exception:
+                pass
         guild = interaction.guild
         query = self.user_input.value.strip()
         target = None
@@ -217,10 +234,10 @@ class TicketAddUserModal(discord.ui.Modal, title="Add Member to Ticket"):
         if not target:
             target = discord.utils.find(lambda m: query.lower() in m.name.lower() or query.lower() in m.display_name.lower(), guild.members)
         if not target:
-            return await interaction.response.send_message(embed=error_embed("could not find that member in this server", interaction.user), ephemeral=True)
+            return await interaction.followup.send(embed=error_embed("could not find that member in this server", interaction.user), ephemeral=True)
 
         await interaction.channel.set_permissions(target, view_channel=True, send_messages=True, attach_files=True, embed_links=True, read_message_history=True)
-        await interaction.response.send_message(embed=success_embed(f"added {target.mention} to this ticket", interaction.user))
+        await interaction.followup.send(embed=success_embed(f"added {target.mention} to this ticket", interaction.user), ephemeral=True)
 
 
 class TicketTransferModal(discord.ui.Modal, title="Transfer Ticket"):
@@ -231,6 +248,11 @@ class TicketTransferModal(discord.ui.Modal, title="Transfer Ticket"):
     staff_input = discord.ui.TextInput(label="Staff Member ID or Username", placeholder="enter staff user ID or name...")
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.defer(ephemeral=True)
+            except Exception:
+                pass
         guild = interaction.guild
         query = self.staff_input.value.strip()
         target = None
@@ -239,29 +261,49 @@ class TicketTransferModal(discord.ui.Modal, title="Transfer Ticket"):
         if not target:
             target = discord.utils.find(lambda m: query.lower() in m.name.lower() or query.lower() in m.display_name.lower(), guild.members)
         if not target:
-            return await interaction.response.send_message(embed=error_embed("could not find that member", interaction.user), ephemeral=True)
+            return await interaction.followup.send(embed=error_embed("could not find that member", interaction.user), ephemeral=True)
 
         await self.bot.db.execute("UPDATE tickets SET claimed_by = ? WHERE channel_id = ?", (target.id, interaction.channel.id))
         await interaction.channel.set_permissions(target, view_channel=True, send_messages=True, attach_files=True, embed_links=True)
-        await interaction.response.send_message(embed=success_embed(f"ticket transferred to {target.mention}", interaction.user))
+        await interaction.followup.send(embed=success_embed(f"ticket transferred to {target.mention}", interaction.user), ephemeral=True)
 
 
 # ==================== CORE TICKET CREATION LOGIC ====================
 
 async def create_ticket_channel(bot, interaction: discord.Interaction, category_name: str, subject: str, description: str):
+    # Ensure interaction is deferred immediately
+    if not interaction.response.is_done():
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except Exception:
+            pass
+
+    async def send_response(embed):
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+        except Exception:
+            pass
+
     guild = interaction.guild
+    if not guild:
+        return await send_response(error_embed("tickets can only be opened within a server.", interaction.user))
+
     user = interaction.user
 
-    # Fetch configuration
-    cfg = await bot.db.fetchrow("SELECT * FROM ticket_config WHERE guild_id = ?", (guild.id,))
+    # Fetch configuration safely
+    raw_cfg = await bot.db.fetchrow("SELECT * FROM ticket_config WHERE guild_id = ?", (guild.id,))
+    cfg = dict(raw_cfg) if raw_cfg else {}
     
     # Check open ticket limit per user
     existing_rows = await bot.db.fetch("SELECT channel_id FROM tickets WHERE guild_id = ? AND opener_id = ? AND status = 'open'", (guild.id, user.id))
     if len(existing_rows) >= 3:
-        return await interaction.response.send_message(embed=warn_embed("you already have 3 open tickets. please close previous ones first.", user), ephemeral=True)
+        return await send_response(warn_embed("you already have 3 open tickets. please close previous ones first.", user))
 
     # Increment counter
-    counter = (cfg["ticket_counter"] if cfg and cfg["ticket_counter"] else 0) + 1
+    counter = (cfg.get("ticket_counter") or 0) + 1
     await bot.db.execute(
         "INSERT INTO ticket_config (guild_id, ticket_counter) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET ticket_counter = ?",
         (guild.id, counter, counter)
@@ -269,8 +311,8 @@ async def create_ticket_channel(bot, interaction: discord.Interaction, category_
 
     # Get target category
     target_category = None
-    if cfg and cfg["category_id"]:
-        target_category = guild.get_channel(cfg["category_id"])
+    if cfg.get("category_id"):
+        target_category = guild.get_channel(cfg.get("category_id"))
     if not target_category:
         target_category = discord.utils.get(guild.categories, name="tickets")
         if not target_category:
@@ -288,8 +330,8 @@ async def create_ticket_channel(bot, interaction: discord.Interaction, category_
 
     # Support Roles overwrite if configured
     support_roles = []
-    if cfg and "support_role_ids" in cfg.keys() and cfg["support_role_ids"]:
-        for r_id in str(cfg["support_role_ids"]).split(","):
+    if cfg.get("support_role_ids"):
+        for r_id in str(cfg.get("support_role_ids")).split(","):
             r_id = r_id.strip()
             if r_id.isdigit():
                 role_obj = guild.get_role(int(r_id))
@@ -309,7 +351,7 @@ async def create_ticket_channel(bot, interaction: discord.Interaction, category_
             reason=f"ticket opened by {user}"
         )
     except Exception as e:
-        return await interaction.response.send_message(embed=error_embed(f"failed to create ticket channel: {e}", user), ephemeral=True)
+        return await send_response(error_embed(f"failed to create ticket channel: {e}", user))
 
     # Save to database
     now_ts = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
@@ -337,7 +379,7 @@ async def create_ticket_channel(bot, interaction: discord.Interaction, category_
 
     ping_content = f"{user.mention}" + (" " + " ".join(r.mention for r in support_roles) if support_roles else "")
     await ticket_channel.send(content=ping_content, embed=embed, view=TicketControlView(bot))
-    await interaction.response.send_message(embed=success_embed(f"ticket opened in {ticket_channel.mention}", user), ephemeral=True)
+    await send_response(success_embed(f"ticket opened in {ticket_channel.mention}", user))
 
 
 # ==================== VIEWS ====================

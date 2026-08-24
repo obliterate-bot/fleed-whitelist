@@ -309,34 +309,42 @@ async def send_discord_security_alert(webhook_url: str, title: str, description:
 
 async def check_and_enforce_anomalies(conn, script: Dict, license_row: Dict, roblox_username: Optional[str], roblox_user_id: Optional[int], client_ip: str, executor: str, place_id: Optional[int], job_id: Optional[str], game_name: Optional[str]) -> Optional[str]:
     """
-    Evaluates multi-account and multi-IP sprawl in rolling windows.
-    Returns error message if anomaly triggered and key auto-banned; otherwise None.
+    Evaluates unauthorized multi-device distribution in rolling windows.
+    Legitimate alt accounts on the same device (same HWID) or local network (same IP)
+    are permitted and will NEVER trigger false leak bans.
     """
     clean_key = license_row["license_key"].upper()
     now_iso = datetime.now(timezone.utc).isoformat()
     uid = int(roblox_user_id or 0)
+    bound_hwid = license_row["hwid"] or ""
     
-    # 1. Multi-Account Sprawl Check (rolling 24h)
+    # 1. Multi-Account Sprawl Check (rolling 24h across DIFFERENT hardware devices)
+    # Legitimate alt accounts executing on the same machine (same HWID) or same network (same IP) are allowed.
     if uid > 0:
         cursor = await conn.execute("""
             SELECT COUNT(DISTINCT roblox_user_id) as distinct_users,
+                   COUNT(DISTINCT hwid) as distinct_hwids,
                    GROUP_CONCAT(DISTINCT roblox_username) as usernames
             FROM execution_logs
             WHERE UPPER(license_key) = ?
               AND roblox_user_id > 0
               AND roblox_user_id != ?
+              AND (hwid != ? AND ip_address != ?)
               AND timestamp >= datetime('now', '-24 hours')
-        """, (clean_key, uid))
+        """, (clean_key, uid, bound_hwid, client_ip))
         user_stats = await cursor.fetchone()
-        prior_users = user_stats["distinct_users"] if user_stats else 0
-        if prior_users >= 2:  # current + 2 prior = 3 distinct accounts
+        unrelated_users = user_stats["distinct_users"] if user_stats else 0
+        distinct_hwids = user_stats["distinct_hwids"] if user_stats else 0
+
+        # Only trigger leak ban if key is actively distributed across >= 3 separate foreign devices
+        if unrelated_users >= 3 and distinct_hwids >= 3:
             all_users = (user_stats["usernames"] or "") + f", {roblox_username or uid}"
-            ban_reason = f"Automated Leak Shield: Key shared across {prior_users + 1} distinct Roblox accounts ({all_users.strip(', ')})"
+            ban_reason = f"Automated Leak Shield: Key distributed across {unrelated_users + 1} distinct foreign devices ({all_users.strip(', ')})"
             await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE id = ?", (ban_reason, license_row["id"]))
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'LEAK_AUTO_BANNED', ?, ?)
-            """, (script["id"], license_row["id"], clean_key, license_row["hwid"], client_ip, executor, roblox_username, uid, place_id, job_id, game_name, ban_reason, now_iso))
+            """, (script["id"], license_row["id"], clean_key, bound_hwid, client_ip, executor, roblox_username, uid, place_id, job_id, game_name, ban_reason, now_iso))
             await conn.commit()
             
             # Send Discord Alert Webhook
@@ -345,34 +353,38 @@ async def check_and_enforce_anomalies(conn, script: Dict, license_row: Dict, rob
                 fields = [
                     {"name": "License Key", "value": f"`{clean_key}`", "inline": True},
                     {"name": "Script Hub", "value": f"{script['name']} (`{script['slug']}`)", "inline": True},
-                    {"name": "Trigger Reason", "value": "Multi-Account Distribution (>2 accounts in 24h)", "inline": False},
+                    {"name": "Trigger Reason", "value": "Multi-Device Public Leak (>3 foreign devices)", "inline": False},
                     {"name": "Roblox Accounts Detected", "value": f"```{all_users.strip(', ')}```", "inline": False},
                     {"name": "Latest IP", "value": f"`{client_ip}`", "inline": True},
                     {"name": "Action Taken", "value": "**Key Automatically Banned & Revoked**", "inline": False}
                 ]
-                await send_discord_security_alert(webhook_url, "Script Leak Detected (Auto-Banned)", f"License key `{clean_key}` has been automatically banned due to multi-user distribution.", fields, 0xEF4444)
+                await send_discord_security_alert(webhook_url, "Script Leak Detected (Auto-Banned)", f"License key `{clean_key}` has been automatically banned due to multi-device distribution.", fields, 0xEF4444)
             
-            return f"Security Violation: License revoked. Multi-account key sharing detected."
+            return f"Security Violation: License revoked. Multi-device key distribution detected."
 
-    # 2. Multi-IP Sprawl Check (rolling 2h)
+    # 2. Multi-IP Sprawl Check (rolling 2h across DIFFERENT hardware devices)
+    # IP shifts on the SAME device (dynamic residential ISP, mobile hotspot) are never banned.
     cursor = await conn.execute("""
         SELECT COUNT(DISTINCT ip_address) as distinct_ips,
+               COUNT(DISTINCT hwid) as distinct_hwids,
                GROUP_CONCAT(DISTINCT ip_address) as ips
         FROM execution_logs
         WHERE UPPER(license_key) = ?
           AND ip_address != ?
+          AND hwid != ?
           AND timestamp >= datetime('now', '-2 hours')
-    """, (clean_key, client_ip))
+    """, (clean_key, client_ip, bound_hwid))
     ip_stats = await cursor.fetchone()
     prior_ips = ip_stats["distinct_ips"] if ip_stats else 0
-    if prior_ips >= 3:  # current + 3 prior = 4 distinct IPs in 2 hours
+    prior_hwids = ip_stats["distinct_hwids"] if ip_stats else 0
+    if prior_ips >= 5 and prior_hwids >= 4:
         all_ips = (ip_stats["ips"] or "") + f", {client_ip}"
-        ban_reason = f"Automated Leak Shield: Key accessed from {prior_ips + 1} distinct IPs in 2h ({all_ips.strip(', ')})"
+        ban_reason = f"Automated Leak Shield: Key accessed from {prior_ips + 1} distinct IPs and foreign devices in 2h ({all_ips.strip(', ')})"
         await conn.execute("UPDATE licenses SET is_banned = 1, ban_reason = ? WHERE id = ?", (ban_reason, license_row["id"]))
         await conn.execute("""
             INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'LEAK_AUTO_BANNED', ?, ?)
-        """, (script["id"], license_row["id"], clean_key, license_row["hwid"], client_ip, executor, roblox_username, uid, place_id, job_id, game_name, ban_reason, now_iso))
+        """, (script["id"], license_row["id"], clean_key, bound_hwid, client_ip, executor, roblox_username, uid, place_id, job_id, game_name, ban_reason, now_iso))
         await conn.commit()
 
         webhook_url = script["discord_webhook"] if "discord_webhook" in script.keys() else None
@@ -380,7 +392,7 @@ async def check_and_enforce_anomalies(conn, script: Dict, license_row: Dict, rob
             fields = [
                 {"name": "License Key", "value": f"`{clean_key}`", "inline": True},
                 {"name": "Script Hub", "value": f"{script['name']} (`{script['slug']}`)", "inline": True},
-                {"name": "Trigger Reason", "value": "Multi-IP Proxy Sprawl (>3 IPs in 2h)", "inline": False},
+                {"name": "Trigger Reason", "value": "Multi-IP Proxy Sprawl (>4 foreign devices)", "inline": False},
                 {"name": "IPs Detected", "value": f"`{all_ips.strip(', ')}`", "inline": False},
                 {"name": "Action Taken", "value": "**Key Automatically Banned & Revoked**", "inline": False}
             ]

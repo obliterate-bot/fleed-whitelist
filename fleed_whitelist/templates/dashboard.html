@@ -1356,7 +1356,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-code gold-accent"></i> Create New Script Hub</h3>
-        <button class="modal-close-btn" onclick="closeModal('createScriptModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('createScriptModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleCreateScript(event)">
         <div class="form-group">
@@ -1388,7 +1388,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-pen-to-square gold-accent"></i> Edit Script Hub</h3>
-        <button class="modal-close-btn" onclick="closeModal('editScriptModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('editScriptModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleSaveEditScript(event)">
         <input type="hidden" id="editScriptId">
@@ -1417,10 +1417,10 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card modal-card-lg">
       <div class="modal-header">
         <h3 class="modal-title" id="scriptCodeModalTitle"><i class="fa-solid fa-code gold-accent"></i> Script Source Code</h3>
-        <button class="modal-close-btn" onclick="closeModal('scriptCodeModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('scriptCodeModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div style="position:relative;">
-        <button class="btn btn-secondary btn-sm copy-snippet-btn" onclick="copyText(document.getElementById('scriptCodeModalContent').innerText)"><i class="fa-solid fa-copy"></i> Copy</button>
+        <button type="button" class="btn btn-secondary btn-sm copy-snippet-btn" onclick="copyText(document.getElementById('scriptCodeModalContent').innerText)"><i class="fa-solid fa-copy"></i> Copy</button>
         <pre id="scriptCodeModalContent" class="code-viewer"></pre>
       </div>
     </div>
@@ -1431,7 +1431,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-key gold-accent"></i> Generate Single License</h3>
-        <button class="modal-close-btn" onclick="closeModal('singleGenModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('singleGenModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleGenerateSingleKey(event)">
         <div class="form-group">
@@ -1467,7 +1467,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-layer-group gold-accent"></i> Bulk Generate License Keys</h3>
-        <button class="modal-close-btn" onclick="closeModal('bulkGenModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('bulkGenModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleBulkGenerateKeys(event)">
         <div class="form-group">
@@ -1503,7 +1503,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-file-import gold-accent"></i> Import Existing Keys</h3>
-        <button class="modal-close-btn" onclick="closeModal('importKeysModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('importKeysModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleImportKeys(event)">
         <div class="form-group">
@@ -1527,7 +1527,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title danger-accent"><i class="fa-solid fa-user-xmark"></i> Remote Kick Player Session</h3>
-        <button class="modal-close-btn" onclick="closeModal('remoteKickModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('remoteKickModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleExecuteRemoteKick(event)">
         <input type="hidden" id="kickTargetKey">
@@ -1553,7 +1553,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title danger-accent"><i class="fa-solid fa-ban"></i> Add Blacklist Rule</h3>
-        <button class="modal-close-btn" onclick="closeModal('addBlacklistModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('addBlacklistModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleAddBlacklist(event)">
         <div class="form-group">
@@ -1584,7 +1584,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-camera gold-accent"></i> Update Profile Avatar</h3>
-        <button class="modal-close-btn" onclick="closeModal('changeAvatarModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('changeAvatarModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleSaveAvatar(event)">
         <div class="form-group">
@@ -1604,7 +1604,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-lock gold-accent"></i> Configure 2FA TOTP</h3>
-        <button class="modal-close-btn" onclick="closeModal('setup2FAModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('setup2FAModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div id="setup2FABody">
         <!-- Injected via JavaScript -->
@@ -1631,7 +1631,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-user-plus gold-accent"></i> Create Staff / Reseller</h3>
-        <button class="modal-close-btn" onclick="closeModal('createStaffModal')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('createStaffModal')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <form onsubmit="handleCreateStaff(event)">
         <div class="form-group">
@@ -1667,7 +1667,7 @@ async function createLicense(slug, key, discordId, note) {
     <div class="modal-card modal-card-lg">
       <div class="modal-header">
         <h3 class="modal-title"><i class="fa-solid fa-magnifying-glass gold-accent"></i> License Forensic Record</h3>
-        <button class="modal-close-btn" onclick="closeModal('modalLicenseDetail')"><i class="fa-solid fa-xmark"></i></button>
+        <button type="button" class="modal-close-btn" onclick="closeModal('modalLicenseDetail')"><i class="fa-solid fa-xmark"></i></button>
       </div>
       <div id="licDetailContent" style="max-height:75vh; overflow-y:auto;">
         <!-- Injected via JavaScript -->

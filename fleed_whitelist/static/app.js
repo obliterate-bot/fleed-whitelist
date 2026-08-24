@@ -95,12 +95,34 @@ function openModal(modalId) {
 }
 
 function closeModal(modalId) {
+  if (!modalId) {
+    document.querySelectorAll(".modal-overlay.active, .modal-overlay[style*='display: flex']").forEach(m => {
+      m.classList.remove("active");
+      m.style.display = "none";
+    });
+    return;
+  }
   const m = document.getElementById(modalId);
   if (m) {
     m.classList.remove("active");
     m.style.display = "none";
   }
 }
+
+// Global backdrop click-to-close handler for all modals
+document.addEventListener("click", (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains("modal-overlay")) {
+    e.target.classList.remove("active");
+    e.target.style.display = "none";
+  }
+});
+
+// Global ESC key listener to close any active modal
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" || e.keyCode === 27) {
+    closeModal();
+  }
+});
 
 // Escape HTML helper
 function escapeHtml(str) {

@@ -4805,4 +4805,100 @@ function playChatSound() {
   } catch (err) {}
 }
 
+// =========================================================================
+// REST API CODE SNIPPET TAB SWITCHER
+// =========================================================================
+function switchSnippetTab(tab) {
+  document.querySelectorAll(".snippet-tab-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.getAttribute("data-tab") === tab);
+  });
+  const boxes = {
+    curl: document.getElementById("snippet-curl"),
+    python: document.getElementById("snippet-python"),
+    node: document.getElementById("snippet-node")
+  };
+  Object.keys(boxes).forEach(k => {
+    if (boxes[k]) boxes[k].style.display = (k === tab) ? "block" : "none";
+  });
+}
+
+// =========================================================================
+// GPU-ACCELERATED AMBER DRIFTING PARTICLES ENGINE (ZERO-LAG)
+// =========================================================================
+function initAmberParticles() {
+  const canvas = document.getElementById("amberParticlesCanvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  let width = (canvas.width = window.innerWidth);
+  let height = (canvas.height = window.innerHeight);
+
+  window.addEventListener("resize", () => {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+  }, { passive: true });
+
+  const particleCount = 36;
+  const particles = [];
+
+  for (let i = 0; i < particleCount; i++) {
+    particles.push({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      r: 1.0 + Math.random() * 1.8,
+      vx: (Math.random() - 0.5) * 0.22,
+      vy: -(0.22 + Math.random() * 0.42),
+      alpha: 0.15 + Math.random() * 0.6,
+      alphaSpeed: 0.004 + Math.random() * 0.008,
+      alphaDir: Math.random() > 0.5 ? 1 : -1,
+      color: Math.random() > 0.35 ? "245, 158, 11" : "251, 191, 36" // amber gold
+    });
+  }
+
+  function render() {
+    if (document.hidden) {
+      requestAnimationFrame(render);
+      return;
+    }
+
+    ctx.clearRect(0, 0, width, height);
+
+    for (let i = 0; i < particleCount; i++) {
+      const p = particles[i];
+
+      p.x += p.vx;
+      p.y += p.vy;
+
+      p.alpha += p.alphaSpeed * p.alphaDir;
+      if (p.alpha > 0.75) { p.alpha = 0.75; p.alphaDir = -1; }
+      else if (p.alpha < 0.12) { p.alpha = 0.12; p.alphaDir = 1; }
+
+      if (p.y < -10) {
+        p.y = height + 10;
+        p.x = Math.random() * width;
+      }
+      if (p.x < -10) p.x = width + 10;
+      else if (p.x > width + 10) p.x = -10;
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${p.color}, ${p.alpha})`;
+      ctx.shadowBlur = 6;
+      ctx.shadowColor = `rgba(${p.color}, ${p.alpha * 0.7})`;
+      ctx.fill();
+    }
+
+    requestAnimationFrame(render);
+  }
+
+  render();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initAmberParticles);
+} else {
+  initAmberParticles();
+}
+
 

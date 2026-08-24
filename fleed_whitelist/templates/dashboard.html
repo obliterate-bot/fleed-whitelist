@@ -9,6 +9,7 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23F59E0B'><path d='M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z'/></svg>">
 </head>
 <body class="dashboard-body">
+  <canvas id="amberParticlesCanvas" class="particles-canvas"></canvas>
   <div class="bg-ambient-glow"></div>
   <div class="bg-ambient-subtle"></div>
 
@@ -844,9 +845,9 @@
             <h3 class="card-title" style="margin-bottom:14px;"><i class="fa-solid fa-code gold-accent"></i> Integration Code Snippets</h3>
             
             <div class="snippet-tabs-bar">
-              <button class="tab-btn active" onclick="switchSnippetTab('curl')">cURL</button>
-              <button class="tab-btn" onclick="switchSnippetTab('python')">Python (Discord.py / FastAPI)</button>
-              <button class="tab-btn" onclick="switchSnippetTab('node')">Node.js (Discord.js / Express)</button>
+              <button class="snippet-tab-btn active" data-tab="curl" onclick="switchSnippetTab('curl')"><i class="fa-solid fa-terminal"></i> cURL</button>
+              <button class="snippet-tab-btn" data-tab="python" onclick="switchSnippetTab('python')"><i class="fa-brands fa-python"></i> Python (Discord.py / FastAPI)</button>
+              <button class="snippet-tab-btn" data-tab="node" onclick="switchSnippetTab('node')"><i class="fa-brands fa-node-js"></i> Node.js (Discord.js / Express)</button>
             </div>
 
             <div id="snippet-curl" class="code-snippet-box">

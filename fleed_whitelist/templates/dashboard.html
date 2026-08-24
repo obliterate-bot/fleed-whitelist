@@ -1662,6 +1662,19 @@ async function createLicense(slug, key, discordId, note) {
     </div>
   </div>
 
+  <!-- 13. License Forensic History Modal -->
+  <div id="modalLicenseDetail" class="modal-overlay" style="display:none;">
+    <div class="modal-card modal-card-lg">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-magnifying-glass gold-accent"></i> License Forensic Record</h3>
+        <button class="modal-close-btn" onclick="closeModal('modalLicenseDetail')"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div id="licDetailContent" style="max-height:75vh; overflow-y:auto;">
+        <!-- Injected via JavaScript -->
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container"></div>
 

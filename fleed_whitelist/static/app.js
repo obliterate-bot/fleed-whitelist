@@ -1495,45 +1495,48 @@ function copyAllKeys() {
 }
 
 function openBulkGenModal() {
-  document.getElementById("modalBulkGen").classList.add("active");
+  const select = document.getElementById("bulkGenScriptId");
+  if (select) {
+    select.innerHTML = currentScripts.map(s => `<option value="${s.id}" ${s.id === selectedScriptId ? 'selected' : ''}>${escapeHtml(s.name)} (${s.slug})</option>`).join("");
+  }
+  openModal("bulkGenModal");
 }
 
 function openSingleGenModal() {
-  document.getElementById("singleKeyString").value = `FLEED-${Math.random().toString(36).substring(2,6).toUpperCase()}-${Math.random().toString(36).substring(2,6).toUpperCase()}-${Math.random().toString(36).substring(2,6).toUpperCase()}`;
-  document.getElementById("modalSingleGen").classList.add("active");
+  const select = document.getElementById("singleGenScriptId");
+  if (select) {
+    select.innerHTML = currentScripts.map(s => `<option value="${s.id}" ${s.id === selectedScriptId ? 'selected' : ''}>${escapeHtml(s.name)} (${s.slug})</option>`).join("");
+  }
+  const customKeyInput = document.getElementById("singleGenCustomKey");
+  if (customKeyInput) {
+    customKeyInput.value = "";
+    customKeyInput.placeholder = `FLEED-${Math.random().toString(36).substring(2,6).toUpperCase()}-${Math.random().toString(36).substring(2,6).toUpperCase()}-${Math.random().toString(36).substring(2,6).toUpperCase()}`;
+  }
+  openModal("singleGenModal");
 }
 
-async function handleBulkGenerate(e) {
+async function handleGenerateSingleKey(e) {
   e.preventDefault();
-  const script_id = selectedScriptId;
-  const count = parseInt(document.getElementById("genCount").value);
-  const duration_days = parseInt(document.getElementById("genDuration").value) || null;
-  const max_executions = parseInt(document.getElementById("genMaxExecs").value);
-  const note = document.getElementById("genNote").value;
+  const scriptSelect = document.getElementById("singleGenScriptId");
+  const script_id = scriptSelect ? parseInt(scriptSelect.value) : selectedScriptId;
+  const script = currentScripts.find(s => s.id === script_id) || currentScripts.find(s => s.id === selectedScriptId);
+  if (!script) return showToast("Please select a valid script hub first", "error");
 
-  try {
-    const data = await apiCall("/api/licenses/bulk", "POST", {
-      script_id, count, duration_days, max_executions, note
-    });
-    showToast(`Generated ${data.count} keys!`, "success");
-    closeModal("modalBulkGen");
-    loadLicensesForScript(script_id);
-    loadOverviewStats();
-  } catch (err) {}
-}
+  const customKeyInput = document.getElementById("singleGenCustomKey");
+  let license_key = customKeyInput ? customKeyInput.value.trim() : "";
+  if (!license_key && customKeyInput && customKeyInput.placeholder) {
+    license_key = customKeyInput.placeholder;
+  }
+  if (!license_key) {
+    license_key = `FLEED-${Math.random().toString(36).substring(2,6).toUpperCase()}-${Math.random().toString(36).substring(2,6).toUpperCase()}-${Math.random().toString(36).substring(2,6).toUpperCase()}`;
+  }
 
-async function handleSingleGenerate(e) {
-  e.preventDefault();
-  const script = currentScripts.find(s => s.id === selectedScriptId);
-  if (!script) return;
-
-  const license_key = document.getElementById("singleKeyString").value.trim();
-  const note = document.getElementById("singleKeyNote").value.trim();
-  const discord_id = document.getElementById("singleKeyDiscord")?.value.trim() || null;
-  const duration_days = parseInt(document.getElementById("singleKeyDuration").value) || null;
+  const note = document.getElementById("singleGenNote")?.value.trim() || "";
+  const discord_id = document.getElementById("singleGenDiscordId")?.value.trim() || null;
+  const duration_days = parseInt(document.getElementById("singleGenDays")?.value) || 0;
 
   let expires_at = null;
-  if (duration_days) {
+  if (duration_days > 0) {
     const d = new Date();
     d.setDate(d.getDate() + duration_days);
     expires_at = d.toISOString();
@@ -1547,27 +1550,54 @@ async function handleSingleGenerate(e) {
       discord_id,
       expires_at
     });
-    showToast("License key created successfully!");
-    closeModal("modalSingleGen");
-    loadLicensesForScript(selectedScriptId);
+    showToast("License key created successfully!", "success");
+    closeModal("singleGenModal");
+    loadLicensesForScript(script_id);
     loadOverviewStats();
   } catch (err) {}
 }
+const handleSingleGenerate = handleGenerateSingleKey;
+
+async function handleBulkGenerateKeys(e) {
+  e.preventDefault();
+  const scriptSelect = document.getElementById("bulkGenScriptId");
+  const script_id = scriptSelect ? parseInt(scriptSelect.value) : selectedScriptId;
+  const count = parseInt(document.getElementById("bulkGenCount")?.value) || 10;
+  const prefix = document.getElementById("bulkGenPrefix")?.value.trim() || "FLEED";
+  const note = document.getElementById("bulkGenNote")?.value.trim() || "";
+  const duration_days = parseInt(document.getElementById("bulkGenDays")?.value) || 0;
+
+  try {
+    const data = await apiCall("/api/licenses/bulk", "POST", {
+      script_id,
+      count,
+      prefix,
+      duration_days: duration_days > 0 ? duration_days : null,
+      max_executions: -1,
+      note
+    });
+    showToast(`Generated ${data.count || count} keys!`, "success");
+    closeModal("bulkGenModal");
+    loadLicensesForScript(script_id);
+    loadOverviewStats();
+  } catch (err) {}
+}
+const handleBulkGenerate = handleBulkGenerateKeys;
 
 function openImportKeysModal() {
   const select = document.getElementById("importScriptSelect");
   if (select) {
     select.innerHTML = currentScripts.map(s => `<option value="${s.id}" ${s.id === selectedScriptId ? 'selected' : ''}>${escapeHtml(s.name)} (${s.slug})</option>`).join("");
   }
-  document.getElementById("importKeysTextarea").value = "";
-  document.getElementById("modalImportKeys").classList.add("active");
+  const textArea = document.getElementById("importKeysText");
+  if (textArea) textArea.value = "";
+  openModal("importKeysModal");
 }
 
 async function handleImportKeys(e) {
   e.preventDefault();
-  const script_id = parseInt(document.getElementById("importScriptSelect").value);
-  const default_duration = parseInt(document.getElementById("importDuration").value) || null;
-  const text = document.getElementById("importKeysTextarea").value.trim();
+  const script_id = parseInt(document.getElementById("importScriptSelect")?.value) || selectedScriptId;
+  const text = (document.getElementById("importKeysText") || document.getElementById("importKeysTextarea"))?.value.trim();
 
   if (!text) return showToast("Enter keys to import", "error");
 
@@ -1585,7 +1615,7 @@ async function handleImportKeys(e) {
         license_key: key,
         note,
         discord_id,
-        duration_days: default_duration,
+        duration_days: null,
         max_executions: -1
       });
     }
@@ -1597,7 +1627,7 @@ async function handleImportKeys(e) {
       keys: items
     });
     showToast(`Successfully imported ${res.imported} keys! (Skipped: ${res.skipped})`, "success");
-    closeModal("modalImportKeys");
+    closeModal("importKeysModal");
     loadLicensesForScript(script_id);
     loadOverviewStats();
   } catch (err) {}

@@ -1701,6 +1701,123 @@ async function createLicense(slug, key, discordId, note) {
     </div>
   </div>
 
+  <!-- 15. Create Feature Flag Modal -->
+  <div id="modalAddFlag" class="modal-overlay" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-flag gold-accent"></i> Create Feature Flag</h3>
+        <button type="button" class="modal-close-btn" onclick="closeModal('modalAddFlag')"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form onsubmit="handleCreateFlag(event)">
+        <div class="form-group">
+          <label class="form-label">Flag Key Name</label>
+          <input type="text" id="flagKeyInput" class="form-input mono-input" placeholder="e.g. ENABLE_SILENT_AIM" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Target Script Hub</label>
+          <select id="flagScriptSelect" class="form-select" required></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Value / Payload (Boolean or JSON)</label>
+          <input type="text" id="flagValueInput" class="form-input mono-input" value="true" required>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modalAddFlag')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fa-solid fa-flag"></i> Create Flag</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 16. Push Announcement Modal -->
+  <div id="modalAddAnnouncement" class="modal-overlay" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-bullhorn gold-accent"></i> Push In-Game Broadcast</h3>
+        <button type="button" class="modal-close-btn" onclick="closeModal('modalAddAnnouncement')"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form onsubmit="handleCreateAnnouncement(event)">
+        <div class="form-group">
+          <label class="form-label">Broadcast Title</label>
+          <input type="text" id="announcementTitleInput" class="form-input" placeholder="e.g. Script Update v2.1 Live!" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Target Script Hub</label>
+          <select id="announcementScriptSelect" class="form-select" required></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Message Content</label>
+          <textarea id="announcementMessageInput" class="form-textarea" rows="4" placeholder="Enter message to display on player screen..." required></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Banner Type / Priority</label>
+          <select id="announcementTypeSelect" class="form-select">
+            <option value="INFO">Information (Blue)</option>
+            <option value="UPDATE">Update (Gold)</option>
+            <option value="WARNING">Warning (Orange)</option>
+            <option value="MAINTENANCE">Maintenance (Red)</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modalAddAnnouncement')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fa-solid fa-paper-plane"></i> Broadcast Now</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 17. Release Snapshot Version Modal -->
+  <div id="modalPublishVersion" class="modal-overlay" style="display:none;">
+    <div class="modal-card modal-card-lg">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-solid fa-code-branch gold-accent"></i> Publish Script Snapshot</h3>
+        <button type="button" class="modal-close-btn" onclick="closeModal('modalPublishVersion')"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form onsubmit="handleCreateVersion(event)">
+        <div class="form-group">
+          <label class="form-label">Script Hub</label>
+          <select id="versionScriptSelect" class="form-select" required></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Version Tag</label>
+          <input type="text" id="versionTagInput" class="form-input mono-input" placeholder="e.g. v2.0.4" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Changelog Summary</label>
+          <input type="text" id="versionChangelogInput" class="form-input" placeholder="e.g. Added ball prediction, fixed autoblock bypass" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Luau Source Code Snapshot</label>
+          <textarea id="versionSourceInput" class="form-textarea mono-input" rows="8" placeholder="Paste source code for this snapshot..." required></textarea>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modalPublishVersion')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fa-solid fa-cloud-arrow-up"></i> Publish Release</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- 18. Test Webhook Modal -->
+  <div id="modalTestWebhook" class="modal-overlay" style="display:none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title"><i class="fa-brands fa-discord" style="color:#5865F2;"></i> Test Discord Webhook Ping</h3>
+        <button type="button" class="modal-close-btn" onclick="closeModal('modalTestWebhook')"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <form onsubmit="handleExecuteTestWebhook(event)">
+        <div class="form-group">
+          <label class="form-label">Discord Webhook URL</label>
+          <input type="url" id="testWebhookUrlInput" class="form-input mono-input" placeholder="https://discord.com/api/webhooks/..." required>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('modalTestWebhook')">Cancel</button>
+          <button type="submit" class="btn btn-primary"><i class="fa-solid fa-paper-plane"></i> Send Test Embed</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Toast Notification Container -->
   <div id="toastContainer" class="toast-container"></div>
 

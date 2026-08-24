@@ -410,38 +410,21 @@ async function handleLogout() {
   window.location.href = "/";
 }
 
-// ----------------- 2FA Setup Flow -----------------
-async function open2FAModal() {
-  try {
-    const data = await apiCall("/api/auth/2fa/setup", "POST");
-    document.getElementById("qrImage").src = data.qr_code;
-    document.getElementById("secretKeyText").innerText = data.secret;
-    
-    const codesGrid = document.getElementById("backupCodesGrid");
-    codesGrid.innerHTML = data.backup_codes.map(c => `<div class="backup-code-item">${c}</div>`).join("");
-
-    document.getElementById("modal2FA").classList.add("active");
-  } catch (err) {}
-}
-
-async function confirmEnable2FA() {
-  const code = document.getElementById("verify2FACode").value;
-  if (!code || code.length < 6) {
-    return showToast("Enter a valid 6-digit code", "error");
+// ----------------- Modal Management Helpers -----------------
+function openModal(id) {
+  const modal = document.getElementById(id);
+  if (modal) {
+    modal.classList.add("active");
+    modal.style.display = "flex";
   }
-
-  try {
-    await apiCall("/api/auth/2fa/verify", "POST", { code });
-    showToast("2FA successfully enabled!", "success");
-    closeModal("modal2FA");
-    currentUser.two_factor_enabled = true;
-    loadProfileStats();
-  } catch (err) {}
 }
 
 function closeModal(id) {
   const modal = document.getElementById(id);
-  if (modal) modal.classList.remove("active");
+  if (modal) {
+    modal.classList.remove("active");
+    modal.style.display = "none";
+  }
 }
 
 let selectedAvatarUrl = null;
@@ -545,186 +528,22 @@ async function loadProfileStats() {
 let pendingAvatarFile = null;
 
 function openChangeAvatarModal() {
-  pendingAvatarFile = null;
-  selectedAvatarUrl = currentUser?.avatar_url || null;
-  updateModalAvatarPreview(selectedAvatarUrl);
-  document.getElementById("avatarCustomUrlInput").value = selectedAvatarUrl && !selectedAvatarUrl.startsWith("data:") ? selectedAvatarUrl : "";
-  document.getElementById("avatarRobloxInput").value = "";
-  
-  const dropText = document.getElementById("avatarDropText");
-  if (dropText) dropText.innerText = "Click to browse or drag & drop image";
-  const fileInput = document.getElementById("avatarFileInput");
-  if (fileInput) fileInput.value = "";
-
-  document.getElementById("modalChangeAvatar").classList.add("active");
-  setupAvatarDragAndDrop();
+  const input = document.getElementById("avatarUrlInput");
+  if (input) input.value = currentUser?.avatar_url || "";
+  openModal("changeAvatarModal");
 }
 
-function setupAvatarDragAndDrop() {
-  const zone = document.getElementById("avatarDropZone");
-  if (!zone || zone.dataset.dropReady) return;
-  zone.dataset.dropReady = "true";
-
-  zone.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    zone.style.borderColor = "var(--gold-primary)";
-    zone.style.background = "rgba(250, 204, 21, 0.08)";
-  });
-
-  zone.addEventListener("dragleave", (e) => {
-    e.preventDefault();
-    zone.style.borderColor = "var(--border-gold-subtle)";
-    zone.style.background = "rgba(250, 204, 21, 0.02)";
-  });
-
-  zone.addEventListener("drop", (e) => {
-    e.preventDefault();
-    zone.style.borderColor = "var(--border-gold-subtle)";
-    zone.style.background = "rgba(250, 204, 21, 0.02)";
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      processSelectedAvatarFile(e.dataTransfer.files[0]);
-    }
-  });
-}
-
-function handleAvatarFileSelect(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  processSelectedAvatarFile(file);
-}
-
-function processSelectedAvatarFile(file) {
-  if (file.size > 5 * 1024 * 1024) {
-    return showToast("Image file exceeds 5MB limit", "error");
-  }
-
-  const validTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
-  if (!validTypes.includes(file.type)) {
-    return showToast("Invalid image format. Supported: PNG, JPG, WebP, GIF", "error");
-  }
-
-  pendingAvatarFile = file;
-  const dropText = document.getElementById("avatarDropText");
-  if (dropText) dropText.innerText = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    selectedAvatarUrl = e.target.result;
-    updateModalAvatarPreview(selectedAvatarUrl);
-    document.getElementById("avatarCustomUrlInput").value = "";
-    showToast(`Image loaded: ${file.name}`, "info");
-  };
-  reader.readAsDataURL(file);
-}
-
-function updateModalAvatarPreview(url) {
-  const previewImg = document.getElementById("previewAvatarImg");
-  const previewInit = document.getElementById("previewInitial");
-  const initial = (currentUser?.username || "U").charAt(0).toUpperCase();
-
-  if (url && url.trim()) {
-    previewImg.src = url;
-    previewImg.style.display = "block";
-    previewInit.style.display = "none";
-  } else {
-    previewImg.style.display = "none";
-    previewInit.style.display = "flex";
-    previewInit.innerText = initial;
-  }
-}
-
-function selectPresetAvatar(url) {
-  pendingAvatarFile = null;
-  selectedAvatarUrl = url || null;
-  document.getElementById("avatarCustomUrlInput").value = url || "";
-  const dropText = document.getElementById("avatarDropText");
-  if (dropText) dropText.innerText = "Click to browse or drag & drop image";
-  const fileInput = document.getElementById("avatarFileInput");
-  if (fileInput) fileInput.value = "";
-  updateModalAvatarPreview(url);
-}
-
-function updateAvatarPreviewDirect(url) {
-  pendingAvatarFile = null;
-  selectedAvatarUrl = url.trim() || null;
-  const dropText = document.getElementById("avatarDropText");
-  if (dropText) dropText.innerText = "Click to browse or drag & drop image";
-  const fileInput = document.getElementById("avatarFileInput");
-  if (fileInput) fileInput.value = "";
-  updateModalAvatarPreview(selectedAvatarUrl);
-}
-
-async function fetchRobloxAvatarPreview() {
-  const input = document.getElementById("avatarRobloxInput")?.value.trim();
-  if (!input) return showToast("Enter a Roblox username or User ID", "info");
-
-  showToast("Fetching Roblox avatar...", "info");
-  try {
-    let rbxId = parseInt(input);
-    if (isNaN(rbxId) || rbxId <= 0) {
-      // Username lookup
-      const res = await fetch(`https://users.roblox.com/v1/usernames/users`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usernames: [input], excludeBannedUsers: false })
-      });
-      const data = await res.json();
-      if (data.data && data.data.length > 0) {
-        rbxId = data.data[0].id;
-      } else {
-        return showToast(`Roblox user "${input}" not found`, "error");
-      }
-    }
-
-    const avatarUrl = `/api/roblox/avatar/${rbxId}`;
-    pendingAvatarFile = null;
-    selectedAvatarUrl = avatarUrl;
-    document.getElementById("avatarCustomUrlInput").value = avatarUrl;
-    const dropText = document.getElementById("avatarDropText");
-    if (dropText) dropText.innerText = "Click to browse or drag & drop image";
-    const fileInput = document.getElementById("avatarFileInput");
-    if (fileInput) fileInput.value = "";
-    updateModalAvatarPreview(avatarUrl);
-    showToast(`Found Roblox avatar for User ID ${rbxId}!`, "success");
-  } catch (err) {
-    // Direct endpoint fallback
-    const fallbackUrl = `/api/roblox/avatar/1`;
-    pendingAvatarFile = null;
-    selectedAvatarUrl = fallbackUrl;
-    updateModalAvatarPreview(fallbackUrl);
-  }
-}
-
-async function saveUserAvatar() {
-  // 1. If user selected a local file from PC (data URL), use base64 upload
-  if (selectedAvatarUrl && selectedAvatarUrl.startsWith("data:image/")) {
-    showToast("Uploading avatar image from PC...", "info");
-    try {
-      const res = await apiCall("/api/auth/upload_avatar_base64", "POST", { image_data: selectedAvatarUrl });
-      showToast("Avatar uploaded and saved successfully!", "success");
-      if (currentUser) {
-        currentUser.avatar_url = res.avatar_url;
-      }
-      updateAvatarUI(res.avatar_url, currentUser?.username);
-      closeModal("modalChangeAvatar");
-      return;
-    } catch (err) {
-      showToast(err.message || "Failed to upload avatar", "error");
-      return;
-    }
-  }
-
-  // 2. Otherwise update with URL / Preset / Roblox
-  const avatar_url = selectedAvatarUrl || document.getElementById("avatarCustomUrlInput")?.value.trim() || null;
+async function handleSaveAvatar(e) {
+  e.preventDefault();
+  const avatar_url = document.getElementById("avatarUrlInput")?.value.trim();
+  if (!avatar_url) return showToast("Enter a valid image URL", "error");
 
   try {
     const res = await apiCall("/api/auth/update_avatar", "POST", { avatar_url });
-    showToast("Profile avatar updated successfully!", "success");
-    if (currentUser) {
-      currentUser.avatar_url = res.avatar_url;
-    }
-    updateAvatarUI(res.avatar_url, currentUser?.username);
-    closeModal("modalChangeAvatar");
+    showToast(res.message || "Avatar updated successfully!", "success");
+    if (currentUser) currentUser.avatar_url = avatar_url;
+    updateNavAvatar(avatar_url);
+    closeModal("changeAvatarModal");
   } catch (err) {}
 }
 
@@ -2445,31 +2264,27 @@ async function loadBlacklists() {
 }
 
 function openAddBlacklistModal() {
-  document.getElementById("blTargetValue").value = "";
-  document.getElementById("blReason").value = "";
-  document.getElementById("modalBlacklistAdd").classList.add("active");
+  const valInput = document.getElementById("blacklistValue");
+  const reasonInput = document.getElementById("blacklistReason");
+  if (valInput) valInput.value = "";
+  if (reasonInput) reasonInput.value = "";
+  openModal("addBlacklistModal");
 }
 
-async function handleBlacklistAdd(e) {
+async function handleAddBlacklist(e) {
   e.preventDefault();
-  const target_type = document.getElementById("blTargetType").value;
-  const target_value = document.getElementById("blTargetValue").value.trim();
-  const reason = document.getElementById("blReason").value.trim();
+  const target_type = document.getElementById("blacklistType")?.value || "HWID";
+  const target_value = document.getElementById("blacklistValue")?.value.trim();
+  const reason = document.getElementById("blacklistReason")?.value.trim() || "Security Violation";
+
+  if (!target_value) return showToast("Enter target HWID or IP to blacklist", "error");
 
   try {
-    await apiCall("/api/blacklist/add", "POST", { target_type, target_value, reason });
-    showToast(`${target_type} added to global blacklist!`, "success");
-    closeModal("modalBlacklistAdd");
+    await apiCall("/api/blacklist", "POST", { target_type, target_value, reason });
+    showToast(`Added ${target_type} '${target_value}' to global blacklist!`, "success");
+    closeModal("addBlacklistModal");
     loadBlacklists();
-  } catch (err) {}
-}
-
-async function removeBlacklist(id) {
-  if (!confirm("Are you sure you want to remove this entry from the global blacklist?")) return;
-  try {
-    await apiCall(`/api/blacklist/${id}`, "DELETE");
-    showToast("Blacklist entry removed.");
-    loadBlacklists();
+    loadOverviewStats();
   } catch (err) {}
 }
 
@@ -3213,48 +3028,20 @@ async function loadThreatRadarBypasses() {
   }
 }
 
-function openKickModal(opts) {
-  opts = opts || {};
+function openKickModal(opts = {}) {
+  const targetKeyInput = document.getElementById("kickTargetKey");
+  const targetHwidInput = document.getElementById("kickTargetHWID");
   const displayInput = document.getElementById("kickTargetDisplay");
-  if (!displayInput) return;
+  const reasonInput = document.getElementById("kickReasonInput");
 
-  displayInput.value = opts.displayName || opts.username || opts.key || opts.hwid || "Select Player / Key";
-  document.getElementById("kickTargetKey").value = opts.key || "";
-  document.getElementById("kickTargetHWID").value = opts.hwid || "";
-  document.getElementById("kickTargetUserId").value = opts.userId || "";
-  document.getElementById("kickTargetUsername").value = opts.username || "";
-  document.getElementById("kickReasonPreset").value = "FleedGuard: Session terminated by administrator";
-  document.getElementById("kickReasonText").value = "FleedGuard: Session terminated by administrator";
-  document.getElementById("modalKickPlayer").classList.add("active");
-}
-
-function applyKickPreset(val) {
-  if (val !== "custom") {
-    document.getElementById("kickReasonText").value = val;
+  if (targetKeyInput) targetKeyInput.value = opts.key || "";
+  if (targetHwidInput) targetHwidInput.value = opts.hwid || "";
+  if (displayInput) {
+    displayInput.value = opts.displayName || opts.username || opts.key || opts.hwid || "Player Device";
   }
-}
+  if (reasonInput) reasonInput.value = "Session terminated by developer";
 
-async function handleExecuteKick(e) {
-  e.preventDefault();
-  const license_key = document.getElementById("kickTargetKey")?.value || null;
-  const hwid = document.getElementById("kickTargetHWID")?.value || null;
-  const roblox_user_id = parseInt(document.getElementById("kickTargetUserId")?.value) || null;
-  const roblox_username = document.getElementById("kickTargetUsername")?.value || null;
-  const reason = document.getElementById("kickReasonText")?.value.trim() || "Kicked by FleedGuard Administrator";
-
-  try {
-    const res = await apiCall("/api/sessions/kick", "POST", {
-      license_key,
-      hwid,
-      roblox_user_id,
-      roblox_username,
-      reason
-    });
-    showToast(res.message, "success");
-    closeModal("modalKickPlayer");
-    loadActiveSessions();
-    loadOverviewStats();
-  } catch (err) {}
+  openModal("remoteKickModal");
 }
 
 // Global Keyboard Shortcuts (Ctrl+K for palette, Ctrl+[ for sidebar, Esc for modals)
@@ -3537,619 +3324,502 @@ function sendFloatingChatMessage(e) {
 
   if (chatSocket && chatSocket.readyState === WebSocket.OPEN) {
     chatSocket.send(JSON.stringify({ type: "message", message: text, channel: "general" }));
-  }
-  input.value = "";
-}
-
-
 // =========================================================================
 // IN-GAME SESSIONS & LIVE REMOTE KICK
 // =========================================================================
+function openKickModal(opts = {}) {
+  const targetKeyInput = document.getElementById("kickTargetKey");
+  const targetHwidInput = document.getElementById("kickTargetHWID");
+  const displayInput = document.getElementById("kickTargetDisplay");
+  const reasonInput = document.getElementById("kickReasonInput");
 
-
-
-function openRemoteKickModal(key = "", hwid = "", username = "") {
-  if (key) {
-    document.getElementById("kickTargetType").value = "KEY";
-    document.getElementById("kickTargetValue").value = key;
-  } else if (username) {
-    document.getElementById("kickTargetType").value = "USERNAME";
-    document.getElementById("kickTargetValue").value = username;
+  if (targetKeyInput) targetKeyInput.value = opts.key || "";
+  if (targetHwidInput) targetHwidInput.value = opts.hwid || "";
+  if (displayInput) {
+    const disp = opts.displayName || opts.username || opts.key || opts.hwid || "Player Device";
+    displayInput.value = disp;
   }
-  document.getElementById("modalRemoteKick").classList.add("active");
+  if (reasonInput) reasonInput.value = "Session terminated by developer";
+
+  openModal("remoteKickModal");
+}
+
+function openRemoteKickModal(opts = {}) {
+  if (typeof opts === "string") {
+    openKickModal({ key: opts, displayName: opts });
+  } else {
+    openKickModal(opts);
+  }
 }
 
 async function handleExecuteRemoteKick(e) {
   e.preventDefault();
-  const target_type = document.getElementById("kickTargetType").value;
-  const target_value = document.getElementById("kickTargetValue").value.trim();
-  const reason = document.getElementById("kickReason").value.trim();
+  const key = document.getElementById("kickTargetKey")?.value;
+  const hwid = document.getElementById("kickTargetHWID")?.value;
+  const reason = document.getElementById("kickReasonInput")?.value.trim() || "Terminated by developer";
+
+  const target_type = key ? "KEY" : (hwid ? "HWID" : "ALL");
+  const target_value = key || hwid || "";
 
   try {
     const res = await apiCall("/api/sessions/kick", "POST", { target_type, target_value, reason });
-    showToast(res.message, "success");
-    closeModal("modalRemoteKick");
-    loadLiveSessions();
+    showToast(res.message || "Player session successfully kicked!", "success");
+    closeModal("remoteKickModal");
+    loadActiveSessions(true);
   } catch (err) {}
 }
 
-
 // =========================================================================
-// STAFF & RESELLER MANAGERS
+// GLOBAL BLACKLIST (HWID & IP)
 // =========================================================================
-
-async function loadStaffManagers() {
-  try {
-    const managers = await apiCall("/api/staff/managers");
-    const tbody = document.getElementById("staffTableBody");
-    if (!tbody) return;
-
-    if (managers.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-users-slash" style="margin-right:6px;"></i>No authorized whitelist managers delegated yet.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = managers.map(m => `
-      <tr>
-        <td><span class="badge ${m.is_role ? 'badge-zinc' : 'badge-gold'}">${m.is_role ? 'Discord Role' : 'Discord User'}</span></td>
-        <td><span style="font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--text-white);">${escapeHtml(m.discord_user_id)}</span></td>
-        <td><span class="badge badge-zinc">${escapeHtml(m.script_name || m.script_slug || 'All Scripts')}</span></td>
-        <td><span style="font-weight:600;">${m.quota_limit === -1 ? 'Unlimited' : m.quota_limit}</span></td>
-        <td><span class="badge badge-gold">${m.keys_generated || 0}</span></td>
-        <td><span style="color:var(--text-zinc-400); font-size:12px;">${escapeHtml(m.note || '—')}</span></td>
-        <td><span style="font-size:12px; color:var(--text-zinc-500);">${escapeHtml(m.granted_by)}</span></td>
-        <td>
-          <button class="btn btn-danger btn-sm" onclick="revokeStaffManager(${m.id})">
-            <i class="fa-solid fa-trash"></i> Revoke
-          </button>
-        </td>
-      </tr>
-    `).join("");
-  } catch (err) {}
-}
-
-async function openAddManagerModal() {
-  const select = document.getElementById("mgrScriptSlug");
-  if (select) {
-    select.innerHTML = '<option value="all">All Scripts (Global Manager)</option>' +
-      currentScripts.map(s => `<option value="${escapeHtml(s.slug)}">${escapeHtml(s.name)}</option>`).join("");
-  }
-  document.getElementById("modalAddManager").classList.add("active");
-}
-
-async function handleSaveManager(e) {
-  e.preventDefault();
-  const discord_user_id = document.getElementById("mgrDiscordId").value.trim();
-  const is_role = parseInt(document.getElementById("mgrIsRole").value) || 0;
-  const script_slug = document.getElementById("mgrScriptSlug").value;
-  const quota_limit = parseInt(document.getElementById("mgrQuota").value) || -1;
-  const note = document.getElementById("mgrNote").value.trim();
-
-  try {
-    const res = await apiCall("/api/staff/managers", "POST", { discord_user_id, is_role, script_slug, quota_limit, note });
-    showToast(res.message, "success");
-    closeModal("modalAddManager");
-    loadStaffManagers();
-  } catch (err) {}
-}
-
-async function revokeStaffManager(id) {
-  if (!confirm("Are you sure you want to revoke whitelist management access for this staff member?")) return;
-  try {
-    const res = await apiCall(`/api/staff/managers/${id}`, "DELETE");
-    showToast(res.message, "success");
-    loadStaffManagers();
-  } catch (err) {}
-}
-
-
-// =========================================================================
-// ROBLOX EXECUTOR TELEMETRY & ANALYTICS
-// =========================================================================
-
-async function loadTelemetryData() {
-  try {
-    const [execData, overviewData] = await Promise.all([
-      apiCall("/api/telemetry/executors"),
-      apiCall("/api/telemetry/overview")
-    ]);
-
-    const chartBox = document.getElementById("executorChartContainer");
-    if (chartBox && execData.executors) {
-      if (execData.executors.length === 0) {
-        chartBox.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-zinc-500);">No executor telemetry captured yet.</div>`;
-      } else {
-        chartBox.innerHTML = execData.executors.map(ex => `
-          <div class="telemetry-bar-row">
-            <div class="telemetry-bar-header">
-              <span style="color:var(--text-white);">${escapeHtml(ex.executor_name)}</span>
-              <span style="color:var(--gold-primary); font-family:var(--font-mono);">${ex.percentage}% (${ex.count} runs)</span>
-            </div>
-            <div class="telemetry-bar-track">
-              <div class="telemetry-bar-fill" style="width: ${ex.percentage}%;"></div>
-            </div>
-          </div>
-        `).join("");
-      }
-    }
-
-    const statsBox = document.getElementById("telemetryStatsBox");
-    if (statsBox && overviewData) {
-      statsBox.innerHTML = `
-        <div class="stat-box" style="padding:16px;">
-          <div class="stat-label">Total Authentications</div>
-          <div class="stat-value gold" style="font-size:24px;">${overviewData.total_logs}</div>
-          <div class="stat-subtext">${overviewData.success_rate}% Success Rate</div>
-        </div>
-        <div class="stat-box" style="padding:16px;">
-          <div class="stat-label">Security Interceptions</div>
-          <div class="stat-value" style="font-size:24px; color:var(--danger-light);">${overviewData.total_threats}</div>
-          <div class="stat-subtext">Threat Traps & Blocks</div>
-        </div>
-      `;
-    }
-  } catch (err) {}
-}
-
-
-// =========================================================================
-// REMOTE DYNAMIC FEATURE FLAGS & AST SCRIPT AUTO-SCANNER
-// =========================================================================
-
-let cachedFeatureFlags = [];
-let activeFlagsCategory = "all";
-let activeFlagsSearchQuery = "";
-let selectedFlagsScriptSlug = "";
-
-function getCategoryBadgeClass(category) {
-  const cat = (category || "").toLowerCase();
-  if (cat.includes("combat") || cat.includes("shoot") || cat.includes("aim")) return "cat-combat";
-  if (cat.includes("defense") || cat.includes("guard") || cat.includes("steal")) return "cat-defense";
-  if (cat.includes("move") || cat.includes("mobil") || cat.includes("speed")) return "cat-movement";
-  if (cat.includes("vis") || cat.includes("esp") || cat.includes("cosmetic")) return "cat-visuals";
-  if (cat.includes("auto") || cat.includes("macro") || cat.includes("farm")) return "cat-automation";
-  if (cat.includes("protect") || cat.includes("bypass") || cat.includes("anti")) return "cat-protection";
-  return "cat-general";
-}
-
-function getCategoryIcon(category) {
-  const cat = (category || "").toLowerCase();
-  if (cat.includes("combat") || cat.includes("shoot") || cat.includes("aim")) return "fa-crosshairs";
-  if (cat.includes("defense") || cat.includes("guard") || cat.includes("steal")) return "fa-shield-halved";
-  if (cat.includes("move") || cat.includes("mobil") || cat.includes("speed")) return "fa-person-running";
-  if (cat.includes("vis") || cat.includes("esp") || cat.includes("cosmetic")) return "fa-eye";
-  if (cat.includes("auto") || cat.includes("macro") || cat.includes("farm")) return "fa-robot";
-  if (cat.includes("protect") || cat.includes("bypass") || cat.includes("anti")) return "fa-user-shield";
-  return "fa-sliders";
-}
-
-async function loadFeatureFlags() {
-  if (currentScripts.length === 0) await loadScripts();
-  
-  const select = document.getElementById("flagsScriptSelector");
-  if (select && currentScripts.length > 0) {
-    if (!selectedFlagsScriptSlug) selectedFlagsScriptSlug = currentScripts[0].slug;
-    select.innerHTML = currentScripts.map(s => `
-      <option value="${escapeHtml(s.slug)}" ${s.slug === selectedFlagsScriptSlug ? 'selected' : ''}>
-        ${escapeHtml(s.name)} (${escapeHtml(s.slug)})
-      </option>
-    `).join("");
-  }
-
-  const slug = selectedFlagsScriptSlug || currentScripts[0]?.slug;
-  if (!slug) return;
-
-  try {
-    const flags = await apiCall(`/api/scripts/${slug}/flags`);
-    cachedFeatureFlags = flags || [];
-    updateFlagsCategoryCounts();
-    renderFeatureFlagsTable();
-  } catch (err) {
-    const tbody = document.getElementById("flagsTableBody");
-    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-flag" style="margin-right:6px;"></i>No dynamic feature flags found. Click "Auto-Scan Script Features" to discover toggles!</td></tr>`;
-  }
-}
-
-function updateFlagsCategoryCounts() {
-  const counts = {
-    all: cachedFeatureFlags.length,
-    combat: 0,
-    defense: 0,
-    movement: 0,
-    visuals: 0,
-    automation: 0,
-    protection: 0,
-    utilities: 0
-  };
-
-  cachedFeatureFlags.forEach(f => {
-    const cat = (f.category || "").toLowerCase();
-    if (cat.includes("combat") || cat.includes("shoot") || cat.includes("aim")) counts.combat++;
-    else if (cat.includes("defense") || cat.includes("guard") || cat.includes("steal")) counts.defense++;
-    else if (cat.includes("move") || cat.includes("mobil") || cat.includes("speed")) counts.movement++;
-    else if (cat.includes("vis") || cat.includes("esp") || cat.includes("cosmetic")) counts.visuals++;
-    else if (cat.includes("auto") || cat.includes("macro") || cat.includes("farm")) counts.automation++;
-    else if (cat.includes("protect") || cat.includes("bypass") || cat.includes("anti")) counts.protection++;
-    else counts.utilities++;
-  });
-
-  const setCnt = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.innerText = val;
-  };
-
-  setCnt("countFlagsAll", counts.all);
-  setCnt("countFlagsCombat", counts.combat);
-  setCnt("countFlagsDefense", counts.defense);
-  setCnt("countFlagsMovement", counts.movement);
-  setCnt("countFlagsVisuals", counts.visuals);
-  setCnt("countFlagsAutomation", counts.automation);
-  setCnt("countFlagsProtection", counts.protection);
-  setCnt("countFlagsUtilities", counts.utilities);
-}
-
-function renderFeatureFlagsTable() {
-  const tbody = document.getElementById("flagsTableBody");
+async function loadBlacklists() {
+  const tbody = document.getElementById("blacklistTableBody");
   if (!tbody) return;
-
-  let filtered = cachedFeatureFlags;
-
-  // Filter by category
-  if (activeFlagsCategory !== "all") {
-    filtered = filtered.filter(f => (f.category || "General Utilities") === activeFlagsCategory);
-  }
-
-  // Filter by search query
-  if (activeFlagsSearchQuery.trim()) {
-    const q = activeFlagsSearchQuery.toLowerCase();
-    filtered = filtered.filter(f => 
-      (f.flag_name && f.flag_name.toLowerCase().includes(q)) ||
-      (f.display_name && f.display_name.toLowerCase().includes(q)) ||
-      (f.category && f.category.toLowerCase().includes(q)) ||
-      (f.source_type && f.source_type.toLowerCase().includes(q))
-    );
-  }
-
-  if (filtered.length === 0) {
-    if (cachedFeatureFlags.length === 0) {
-      tbody.innerHTML = `
-        <tr>
-          <td colspan="6" style="text-align:center; padding:40px 20px;">
-            <div style="font-size:14px; font-weight:700; color:var(--text-white); margin-bottom:6px;">
-              <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--gold-primary); margin-right:8px;"></i>No Features Discovered Yet
-            </div>
-            <p style="font-size:12px; color:var(--text-zinc-400); max-width:480px; margin:0 auto 16px auto;">
-              Click <strong>"Auto-Scan Script Features"</strong> above. FleedGuard will parse your Lua script, detect all UI toggles, config tables, and function routines automatically!
-            </p>
-            <button class="btn btn-primary btn-sm" onclick="triggerAutoScanFlags()">
-              <i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Scan Script Features Now
-            </button>
-          </td>
-        </tr>
-      `;
-    } else {
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-filter" style="margin-right:6px;"></i>No features match the selected filter.</td></tr>`;
-    }
-    return;
-  }
-
-  const slug = selectedFlagsScriptSlug || currentScripts[0]?.slug;
-
-  tbody.innerHTML = filtered.map(f => {
-    const isEn = Boolean(f.is_enabled);
-    const catClass = getCategoryBadgeClass(f.category);
-    const catIcon = getCategoryIcon(f.category);
-    const displayName = f.display_name || f.flag_name;
-    const sourceLabel = f.line_number > 0 ? `${escapeHtml(f.source_type || 'Script')} (Line ${f.line_number})` : escapeHtml(f.source_type || 'Manual Override');
-
-    return `
-      <tr>
-        <td>
-          <div style="display:flex; flex-direction:column; gap:4px;">
-            <div style="display:flex; align-items:center; gap:8px;">
-              <span style="font-weight:700; color:var(--text-white); font-size:13px;">${escapeHtml(displayName)}</span>
-              <span class="category-badge ${catClass}"><i class="fa-solid ${catIcon}"></i> ${escapeHtml(f.category || 'General')}</span>
-            </div>
-            <div style="font-size:11px; font-family:var(--font-mono); color:var(--gold-light); opacity:0.85;">
-              <code>getgenv().GetFlag("${escapeHtml(f.flag_name)}")</code>
-            </div>
-          </div>
-        </td>
-        <td>
-          <div style="font-size:11px; color:var(--text-zinc-300);">
-            <i class="fa-solid fa-code" style="color:var(--text-zinc-500); margin-right:4px;"></i>
-            ${sourceLabel}
-          </div>
-        </td>
-        <td><span class="badge badge-zinc" style="font-family:var(--font-mono);">${escapeHtml(f.flag_type)}</span></td>
-        <td>
-          <span style="font-family:var(--font-mono); font-size:11px; color:var(--text-bright); background:var(--bg-input); padding:3px 8px; border-radius:6px; border:1px solid var(--border-subtle);">
-            ${escapeHtml(f.flag_value)}
-          </span>
-        </td>
-        <td>
-          <button class="flag-toggle-btn ${isEn ? 'flag-toggle-active' : 'flag-toggle-disabled'}" onclick="toggleFeatureFlag('${slug}', ${f.id})" title="Click to instantly toggle feature globally">
-            <i class="fa-solid ${isEn ? 'fa-toggle-on' : 'fa-toggle-off'}"></i>
-            <span>${isEn ? 'ENABLED' : 'DISABLED'}</span>
-          </button>
-        </td>
-        <td style="text-align:right;">
-          <button class="btn btn-danger btn-sm" onclick="deleteFeatureFlag('${slug}', ${f.id})" title="Remove flag">
-            <i class="fa-solid fa-trash"></i>
-          </button>
-        </td>
-      </tr>
-    `;
-  }).join("");
-}
-
-function handleFlagsScriptChange(slug) {
-  selectedFlagsScriptSlug = slug;
-  loadFeatureFlags();
-}
-
-function filterFlagsByCategory(category, btn) {
-  activeFlagsCategory = category;
-  const container = document.getElementById("flagsCategoryFilters");
-  if (container) {
-    container.querySelectorAll(".filter-pill-btn").forEach(b => b.classList.remove("active"));
-  }
-  if (btn) btn.classList.add("active");
-  renderFeatureFlagsTable();
-}
-
-function handleFlagsSearch(query) {
-  activeFlagsSearchQuery = query;
-  renderFeatureFlagsTable();
-}
-
-async function triggerAutoScanFlags() {
-  const slug = selectedFlagsScriptSlug || currentScripts[0]?.slug;
-  if (!slug) {
-    showToast("No script hub selected to scan.", "error");
-    return;
-  }
-
-  const btn = document.getElementById("btnAutoScanFlags");
-  const origHtml = btn ? btn.innerHTML : "";
-  if (btn) {
-    btn.disabled = true;
-    btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Analyzing AST...`;
-  }
-
   try {
-    const res = await apiCall(`/api/scripts/${slug}/flags/auto-scan`, "POST");
-    showToast(res.message || `Discovered ${res.discovered_count} features!`, "success");
-    cachedFeatureFlags = res.flags || [];
-    updateFlagsCategoryCounts();
-    renderFeatureFlagsTable();
-  } catch (err) {
-    showToast("Failed to auto-scan script features: " + (err.message || err), "error");
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = origHtml;
-    }
-  }
-}
-
-async function toggleFeatureFlag(slug, flagId) {
-  try {
-    const res = await apiCall(`/api/scripts/${slug}/flags/${flagId}/toggle`, "PATCH");
-    showToast(res.message, res.is_enabled ? "success" : "warning");
-    
-    // Update locally in cache for instant responsive UI
-    const target = cachedFeatureFlags.find(f => f.id === flagId);
-    if (target) {
-      target.is_enabled = res.is_enabled;
-      renderFeatureFlagsTable();
-    } else {
-      loadFeatureFlags();
-    }
-  } catch (err) {
-    showToast("Failed to toggle feature: " + (err.message || err), "error");
-  }
-}
-
-async function handleToggleAllFlags(action) {
-  const slug = selectedFlagsScriptSlug || currentScripts[0]?.slug;
-  if (!slug) return;
-
-  const actionName = action === "enable" ? "ENABLE ALL" : "KILLSWITCH (DISABLE ALL)";
-  const scope = activeFlagsCategory !== "all" ? `in category '${activeFlagsCategory}'` : "globally";
-  
-  if (!confirm(`Are you sure you want to ${actionName} feature flags ${scope}? Connected players will sync this state in real time.`)) {
-    return;
-  }
-
-  try {
-    const res = await apiCall(`/api/scripts/${slug}/flags/toggle-all`, "POST", { action, category: activeFlagsCategory });
-    showToast(res.message, action === "enable" ? "success" : "warning");
-    loadFeatureFlags();
-  } catch (err) {
-    showToast("Failed to update features: " + (err.message || err), "error");
-  }
-}
-
-async function openAddFlagModal() {
-  const select = document.getElementById("flagScriptSlug");
-  if (select) {
-    select.innerHTML = currentScripts.map(s => `
-      <option value="${escapeHtml(s.slug)}" ${s.slug === selectedFlagsScriptSlug ? 'selected' : ''}>
-        ${escapeHtml(s.name)}
-      </option>
-    `).join("");
-  }
-  document.getElementById("modalAddFlag").classList.add("active");
-}
-
-async function handleSaveFeatureFlag(e) {
-  e.preventDefault();
-  const slug = document.getElementById("flagScriptSlug").value;
-  const flag_name = document.getElementById("flagName").value.trim();
-  const flag_type = document.getElementById("flagType").value;
-  const flag_value = document.getElementById("flagValue").value.trim();
-
-  try {
-    const res = await apiCall(`/api/scripts/${slug}/flags`, "POST", { flag_name, flag_type, flag_value, is_enabled: 1 });
-    showToast(res.message, "success");
-    closeModal("modalAddFlag");
-    loadFeatureFlags();
-  } catch (err) {}
-}
-
-async function deleteFeatureFlag(slug, flagId) {
-  if (!confirm("Are you sure you want to remove this feature flag?")) return;
-  try {
-    const res = await apiCall(`/api/scripts/${slug}/flags/${flagId}`, "DELETE");
-    showToast(res.message, "success");
-    loadFeatureFlags();
-  } catch (err) {}
-}
-
-
-// =========================================================================
-// IN-GAME BROADCASTS & MAINTENANCE BANNERS
-// =========================================================================
-
-function toggleBroadcastTargetInput(targetType) {
-  const scriptGroup = document.getElementById("annScriptSelectGroup");
-  const targetGroup = document.getElementById("annTargetValueGroup");
-  const targetLabel = document.getElementById("annTargetValueLabel");
-  const targetInput = document.getElementById("annTargetValue");
-
-  if (!scriptGroup || !targetGroup) return;
-
-  if (targetType === "SCRIPT") {
-    scriptGroup.style.display = "block";
-    targetGroup.style.display = "none";
-  } else if (targetType === "USERNAME") {
-    scriptGroup.style.display = "none";
-    targetGroup.style.display = "block";
-    targetLabel.innerText = "Roblox Username";
-    targetInput.placeholder = "e.g. Builderman";
-  } else if (targetType === "KEY") {
-    scriptGroup.style.display = "none";
-    targetGroup.style.display = "block";
-    targetLabel.innerText = "Target License Key";
-    targetInput.placeholder = "e.g. FLEED-XXXX-XXXX";
-  } else {
-    // GLOBAL
-    scriptGroup.style.display = "none";
-    targetGroup.style.display = "none";
-  }
-}
-
-function openTargetedBroadcastModal(key = "", username = "") {
-  openAddAnnouncementModal();
-  const select = document.getElementById("annTargetType");
-  const valInput = document.getElementById("annTargetValue");
-  if (username && select && valInput) {
-    select.value = "USERNAME";
-    valInput.value = username;
-    toggleBroadcastTargetInput("USERNAME");
-    document.getElementById("annTitle").value = `Message to ${username}`;
-  } else if (key && select && valInput) {
-    select.value = "KEY";
-    valInput.value = key;
-    toggleBroadcastTargetInput("KEY");
-    document.getElementById("annTitle").value = "Staff Message";
-  }
-}
-
-async function loadAnnouncements() {
-  try {
-    const broadcasts = await apiCall("/api/broadcasts");
-    const tbody = document.getElementById("announcementsTableBody");
-    if (!tbody) return;
-
-    if (!broadcasts || broadcasts.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-bullhorn" style="margin-right:6px;"></i>No active in-game broadcasts queued. Send your first broadcast above!</td></tr>`;
+    const list = await apiCall("/api/blacklist");
+    if (!list || list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 24px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-halved" style="color:var(--success-color); margin-right:6px;"></i> No active blacklists. All systems clear.</td></tr>`;
+      const sysCount = document.getElementById("sysBlacklistCount");
+      if (sysCount) sysCount.innerText = "0";
       return;
     }
+    const sysCount = document.getElementById("sysBlacklistCount");
+    if (sysCount) sysCount.innerText = String(list.length);
 
-    tbody.innerHTML = broadcasts.map(b => {
-      let audienceBadge = '<span class="badge badge-zinc">Global</span>';
-      if (b.target_type === 'SCRIPT') {
-        audienceBadge = `<span class="badge badge-gold">${escapeHtml(b.script_name || b.script_slug || 'Script')}</span>`;
-      } else if (b.target_type === 'USERNAME') {
-        audienceBadge = `<span class="badge badge-primary"><i class="fa-solid fa-user"></i> ${escapeHtml(b.target_value)}</span>`;
-      } else if (b.target_type === 'KEY') {
-        audienceBadge = `<span class="badge badge-warning"><i class="fa-solid fa-key"></i> Key</span>`;
-      }
+    tbody.innerHTML = list.map(item => `
+      <tr>
+        <td><span class="badge ${item.target_type === 'HWID' ? 'badge-gold' : 'badge-danger'}"><i class="fa-solid ${item.target_type === 'HWID' ? 'fa-fingerprint' : 'fa-network-wired'}"></i> ${escapeHtml(item.target_type)}</span></td>
+        <td><code class="mono-input" style="font-size:12px; color:var(--text-white);">${escapeHtml(item.target_value)}</code></td>
+        <td><span style="color:var(--text-zinc-300); font-size:12px;">${escapeHtml(item.reason || "Terms Violation")}</span></td>
+        <td style="color:var(--text-zinc-500); font-size:11px; font-family:var(--font-mono);">${new Date(item.created_at || Date.now()).toLocaleDateString()}</td>
+        <td>
+          <button class="btn btn-secondary btn-sm" onclick="removeBlacklist(${item.id})" title="Remove from blacklist"><i class="fa-solid fa-trash-can" style="color:var(--danger-color);"></i> Unban</button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding: 20px; color:var(--danger-light);">Failed to load blacklists: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
 
+function openAddBlacklistModal() {
+  const valInput = document.getElementById("blacklistValue");
+  const reasonInput = document.getElementById("blacklistReason");
+  if (valInput) valInput.value = "";
+  if (reasonInput) reasonInput.value = "";
+  openModal("addBlacklistModal");
+}
+
+function openBlacklistModal(opts = {}) {
+  const typeSelect = document.getElementById("blacklistType");
+  const valInput = document.getElementById("blacklistValue");
+  const reasonInput = document.getElementById("blacklistReason");
+
+  if (opts.targetType && typeSelect) typeSelect.value = opts.targetType;
+  if (opts.target && valInput) valInput.value = opts.target;
+  if (opts.reason && reasonInput) reasonInput.value = opts.reason;
+  openModal("addBlacklistModal");
+}
+
+async function handleAddBlacklist(e) {
+  e.preventDefault();
+  const target_type = document.getElementById("blacklistType")?.value || "HWID";
+  const target_value = document.getElementById("blacklistValue")?.value.trim();
+  const reason = document.getElementById("blacklistReason")?.value.trim() || "Security Violation";
+
+  if (!target_value) return showToast("Enter target HWID or IP to blacklist", "error");
+
+  try {
+    await apiCall("/api/blacklist", "POST", { target_type, target_value, reason });
+    showToast(`Added ${target_type} '${target_value}' to global blacklist!`, "success");
+    closeModal("addBlacklistModal");
+    loadBlacklists();
+    loadOverviewStats();
+  } catch (err) {}
+}
+
+async function removeBlacklist(id) {
+  if (!confirm("Are you sure you want to remove this blacklist entry?")) return;
+  try {
+    await apiCall(`/api/blacklist/${id}`, "DELETE");
+    showToast("Blacklist rule removed.");
+    loadBlacklists();
+    loadOverviewStats();
+  } catch (err) {}
+}
+
+// =========================================================================
+// THREAT RADAR & WATERMARK FORENSICS
+// =========================================================================
+async function loadThreatRadarBypasses() {
+  const tbody = document.getElementById("threatRadarBypassesTableBody");
+  if (!tbody) return;
+  try {
+    const logs = await apiCall("/api/logs?status=blocked&limit=30");
+    if (!logs || logs.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-check" style="color:var(--success-color); margin-right:6px;"></i> No blocked attacks or threat bypasses recorded.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = logs.map(l => {
+      const avatarSrc = (l.roblox_user_id && l.roblox_user_id > 0) ? `/api/roblox/avatar/${l.roblox_user_id}` : `/api/roblox/avatar/1`;
       return `
         <tr>
           <td>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <span class="badge badge-gold">${escapeHtml(b.banner_type || 'INFO')}</span>
-              ${audienceBadge}
+            <div style="display:flex; align-items:center; gap:8px;">
+              <img src="${avatarSrc}" style="width:24px; height:24px; border-radius:50%;" alt="Player">
+              <div>
+                <strong style="color:var(--text-white); font-size:12px;">${escapeHtml(l.roblox_username || 'Unknown')}</strong>
+                <span style="font-size:10px; color:var(--text-zinc-500); display:block;">ID: ${l.roblox_user_id || '—'}</span>
+              </div>
             </div>
           </td>
+          <td><span class="badge badge-danger"><i class="fa-solid fa-shield-virus"></i> ${escapeHtml(l.status)}</span></td>
+          <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(l.script_name || 'Hub')}</strong></td>
+          <td><span style="color:var(--text-zinc-400); font-size:11px;">${escapeHtml(l.game_name || (l.place_id ? 'Place #' + l.place_id : 'Experience'))}</span></td>
+          <td style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">${formatTimeAgo(l.timestamp)}</td>
           <td>
-            <div style="font-weight:600; color:var(--text-white); font-size:13px;">${escapeHtml(b.title || 'Announcement')}</div>
-            <div style="font-size:12px; color:var(--text-zinc-400); margin-top:2px;">${escapeHtml(b.message)}</div>
-          </td>
-          <td>
-            <span class="badge badge-success"><i class="fa-solid fa-signal"></i> Active (${b.duration || 10}s)</span>
-          </td>
-          <td><span style="font-size:11px; color:var(--text-zinc-500);">${formatTimeAgo(b.created_at)}</span></td>
-          <td>
-            <button class="btn btn-danger btn-sm" onclick="deleteBroadcast(${b.id})" title="Cancel Broadcast">
-              <i class="fa-solid fa-trash"></i>
+            <button class="btn btn-danger btn-sm" onclick="openBlacklistModal({ targetType: 'HWID', target: '${l.hwid || ''}', reason: 'Detected threat: ${l.status}' })" title="Blacklist Device HWID">
+              <i class="fa-solid fa-ban"></i> Blacklist
             </button>
           </td>
         </tr>
       `;
     }).join("");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--danger-light);">Failed to load threat logs.</td></tr>`;
+  }
+}
+
+async function loadAnomalies() {
+  const tbody = document.getElementById("anomaliesTableBody");
+  if (!tbody) return;
+  try {
+    const list = await apiCall("/api/analytics/anomalies");
+    if (!list || list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-check" style="color:var(--success-color); margin-right:6px;"></i> No license sharing or proxy sprawl detected.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = list.map(a => `
+      <tr>
+        <td><span class="key-badge" onclick="copyText('${escapeHtml(a.license_key)}')">${escapeHtml(a.license_key)}</span></td>
+        <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(a.script_name || 'Hub')}</strong></td>
+        <td><span class="badge badge-warning">${a.account_count} Accounts</span></td>
+        <td><span class="badge badge-zinc">${a.ip_count} IPs</span></td>
+        <td style="font-size:11px; color:var(--text-zinc-500); font-family:var(--font-mono);">${formatTimeAgo(a.last_seen)}</td>
+        <td><span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> HIGH RISK</span></td>
+        <td>
+          <button class="btn btn-danger btn-sm" onclick="quickBanLeaker(${a.license_id}, '${escapeHtml(a.license_key)}')"><i class="fa-solid fa-ban"></i> Ban Key</button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:24px; color:var(--text-zinc-500);">No anomalies recorded.</td></tr>`;
+  }
+}
+
+async function quickBanLeaker(licenseId, key) {
+  if (!confirm(`Are you sure you want to immediately revoke and ban license key '${key}' for terms violation?`)) return;
+  try {
+    await apiCall(`/api/licenses/${licenseId}/ban`, "POST", { reason: "Behavioral Anomaly: Multi-Account Distribution" });
+    showToast(`Banned leaking key '${key}'`, "error");
+    loadAnomalies();
+    loadLicensesView();
   } catch (err) {}
 }
 
-async function openAddAnnouncementModal() {
-  if (currentScripts.length === 0) await loadScripts();
-  const select = document.getElementById("annScriptSlug");
-  if (select) {
-    select.innerHTML = currentScripts.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join("");
-  }
-  const targetType = document.getElementById("annTargetType");
-  if (targetType) {
-    targetType.value = "GLOBAL";
-    toggleBroadcastTargetInput("GLOBAL");
-  }
-  document.getElementById("annMessage").value = "";
-  document.getElementById("modalAddAnnouncement").classList.add("active");
-}
+async function handleWatermarkTrace() {
+  const input = document.getElementById("watermarkInput")?.value.trim();
+  const box = document.getElementById("watermarkResultBox");
+  if (!input || !box) return showToast("Paste a watermark string or script source first", "error");
 
-async function handleSendLiveBroadcast(e) {
-  e.preventDefault();
-  const target_type = document.getElementById("annTargetType").value;
-  let target_value = "";
-  let script_id = null;
-
-  if (target_type === "SCRIPT") {
-    script_id = parseInt(document.getElementById("annScriptSlug").value) || null;
-  } else if (target_type === "USERNAME" || target_type === "KEY") {
-    target_value = document.getElementById("annTargetValue").value.trim();
-  }
-
-  const title = document.getElementById("annTitle").value.trim();
-  const banner_type = document.getElementById("annBannerType").value;
-  const message = document.getElementById("annMessage").value.trim();
-  const duration = parseInt(document.getElementById("annDuration").value) || 10;
-  const play_sound = parseInt(document.getElementById("annPlaySound").value) || 1;
+  box.style.display = "block";
+  box.innerHTML = `<div style="text-align:center; padding:20px; color:var(--text-zinc-400);"><i class="fa-solid fa-circle-notch fa-spin" style="color:var(--gold-primary); margin-right:8px;"></i> Running HMAC cryptographic forensic attribution...</div>`;
 
   try {
-    const res = await apiCall("/api/broadcasts", "POST", {
-      target_type,
-      target_value,
-      script_id,
-      title,
-      message,
-      banner_type,
-      duration,
-      play_sound
-    });
-    showToast(res.message, "success");
+    const res = await apiCall("/api/forensics/decode_watermark", "POST", { raw_payload: input });
+    if (!res || !res.success) {
+      box.innerHTML = `<div style="padding:16px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:8px; color:var(--danger-light);"><i class="fa-solid fa-triangle-exclamation" style="margin-right:6px;"></i> ${escapeHtml(res.message || "Watermark signature could not be attributed.")}</div>`;
+      return;
+    }
+
+    const lic = res.license || {};
+    box.innerHTML = `
+      <div style="background:var(--bg-elevated); border:1px solid var(--border-gold); border-radius:8px; padding:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid var(--border-subtle); padding-bottom:8px;">
+          <strong style="color:var(--gold-light); font-size:14px;"><i class="fa-solid fa-fingerprint"></i> Leaker Attribution Match Found</strong>
+          <span class="badge badge-danger">Confidence: 100% (Cryptographic HMAC)</span>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px; font-size:12.5px;">
+          <div><span style="color:var(--text-zinc-500);">License Key:</span> <code style="color:var(--text-white); font-weight:700;">${escapeHtml(lic.license_key || '—')}</code></div>
+          <div><span style="color:var(--text-zinc-500);">Script Hub:</span> <strong style="color:var(--text-white);">${escapeHtml(lic.script_name || '—')}</strong></div>
+          <div><span style="color:var(--text-zinc-500);">Discord ID:</span> <span style="color:#8ea1e1; font-weight:600;">@${escapeHtml(lic.discord_id || 'Unlinked')}</span></div>
+          <div><span style="color:var(--text-zinc-500);">HWID Fingerprint:</span> <code style="color:var(--gold-primary); font-size:11px;">${escapeHtml(lic.hwid || 'Unbound')}</code></div>
+          <div><span style="color:var(--text-zinc-500);">Buyer Note:</span> <span style="color:var(--text-zinc-300);">${escapeHtml(lic.note || 'None')}</span></div>
+          <div><span style="color:var(--text-zinc-500);">Total Executions:</span> <strong style="color:var(--text-white);">${lic.execution_count || 0}</strong></div>
+        </div>
+        <div style="margin-top:14px; display:flex; gap:8px;">
+          ${lic.id ? `<button class="btn btn-danger btn-sm" onclick="quickBanLeaker(${lic.id}, '${escapeHtml(lic.license_key)}')"><i class="fa-solid fa-ban"></i> Ban Leaker License</button>` : ''}
+          ${lic.hwid ? `<button class="btn btn-secondary btn-sm" onclick="openBlacklistModal({ targetType: 'HWID', target: '${lic.hwid}', reason: 'Script Leaker (Watermark Decoded)' })"><i class="fa-solid fa-ban"></i> Blacklist Device HWID</button>` : ''}
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    box.innerHTML = `<div style="padding:16px; color:var(--danger-light); text-align:center;">Forensic search error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// =========================================================================
+// STAFF & RESELLER MANAGERS
+// =========================================================================
+async function loadStaff() {
+  const tbody = document.getElementById("staffTableBody");
+  if (!tbody) return;
+  try {
+    const list = await apiCall("/api/staff");
+    if (!list || list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 24px; color:var(--text-zinc-500);"><i class="fa-solid fa-users-slash" style="margin-right:6px;"></i> No sub-staff or reseller accounts created yet.</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = list.map(m => `
+      <tr>
+        <td><strong style="color:var(--text-white); font-size:13px;">${escapeHtml(m.username)}</strong></td>
+        <td><span class="badge ${m.role === 'admin' ? 'badge-danger' : (m.role === 'reseller' ? 'badge-gold' : 'badge-zinc')}">${escapeHtml(m.role.toUpperCase())}</span></td>
+        <td style="color:var(--text-zinc-300); font-size:12px;">${escapeHtml(m.email || "—")}</td>
+        <td><span style="font-family:var(--font-mono); font-weight:700; color:var(--gold-light);">${m.key_quota || 0}</span> keys</td>
+        <td style="color:var(--text-zinc-500); font-size:11px; font-family:var(--font-mono);">${new Date(m.created_at || Date.now()).toLocaleDateString()}</td>
+        <td>
+          <button class="btn btn-danger btn-sm" onclick="revokeStaffManager(${m.id})" title="Delete staff account"><i class="fa-solid fa-trash"></i></button>
+        </td>
+      </tr>
+    `).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 20px; color:var(--danger-light);">Failed to load staff accounts.</td></tr>`;
+  }
+}
+
+function openCreateStaffModal() {
+  const uInput = document.getElementById("staffUsername");
+  const pInput = document.getElementById("staffPassword");
+  const qInput = document.getElementById("staffQuota");
+  if (uInput) uInput.value = "";
+  if (pInput) pInput.value = "";
+  if (qInput) qInput.value = "50";
+  openModal("createStaffModal");
+}
+
+async function handleCreateStaff(e) {
+  e.preventDefault();
+  const username = document.getElementById("staffUsername")?.value.trim();
+  const password = document.getElementById("staffPassword")?.value;
+  const role = document.getElementById("staffRole")?.value || "reseller";
+  const quota = parseInt(document.getElementById("staffQuota")?.value) || 50;
+
+  if (!username || !password) return showToast("Username and password required", "error");
+
+  try {
+    await apiCall("/api/staff", "POST", { username, password, role, key_quota: quota, email: `${username}@fleed.bot` });
+    showToast(`Staff account '${username}' created successfully!`, "success");
+    closeModal("createStaffModal");
+    loadStaff();
+  } catch (err) {}
+}
+
+async function revokeStaffManager(id) {
+  if (!confirm("Are you sure you want to delete this staff / reseller account?")) return;
+  try {
+    await apiCall(`/api/staff/${id}`, "DELETE");
+    showToast("Staff account revoked.");
+    loadStaff();
+  } catch (err) {}
+}
+
+// =========================================================================
+// PROFILE & AVATAR CUSTOMIZER
+// =========================================================================
+function openChangeAvatarModal() {
+  const urlInput = document.getElementById("avatarUrlInput");
+  if (urlInput) urlInput.value = currentUser?.avatar_url || "";
+  openModal("changeAvatarModal");
+}
+
+async function handleSaveAvatar(e) {
+  e.preventDefault();
+  const avatarUrl = document.getElementById("avatarUrlInput")?.value.trim();
+  if (!avatarUrl) return showToast("Enter a valid image URL", "error");
+
+  try {
+    const res = await apiCall("/api/auth/update_avatar", "POST", { avatar_url: avatarUrl });
+    showToast(res.message || "Avatar updated successfully!", "success");
+    if (currentUser) currentUser.avatar_url = avatarUrl;
+    updateNavAvatar(avatarUrl);
+    closeModal("changeAvatarModal");
+  } catch (err) {}
+}
+
+async function handleSaveDiscordId() {
+  const val = (document.getElementById("settingsDiscordId") || document.getElementById("discordBindInput"))?.value.trim();
+  if (!val) return showToast("Enter your 18-digit Discord user ID", "error");
+
+  try {
+    const res = await apiCall("/api/auth/bind_discord", "POST", { discord_id: val });
+    showToast(res.message || "Discord ID linked successfully!", "success");
+    if (currentUser) currentUser.discord_id = val;
+  } catch (err) {}
+}
+
+// =========================================================================
+// 2FA MODAL & TOTP VERIFICATION
+// =========================================================================
+async function open2FAModal() {
+  const body = document.getElementById("setup2FABody");
+  if (!body) return;
+
+  if (currentUser?.two_factor_enabled) {
+    body.innerHTML = `
+      <div style="text-align:center; padding:10px 0;">
+        <div style="width:50px; height:50px; border-radius:50%; background:rgba(34,197,94,0.15); border:1px solid rgba(34,197,94,0.3); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto; font-size:20px; color:var(--success-color);">
+          <i class="fa-solid fa-shield-check"></i>
+        </div>
+        <h4 style="color:var(--text-white); font-size:16px; margin-bottom:6px;">2FA Authentication is ACTIVE</h4>
+        <p style="color:var(--text-zinc-400); font-size:12.5px; margin-bottom:18px;">Your developer console is fortified with RFC 6238 TOTP authentication.</p>
+        <div class="form-group" style="text-align:left;">
+          <label class="form-label">Enter Current 6-Digit Authenticator Code to Disable</label>
+          <input type="text" id="disable2FACode" class="form-input mono-input" placeholder="123456" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px;">
+        </div>
+        <div class="modal-actions" style="margin-top:16px;">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('setup2FAModal')">Cancel</button>
+          <button type="button" class="btn btn-danger" onclick="handleDisable2FA()"><i class="fa-solid fa-lock-open"></i> Disable 2FA</button>
+        </div>
+      </div>
+    `;
+    openModal("setup2FAModal");
+    return;
+  }
+
+  body.innerHTML = `<div style="text-align:center; padding:30px; color:var(--text-zinc-400);"><i class="fa-solid fa-circle-notch fa-spin" style="color:var(--gold-primary); margin-right:8px;"></i> Generating cryptographically secure TOTP secret...</div>`;
+  openModal("setup2FAModal");
+
+  try {
+    const data = await apiCall("/api/auth/2fa/setup", "POST");
+    body.innerHTML = `
+      <div>
+        <p style="color:var(--text-zinc-400); font-size:12.5px; margin-bottom:16px;">Scan this QR code with Google Authenticator, 1Password, or Authy:</p>
+        <div style="text-align:center; margin-bottom:16px;">
+          <img src="${data.qr_code}" style="width:180px; height:180px; border-radius:10px; border:2px solid var(--border-gold); background:#fff; padding:6px;" alt="2FA QR Code">
+        </div>
+        <div style="background:var(--bg-input); padding:10px 14px; border-radius:8px; border:1px solid var(--border-subtle); margin-bottom:14px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span style="font-size:10px; color:var(--text-zinc-500); text-transform:uppercase; display:block;">Manual Entry Secret:</span>
+            <code style="font-family:var(--font-mono); font-size:12px; color:var(--gold-light); font-weight:700;">${data.secret}</code>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="copyText('${data.secret}')"><i class="fa-solid fa-copy"></i></button>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Enter 6-Digit Code from Authenticator App</label>
+          <input type="text" id="verify2FACode" class="form-input mono-input" placeholder="000000" maxlength="6" style="text-align:center; font-size:18px; letter-spacing:4px;" required>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('setup2FAModal')">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="handleVerify2FA()"><i class="fa-solid fa-shield-check"></i> Verify & Activate</button>
+        </div>
+      </div>
+    `;
+  } catch (err) {
+    body.innerHTML = `<p style="color:var(--danger-light); padding:20px; text-align:center;">Failed to initialize 2FA: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+async function handleVerify2FA() {
+  const code = document.getElementById("verify2FACode")?.value.trim();
+  if (!code || code.length < 6) return showToast("Enter a 6-digit TOTP code", "error");
+
+  try {
+    await apiCall("/api/auth/2fa/verify", "POST", { code });
+    showToast("Two-Factor Authentication is now ACTIVE!", "success");
+    if (currentUser) currentUser.two_factor_enabled = true;
+    closeModal("setup2FAModal");
+    loadProfileStats();
+  } catch (err) {}
+}
+
+async function handleDisable2FA() {
+  const code = document.getElementById("disable2FACode")?.value.trim();
+  if (!code) return showToast("Enter your 6-digit code to confirm", "error");
+
+  try {
+    await apiCall("/api/auth/2fa/disable", "POST", { code });
+    showToast("2FA disabled.", "info");
+    if (currentUser) currentUser.two_factor_enabled = false;
+    closeModal("setup2FAModal");
+    loadProfileStats();
+  } catch (err) {}
+}
+
+// =========================================================================
+// FEATURE FLAGS
+// =========================================================================
+function openCreateFlagModal() {
+  const keyInput = document.getElementById("flagKeyInput");
+  const select = document.getElementById("flagScriptSelect");
+  if (keyInput) keyInput.value = "";
+  if (select) {
+    select.innerHTML = currentScripts.map(s => `<option value="${s.slug}">${escapeHtml(s.name)} (${s.slug})</option>`).join("");
+  }
+  openModal("modalAddFlag");
+}
+
+async function handleCreateFlag(e) {
+  e.preventDefault();
+  const flag_name = document.getElementById("flagKeyInput")?.value.trim();
+  const script_slug = document.getElementById("flagScriptSelect")?.value;
+  const flag_value = document.getElementById("flagValueInput")?.value.trim() || "true";
+
+  if (!flag_name) return showToast("Enter flag key name", "error");
+
+  try {
+    await apiCall(`/api/scripts/${script_slug}/flags`, "POST", { flag_name, flag_type: "BOOLEAN", flag_value, is_enabled: 1 });
+    showToast(`Feature Flag '${flag_name}' created!`, "success");
+    closeModal("modalAddFlag");
+    loadFeatureFlags();
+  } catch (err) {}
+}
+
+// =========================================================================
+// IN-GAME BROADCASTS & NOTIFICATIONS
+// =========================================================================
+function openCreateAnnouncementModal() {
+  const titleInput = document.getElementById("announcementTitleInput");
+  const msgInput = document.getElementById("announcementMessageInput");
+  const select = document.getElementById("announcementScriptSelect");
+
+  if (titleInput) titleInput.value = "";
+  if (msgInput) msgInput.value = "";
+  if (select) {
+    select.innerHTML = `<option value="all">All Hubs (Global Broadcast)</option>` + currentScripts.map(s => `<option value="${s.slug}">${escapeHtml(s.name)} (${s.slug})</option>`).join("");
+  }
+  openModal("modalAddAnnouncement");
+}
+
+function openTargetedBroadcastModal(key = "", username = "") {
+  openCreateAnnouncementModal();
+  const msgInput = document.getElementById("announcementMessageInput");
+  const titleInput = document.getElementById("announcementTitleInput");
+  if (username && titleInput) titleInput.value = `Message to ${username}`;
+  if (key && titleInput) titleInput.value = `Message to Keyholder`;
+}
+
+async function handleCreateAnnouncement(e) {
+  e.preventDefault();
+  const message = document.getElementById("announcementMessageInput")?.value.trim();
+  const title = document.getElementById("announcementTitleInput")?.value.trim() || "Notice";
+  const banner_type = document.getElementById("announcementTypeSelect")?.value || "INFO";
+  const script_slug = document.getElementById("announcementScriptSelect")?.value || "all";
+
+  if (!message) return showToast("Enter announcement message", "error");
+
+  try {
+    await apiCall("/api/broadcasts", "POST", { message, title, banner_type, script_slug, is_active: 1, duration: 10, play_sound: 1 });
+    showToast("Broadcast pushed to in-game clients!", "success");
     closeModal("modalAddAnnouncement");
     loadAnnouncements();
   } catch (err) {}
@@ -4158,16 +3828,47 @@ async function handleSendLiveBroadcast(e) {
 async function deleteBroadcast(broadcastId) {
   try {
     const res = await apiCall(`/api/broadcasts/${broadcastId}`, "DELETE");
-    showToast(res.message, "success");
+    showToast(res.message || "Broadcast removed.", "success");
     loadAnnouncements();
   } catch (err) {}
 }
 
-
-
 // =========================================================================
-// SCRIPT VERSION HISTORY & ROLLBACK
+// SCRIPT VERSIONS & SNAPSHOT ROLLBACK
 // =========================================================================
+function openCreateVersionModal() {
+  const tagInput = document.getElementById("versionTagInput");
+  const chgInput = document.getElementById("versionChangelogInput");
+  const srcInput = document.getElementById("versionSourceInput");
+  const select = document.getElementById("versionScriptSelect");
+
+  if (tagInput) tagInput.value = `v${(currentScripts[0]?.version || '1.0.0').replace(/\d+$/, m => parseInt(m) + 1)}`;
+  if (chgInput) chgInput.value = "";
+  if (srcInput) srcInput.value = currentScripts[0]?.raw_source || "";
+  if (select) {
+    select.innerHTML = currentScripts.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (${s.slug})</option>`).join("");
+  }
+  openModal("modalPublishVersion");
+}
+
+async function handleCreateVersion(e) {
+  e.preventDefault();
+  const script_id = parseInt(document.getElementById("versionScriptSelect")?.value) || selectedScriptId;
+  const version_tag = document.getElementById("versionTagInput")?.value.trim();
+  const changelog = document.getElementById("versionChangelogInput")?.value.trim();
+  const raw_source = document.getElementById("versionSourceInput")?.value;
+
+  if (!version_tag || !raw_source) return showToast("Version tag and source code required", "error");
+
+  try {
+    const script = currentScripts.find(s => s.id === script_id) || currentScripts[0];
+    const slug = script ? script.slug : "script";
+    await apiCall(`/api/scripts/${slug}/versions`, "POST", { version_tag, changelog, raw_source });
+    showToast(`Snapshot ${version_tag} published!`, "success");
+    closeModal("modalPublishVersion");
+    loadScriptVersions();
+  } catch (err) {}
+}
 
 async function loadScriptVersions() {
   if (currentScripts.length === 0) await loadScripts();
@@ -4179,16 +3880,17 @@ async function loadScriptVersions() {
     const tbody = document.getElementById("versionsTableBody");
     if (!tbody) return;
 
-    if (versions.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-code-branch" style="margin-right:6px;"></i>No version releases published yet.</td></tr>`;
+    if (!versions || versions.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-solid fa-code-branch" style="margin-right:6px;"></i>No version releases published yet.</td></tr>`;
       return;
     }
 
     tbody.innerHTML = versions.map(v => `
       <tr>
         <td><span class="badge badge-gold" style="font-size:12px;">${escapeHtml(v.version_tag)}</span></td>
+        <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(currentScripts[0]?.name || slug)}</strong></td>
         <td><span style="color:var(--text-zinc-300); font-size:13px;">${escapeHtml(v.changelog || 'Routine release')}</span></td>
-        <td><span style="font-size:12px; color:var(--text-zinc-400);">${escapeHtml(v.created_by)}</span></td>
+        <td><span style="font-size:12px; color:var(--text-zinc-400);">${escapeHtml(v.created_by || 'Admin')}</span></td>
         <td><span style="font-size:11px; color:var(--text-zinc-500);">${formatTimeAgo(v.created_at)}</span></td>
         <td>
           <button class="btn btn-secondary btn-sm" onclick="rollbackVersion('${slug}', ${v.id}, '${escapeHtml(v.version_tag)}')">
@@ -4200,104 +3902,107 @@ async function loadScriptVersions() {
   } catch (err) {}
 }
 
-async function openPublishVersionModal() {
-  const select = document.getElementById("verScriptSlug");
-  if (select) {
-    select.innerHTML = currentScripts.map(s => `<option value="${escapeHtml(s.slug)}">${escapeHtml(s.name)}</option>`).join("");
-  }
-  document.getElementById("modalPublishVersion").classList.add("active");
-}
-
-async function handleSaveVersion(e) {
-  e.preventDefault();
-  const slug = document.getElementById("verScriptSlug").value;
-  const version_tag = document.getElementById("verTag").value.trim();
-  const changelog = document.getElementById("verChangelog").value.trim();
-  const raw_source = document.getElementById("verSource").value;
-
-  try {
-    const res = await apiCall(`/api/scripts/${slug}/versions`, "POST", { version_tag, changelog, raw_source });
-    showToast(res.message, "success");
-    closeModal("modalPublishVersion");
-    loadScriptVersions();
-  } catch (err) {}
-}
-
 async function rollbackVersion(slug, verId, verTag) {
   if (!confirm(`Are you sure you want to rollback active script source to version ${verTag}?`)) return;
   try {
     const res = await apiCall(`/api/scripts/${slug}/rollback/${verId}`, "POST");
-    showToast(res.message, "success");
+    showToast(res.message || `Rollback to ${verTag} complete!`, "success");
+    loadScripts();
     loadScriptVersions();
   } catch (err) {}
 }
 
-
 // =========================================================================
-// DISCORD WEBHOOKS
+// DISCORD WEBHOOKS & SECURITY ALERTS
 // =========================================================================
+function openTestWebhookModal() {
+  const input = document.getElementById("testWebhookUrlInput");
+  if (input) input.value = document.getElementById("webhookThreatUrl")?.value || "";
+  openModal("modalTestWebhook");
+}
 
-async function loadDiscordWebhooks() {
+async function handleExecuteTestWebhook(e) {
+  e.preventDefault();
+  const url = document.getElementById("testWebhookUrlInput")?.value.trim();
+  if (!url) return showToast("Enter a Discord webhook URL", "error");
+
   try {
-    const webhooks = await apiCall("/api/webhooks");
-    const tbody = document.getElementById("webhooksTableBody");
-    if (!tbody) return;
-
-    if (webhooks.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--text-zinc-500);"><i class="fa-brands fa-discord" style="margin-right:6px;"></i>No Discord webhooks configured yet.</td></tr>`;
-      return;
-    }
-
-    tbody.innerHTML = webhooks.map(w => `
-      <tr>
-        <td><span class="badge badge-gold">${escapeHtml(w.event_type)}</span></td>
-        <td><span class="badge badge-zinc">${escapeHtml(w.script_name || 'Global')}</span></td>
-        <td><span style="font-family:var(--font-mono); font-size:11px; color:var(--text-zinc-400);">${escapeHtml(w.webhook_url.substring(0, 45))}...</span></td>
-        <td><span class="badge badge-success">Active</span></td>
-        <td>
-          <button class="btn btn-secondary btn-sm" onclick="testWebhook('${escapeHtml(w.webhook_url)}')"><i class="fa-solid fa-paper-plane"></i> Test</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteWebhook(${w.id})"><i class="fa-solid fa-trash"></i></button>
-        </td>
-      </tr>
-    `).join("");
+    const res = await apiCall("/api/webhooks/test", "POST", { webhook_url: url });
+    showToast(res.message || "Test security embed dispatched to Discord!", "success");
+    closeModal("modalTestWebhook");
   } catch (err) {}
 }
 
-function openAddWebhookModal() {
-  document.getElementById("modalAddWebhook").classList.add("active");
-}
-
-async function handleSaveWebhook(e) {
+async function handleSaveGlobalWebhooks(e) {
   e.preventDefault();
-  const event_type = document.getElementById("whEvent").value;
-  const webhook_url = document.getElementById("whUrl").value.trim();
+  const threat_webhook = document.getElementById("webhookThreatUrl")?.value.trim() || "";
+  const exec_webhook = document.getElementById("webhookExecUrl")?.value.trim() || "";
+  const keys_webhook = document.getElementById("webhookKeysUrl")?.value.trim() || "";
 
   try {
-    const res = await apiCall("/api/webhooks", "POST", { event_type, webhook_url, is_enabled: 1 });
-    showToast(res.message, "success");
-    closeModal("modalAddWebhook");
-    loadDiscordWebhooks();
+    await apiCall("/api/webhooks/global", "POST", { threat_webhook, exec_webhook, keys_webhook });
+    showToast("Global notification webhooks saved successfully!", "success");
   } catch (err) {}
 }
 
 async function testWebhook(webhook_url) {
   try {
     const res = await apiCall("/api/webhooks/test", "POST", { webhook_url });
-    showToast(res.message, "success");
+    showToast(res.message || "Test webhook dispatched!", "success");
   } catch (err) {}
 }
 
-async function testWebhookFromModal() {
-  const url = document.getElementById("whUrl").value.trim();
-  if (!url) return showToast("Enter webhook URL first", "error");
-  await testWebhook(url);
+// =========================================================================
+// HANDSHAKE DIAGNOSTIC SIMULATOR
+// =========================================================================
+async function handleSimulateHandshake(e) {
+  e.preventDefault();
+  const slug = document.getElementById("simScriptSlug")?.value;
+  const key = document.getElementById("simKeyInput")?.value.trim();
+  const resultBox = document.getElementById("simResultBox");
+  if (!resultBox) return;
+
+  resultBox.style.display = "block";
+  resultBox.innerHTML = `<div style="text-align:center; padding:16px; color:var(--text-zinc-400);"><i class="fa-solid fa-circle-notch fa-spin" style="color:var(--gold-primary); margin-right:6px;"></i> Testing handshake handshake...</div>`;
+
+  try {
+    const res = await apiCall("/api/telemetry/simulate-handshake", "POST", { slug, key, hwid: "SIMULATOR_TEST_HWID_HASH_123" });
+    const isOk = res.status === "SUCCESS";
+    resultBox.innerHTML = `
+      <div style="background:${isOk ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)'}; border:1px solid ${isOk ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}; border-radius:8px; padding:12px; margin-top:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <strong style="color:${isOk ? 'var(--success-color)' : 'var(--danger-light)'}; font-size:13px;">${isOk ? 'Handshake Verification: PASSED' : 'Handshake Verification: BLOCKED'}</strong>
+          <span class="badge ${isOk ? 'badge-success' : 'badge-danger'}">${escapeHtml(res.status || 'ERROR')}</span>
+        </div>
+        <div style="font-size:12px; color:var(--text-zinc-300);">${escapeHtml(res.message || res.detail || 'Handshake simulated.')}</div>
+      </div>
+    `;
+  } catch (err) {
+    resultBox.innerHTML = `<div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:12px; margin-top:12px; color:var(--danger-light); font-size:12px;">Diagnostic failed: ${escapeHtml(err.message)}</div>`;
+  }
 }
 
-async function deleteWebhook(id) {
+// =========================================================================
+// SYSTEM HEALTH & DIAGNOSTICS
+// =========================================================================
+async function loadSystemHealth() {
   try {
-    const res = await apiCall(`/api/webhooks/${id}`, "DELETE");
-    showToast(res.message, "success");
-    loadDiscordWebhooks();
+    const health = await apiCall("/api/system/health");
+    if (!health) return;
+
+    const uEl = document.getElementById("sysUptime");
+    const dEl = document.getElementById("sysDbSize");
+    const lEl = document.getElementById("sysTotalLogs");
+    const bEl = document.getElementById("sysBlacklistCount");
+
+    if (uEl) uEl.innerText = health.uptime_formatted || `${Math.floor(health.uptime_seconds / 3600)}h ${Math.floor((health.uptime_seconds % 3600) / 60)}m`;
+    if (dEl) dEl.innerText = health.db_size_formatted || `${(health.db_size_bytes / 1024).toFixed(1)} KB`;
+    if (lEl) lEl.innerText = (health.total_logs || 0).toLocaleString();
+    if (bEl) bEl.innerText = (health.total_blacklists || 0).toLocaleString();
+
+    showToast("System health & database metrics refreshed!", "success");
+  } catch (err) {}
+}
   } catch (err) {}
 }
 
@@ -4775,54 +4480,24 @@ async function handleDispatchRemoteExec(e) {
 }
 
 function openRemoteExecModal(targetKey = "", targetPlayer = "") {
-  loadRemoteExecQueue();
-  const modal = document.getElementById("modalRemoteExec");
-  if (!modal) return;
-
-  const targetTypeSelect = document.getElementById("modalExecTargetType");
-  const targetValInput = document.getElementById("modalExecTargetValue");
+  switchTab("remote-exec");
+  const targetTypeSelect = document.getElementById("remoteExecTargetType");
+  const targetValInput = document.getElementById("remoteExecTargetValue");
 
   if (targetKey) {
-    if (targetTypeSelect) targetTypeSelect.value = "KEY";
+    if (targetTypeSelect) {
+      targetTypeSelect.value = "KEY";
+      handleRemoteExecTargetTypeChange("KEY");
+    }
     if (targetValInput) targetValInput.value = targetKey;
   } else if (targetPlayer) {
-    if (targetTypeSelect) targetTypeSelect.value = "PLAYER";
+    if (targetTypeSelect) {
+      targetTypeSelect.value = "PLAYER";
+      handleRemoteExecTargetTypeChange("PLAYER");
+    }
     if (targetValInput) targetValInput.value = targetPlayer;
-  } else {
-    if (targetTypeSelect) targetTypeSelect.value = "ALL";
-    if (targetValInput) targetValInput.value = "";
   }
-
-  handleModalExecTargetTypeChange(targetTypeSelect?.value || "ALL");
-  const modalEditor = document.getElementById("modalExecCode");
-  if (modalEditor) updateLineNumbers(modalEditor, "modalExecLineNumbers");
-  modal.classList.add("active");
-}
-
-async function handleModalRemoteExecDispatch(e) {
-  e.preventDefault();
-  const script_slug = document.getElementById("modalExecScriptSlug").value;
-  const target_type = document.getElementById("modalExecTargetType").value;
-  const target_value = document.getElementById("modalExecTargetValue")?.value.trim() || null;
-  const luau_code = document.getElementById("modalExecCode").value.trim();
-  const description = document.getElementById("modalExecDescription")?.value.trim() || "Quick Modal Exec";
-
-  if (!luau_code) {
-    return showToast("Luau code payload cannot be empty", "error");
-  }
-
-  try {
-    const res = await apiCall("/api/remote-exec", "POST", {
-      script_slug,
-      target_type,
-      target_value,
-      luau_code,
-      description
-    });
-    showToast(res.message, "success");
-    closeModal("modalRemoteExec");
-    loadRemoteExecQueue();
-  } catch (err) {}
+  showToast("Loaded player context into remote Luau console!", "info");
 }
 
 function reRunRemoteExec(encodedCode, targetType, targetValue, scriptSlug) {

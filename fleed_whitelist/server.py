@@ -1975,18 +1975,7 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         watermark = crypto_engine.generate_watermark(row["license_key"], bound_hwid)
         exec_token = crypto_engine.generate_exec_token(row["license_key"], bound_hwid)
 
-        # 4. Increment Execution Count & Record Success
-        await conn.execute("""
-            UPDATE licenses SET execution_count = execution_count + 1, last_executed_at = ? WHERE id = ?
-        """, (now_iso, row["id"]))
-
-        await conn.execute("""
-            INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, watermark, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?, ?)
-        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, f"Script delivered in-memory | watermark={watermark} | integrity={source_integrity_hash}", watermark, now_iso))
-        await conn.commit()
-
-        # 5. Encrypt Payload for in-memory VM unpacking using matching HWID representation
+        # 4. Encrypt Payload for in-memory VM unpacking using matching HWID representation
         raw_code = row["raw_source"]
 
         # Fetch and inject real-time dynamic feature flags for this script
@@ -2016,22 +2005,15 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
             pass
 
         # FUSE the whitelist re-check + watermark INTO the script body, then
-        # virtualize the whole thing together (below). Because the guard lives in
-        # the same obfuscated blob, it cannot be stripped without breaking the
-        # script, and a dumped/redistributed copy fails the runtime heartbeat.
+        # virtualize the whole thing together (below).
         base_url = str(request.base_url).rstrip("/")
         if request.headers.get("X-Forwarded-Host"):
             base_url = f"{request.headers.get('X-Forwarded-Proto', 'https')}://{request.headers.get('X-Forwarded-Host')}"
         
-        # Generate integrity hash for the final payload (guard + raw_code) to enable
-        # client-side anti-tamper verification. The hash is computed after all
-        # transformations so the client validates the exact code it's executing.
         import hashlib
         
         # Build the guard first to compute integrity hash on the complete payload
-        # We need a temp guard to compute the hash, then rebuild with the hash included
         temp_guard = crypto_engine.build_fused_guard(base_url, exec_token, watermark, "")
-        temp_payload = temp_guard + "\n" + raw_code
         
         # Apply obfuscation first (if any) to compute integrity on the actual delivered code
         obfuscated_code = raw_code
@@ -2062,9 +2044,18 @@ async def handshake_verify(req: HandshakeVerifyRequest, request: Request):
         
         # Now build the REAL guard with the integrity hash embedded
         guard = crypto_engine.build_fused_guard(base_url, exec_token, watermark, source_integrity_hash)
-        
-        # Rebuild final payload with the real guard (which now has integrity hash)
         final_payload = guard + "\n" + obfuscated_code
+
+        # 5. Increment Execution Count & Record Success
+        await conn.execute("""
+            UPDATE licenses SET execution_count = execution_count + 1, last_executed_at = ? WHERE id = ?
+        """, (now_iso, row["id"]))
+
+        await conn.execute("""
+            INSERT INTO execution_logs (script_id, license_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, watermark, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SUCCESS', ?, ?, ?)
+        """, (row["script_id"], row["id"], row["license_key"], bound_hwid, client_ip, exec_name, rbx_user, rbx_uid, place_id, job_id, game_name, f"Script delivered in-memory | watermark={watermark} | integrity={source_integrity_hash}", watermark, now_iso))
+        await conn.commit()
 
         effective_hwid = matching_hwid or req.hwid or bound_hwid
         session_key = crypto_engine.derive_session_key(

@@ -657,7 +657,7 @@ function renderOverviewChart(hourlyData) {
   }
 
   const svgWidth = 1000;
-  const chartHeight = 150;
+  const chartHeight = 110;
   const maxVal = Math.max(...hourlyData.map(d => (d.success || 0) + (d.blocked || 0)), 5);
   const slotWidth = svgWidth / hourlyData.length;
   const barWidth = slotWidth * 0.62;
@@ -670,21 +670,21 @@ function renderOverviewChart(hourlyData) {
 
     const x = idx * slotWidth + (slotWidth - barWidth) / 2;
 
-    // Subtle baseline indicator slot (always visible even when 0)
+    // Subtle baseline slot
     barsSvg += `
-      <rect x="${x}" y="${chartHeight - 4}" width="${barWidth}" height="4" rx="2" fill="rgba(255,255,255,0.06)">
+      <rect x="${x}" y="${chartHeight - 3}" width="${barWidth}" height="3" rx="1.5" fill="rgba(255,255,255,0.08)">
         <title>${d.hour}: 0 Handshakes</title>
       </rect>
     `;
 
     if (total > 0) {
-      const succH = Math.max((succ / maxVal) * chartHeight, succ > 0 ? 5 : 0);
-      const blockH = Math.max((block / maxVal) * chartHeight, block > 0 ? 5 : 0);
+      const succH = Math.max((succ / maxVal) * chartHeight, succ > 0 ? 6 : 0);
+      const blockH = Math.max((block / maxVal) * chartHeight, block > 0 ? 6 : 0);
 
       const ySucc = chartHeight - succH;
       if (succ > 0) {
         barsSvg += `
-          <rect class="chart-bar-success" x="${x}" y="${ySucc}" width="${barWidth}" height="${succH}" rx="3">
+          <rect class="chart-bar-success" x="${x}" y="${ySucc}" width="${barWidth}" height="${succH}" rx="3" fill="url(#goldBarGrad)">
             <title>${d.hour}: ${succ} Deliveries</title>
           </rect>
         `;
@@ -693,25 +693,35 @@ function renderOverviewChart(hourlyData) {
       if (block > 0) {
         const yBlock = ySucc - blockH;
         barsSvg += `
-          <rect class="chart-bar-blocked" x="${x}" y="${yBlock}" width="${barWidth}" height="${blockH}" rx="3">
+          <rect class="chart-bar-blocked" x="${x}" y="${yBlock}" width="${barWidth}" height="${blockH}" rx="3" fill="url(#threatBarGrad)">
             <title>${d.hour}: ${block} Blocked Threats</title>
           </rect>
         `;
       }
     }
 
-    // Hour label on X-axis (every 4th hour and last)
+    // Hour label on X-axis
     if (idx % 4 === 0 || idx === hourlyData.length - 1) {
       barsSvg += `
-        <text class="chart-axis-label" x="${x + barWidth / 2}" y="${chartHeight + 24}" text-anchor="middle">${d.hour}</text>
+        <text class="chart-axis-label" x="${x + barWidth / 2}" y="${chartHeight + 18}" text-anchor="middle" fill="#64748b" font-size="11" font-family="'JetBrains Mono', monospace">${d.hour}</text>
       `;
     }
   });
 
   container.innerHTML = `
-    <svg class="chart-svg" viewBox="0 0 ${svgWidth} ${chartHeight + 32}" style="width:100%; height:100%;">
+    <svg class="chart-svg" viewBox="0 0 ${svgWidth} ${chartHeight + 24}" style="width:100%; height:100%; display:block;">
+      <defs>
+        <linearGradient id="goldBarGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#fbbf24" />
+          <stop offset="100%" stop-color="#d97706" />
+        </linearGradient>
+        <linearGradient id="threatBarGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#f87171" />
+          <stop offset="100%" stop-color="#dc2626" />
+        </linearGradient>
+      </defs>
       <!-- Grid lines -->
-      <line x1="0" y1="10" x2="${svgWidth}" y2="10" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="4" />
+      <line x1="0" y1="5" x2="${svgWidth}" y2="5" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="4" />
       <line x1="0" y1="${chartHeight / 2}" x2="${svgWidth}" y2="${chartHeight / 2}" stroke="rgba(255,255,255,0.05)" stroke-width="1" stroke-dasharray="4" />
       <line x1="0" y1="${chartHeight}" x2="${svgWidth}" y2="${chartHeight}" stroke="rgba(255,255,255,0.12)" stroke-width="1" />
       ${barsSvg}
@@ -2578,6 +2588,127 @@ function renderActiveSessionsTable() {
           <span class="key-badge" style="font-size:11px;" onclick="copyText('${s.license_key}', 'License Key copied!')" title="Click to copy key">${escapeHtml((s.license_key || '').substring(0, 14))}... <i class="fa-solid fa-copy"></i></span>
         </td>
         <td><span class="badge badge-zinc" style="font-size:11px;">${escapeHtml(s.executor_name || 'Universal')}</span></td>
+        <td>
+          <div style="display:flex; gap:6px;">
+            <button class="btn btn-primary btn-sm" onclick="openRemoteExecModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Execute Remote Luau">
+              <i class="fa-solid fa-bolt"></i>
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="openTargetedBroadcastModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Send In-Game Message">
+              <i class="fa-solid fa-bullhorn" style="color:var(--gold-light);"></i>
+            </button>
+            <button class="btn btn-danger btn-sm" onclick="openKickModal({ key: '${escapeHtml(s.license_key || '')}', hwid: '${escapeHtml(s.hwid || '')}', userId: ${s.roblox_user_id || 0}, username: '${escapeHtml(s.roblox_username || '')}', displayName: '${escapeHtml(s.roblox_username || s.license_key || 'Player')}' })" title="Kick Player from Game">
+              <i class="fa-solid fa-power-off"></i> Kick
+            </button>
+          </div>
+        </td>
+function loadLiveSessions(force = false) {
+  return loadActiveSessions(force);
+}
+
+function filterSessionsViewTable(query) {
+  window.liveSessionsTabSearch = (query || "").trim().toLowerCase();
+  renderLiveSessionsTabTable();
+}
+
+function renderLiveSessionsTabTable() {
+  const tableBody = document.getElementById("sessionsViewTableBody");
+  if (!tableBody) return;
+
+  const sessions = window.liveSessionsData || [];
+  const filter = window.liveSessionsTabFilter || "all";
+  const search = window.liveSessionsTabSearch || "";
+
+  // Update In-Game Tab badge counts
+  const allCount = sessions.length;
+  const onlineCount = sessions.filter(s => s.presence_state === "online").length;
+  const idleCount = sessions.filter(s => s.presence_state === "idle").length;
+  const offlineCount = sessions.filter(s => s.presence_state === "offline").length;
+  const kickedCount = sessions.filter(s => s.presence_state === "kicked").length;
+
+  const tAll = document.getElementById("sessionsViewCountAll"); if (tAll) tAll.innerText = allCount;
+  const tOn = document.getElementById("sessionsViewCountOnline"); if (tOn) tOn.innerText = onlineCount;
+  const tId = document.getElementById("sessionsViewCountIdle"); if (tId) tId.innerText = idleCount;
+  const tOff = document.getElementById("sessionsViewCountOffline"); if (tOff) tOff.innerText = offlineCount;
+  const tKick = document.getElementById("sessionsViewCountKicked"); if (tKick) tKick.innerText = kickedCount;
+
+  let filtered = sessions.filter(s => {
+    if (filter === "online" && s.presence_state !== "online") return false;
+    if (filter === "idle" && s.presence_state !== "idle") return false;
+    if (filter === "offline" && s.presence_state !== "offline") return false;
+    if (filter === "kicked" && s.presence_state !== "kicked") return false;
+
+    if (search) {
+      const match = (s.roblox_username && s.roblox_username.toLowerCase().includes(search)) ||
+                    (s.game_name && s.game_name.toLowerCase().includes(search)) ||
+                    (s.license_key && s.license_key.toLowerCase().includes(search)) ||
+                    (s.hwid && s.hwid.toLowerCase().includes(search)) ||
+                    (s.executor_name && s.executor_name.toLowerCase().includes(search)) ||
+                    (s.script_name && s.script_name.toLowerCase().includes(search));
+      if (!match) return false;
+    }
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    tableBody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding: 24px; color:var(--text-zinc-500);"><i class="fa-solid fa-signal" style="color:var(--gold-light); margin-right:6px;"></i> No live in-game sessions match this filter.</td></tr>`;
+    return;
+  }
+
+  tableBody.innerHTML = filtered.map(s => {
+    const avatarUrl = (s.roblox_user_id && s.roblox_user_id > 0)
+      ? `/api/roblox/avatar/${s.roblox_user_id}`
+      : `/api/roblox/avatar/1`;
+    const profileUrl = (s.roblox_user_id && s.roblox_user_id > 0) ? `https://www.roblox.com/users/${s.roblox_user_id}/profile` : '#';
+    const placeUrl = s.place_id > 0 ? `https://www.roblox.com/games/${s.place_id}` : '#';
+
+    let presenceBadge = "";
+    if (s.presence_state === "kicked") {
+      presenceBadge = `<span class="presence-pill kicked"><span class="radar-dot kicked"></span> KICKED</span>`;
+    } else if (s.presence_state === "online") {
+      presenceBadge = `<span class="presence-pill online"><span class="radar-dot online"></span> LIVE (${s.seconds_ago || 0}s ago)</span>`;
+    } else if (s.presence_state === "idle") {
+      presenceBadge = `<span class="presence-pill idle"><span class="radar-dot idle"></span> IDLE (${s.seconds_ago || 0}s ago)</span>`;
+    } else {
+      presenceBadge = `<span class="presence-pill offline"><span class="radar-dot offline"></span> LEFT (${formatSecsAgo(s.seconds_ago || 0)})</span>`;
+    }
+
+    const hwidSnippet = s.hwid ? `${escapeHtml(s.hwid.substring(0, 8))}...` : '—';
+    const ipSnippet = s.ip_address ? escapeHtml(s.ip_address) : '—';
+
+    return `
+      <tr>
+        <td>${presenceBadge}</td>
+        <td>
+          <div style="display:flex; align-items:center; gap:9px;">
+            <div class="avatar-badge-wrap">
+              <img src="${avatarUrl}" alt="Avatar">
+              <span class="status-indicator ${s.presence_state}"></span>
+            </div>
+            <div>
+              <a href="${profileUrl}" target="_blank" style="color:var(--text-white); font-weight:650; text-decoration:none; font-size:13px; display:flex; align-items:center; gap:4px;">
+                ${escapeHtml(s.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>
+              </a>
+              <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">ID: ${s.roblox_user_id || '—'}</span>
+            </div>
+          </div>
+        </td>
+        <td>
+          <a href="${placeUrl}" target="_blank" style="color:var(--gold-light); font-size:12px; font-weight:550; text-decoration:none; display:flex; align-items:center; gap:4px;">
+            <i class="fa-solid fa-gamepad" style="font-size:11px; opacity:0.8;"></i> ${escapeHtml(s.game_name || 'Roblox Experience')}
+          </a>
+          <span style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">Place: ${s.place_id || '—'}</span>
+        </td>
+        <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(s.script_name || s.script_slug || 'Hub')}</strong></td>
+        <td>
+          <span class="key-badge" style="font-size:11px;" onclick="copyText('${s.license_key}', 'License Key copied!')" title="Click to copy key">${escapeHtml((s.license_key || '').substring(0, 14))}... <i class="fa-solid fa-copy"></i></span>
+        </td>
+        <td><span class="badge badge-zinc" style="font-size:11px;">${escapeHtml(s.executor_name || 'Universal')}</span></td>
+        <td>
+          <div style="font-size:11px; font-family:var(--font-mono); color:var(--text-zinc-400);">
+            <div>${ipSnippet}</div>
+            <div style="color:var(--text-zinc-500); font-size:10px;">HWID: ${hwidSnippet}</div>
+          </div>
+        </td>
         <td>
           <div style="display:flex; gap:6px;">
             <button class="btn btn-primary btn-sm" onclick="openRemoteExecModal('${escapeHtml(s.license_key)}', '${escapeHtml(s.roblox_username || '')}')" title="Execute Remote Luau">

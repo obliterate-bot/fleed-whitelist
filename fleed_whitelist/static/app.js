@@ -4907,21 +4907,23 @@ function initAmberParticles() {
     height = canvas.height = window.innerHeight;
   }, { passive: true });
 
-  const particleCount = 55;
+  const particleCount = 80;
   const particles = [];
 
   for (let i = 0; i < particleCount; i++) {
+    const isGlowFlare = Math.random() > 0.82;
     particles.push({
       x: Math.random() * width,
       y: Math.random() * height,
-      r: 1.2 + Math.random() * 2.0,
+      r: isGlowFlare ? (2.4 + Math.random() * 2.8) : (1.0 + Math.random() * 2.0),
       angle: Math.random() * Math.PI * 2,
-      angleSpeed: 0.01 + Math.random() * 0.02,
-      vx: (Math.random() - 0.5) * 0.25,
-      vy: -(0.25 + Math.random() * 0.5),
-      alpha: 0.25 + Math.random() * 0.65,
-      alphaSpeed: 0.005 + Math.random() * 0.01,
+      angleSpeed: 0.008 + Math.random() * 0.018,
+      vx: (Math.random() - 0.5) * 0.35,
+      vy: -(0.25 + Math.random() * 0.65),
+      alpha: 0.35 + Math.random() * 0.6,
+      alphaSpeed: 0.006 + Math.random() * 0.012,
       alphaDir: Math.random() > 0.5 ? 1 : -1,
+      glowBlur: isGlowFlare ? 18 : 8,
       color: Math.random() > 0.4 ? "245, 158, 11" : (Math.random() > 0.5 ? "251, 191, 36" : "217, 119, 6")
     });
   }
@@ -4938,25 +4940,25 @@ function initAmberParticles() {
       const p = particles[i];
 
       p.angle += p.angleSpeed;
-      p.x += p.vx + Math.sin(p.angle) * 0.22;
+      p.x += p.vx + Math.sin(p.angle) * 0.28;
       p.y += p.vy;
 
       p.alpha += p.alphaSpeed * p.alphaDir;
-      if (p.alpha > 0.9) { p.alpha = 0.9; p.alphaDir = -1; }
-      else if (p.alpha < 0.2) { p.alpha = 0.2; p.alphaDir = 1; }
+      if (p.alpha > 0.95) { p.alpha = 0.95; p.alphaDir = -1; }
+      else if (p.alpha < 0.25) { p.alpha = 0.25; p.alphaDir = 1; }
 
-      if (p.y < -12) {
-        p.y = height + 12;
+      if (p.y < -16) {
+        p.y = height + 16;
         p.x = Math.random() * width;
       }
-      if (p.x < -12) p.x = width + 12;
-      else if (p.x > width + 12) p.x = -12;
+      if (p.x < -16) p.x = width + 16;
+      else if (p.x > width + 16) p.x = -16;
 
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${p.color}, ${p.alpha})`;
-      ctx.shadowBlur = 10;
-      ctx.shadowColor = `rgba(${p.color}, ${p.alpha * 0.85})`;
+      ctx.shadowBlur = p.glowBlur;
+      ctx.shadowColor = `rgba(${p.color}, ${p.alpha * 0.9})`;
       ctx.fill();
     }
 

@@ -2,21 +2,21 @@
 
 :root {
   /* Semi-Transparent Obsidian Glass Surfaces */
-  --bg-deep: #030406;
-  --bg-sidebar: rgba(5, 6, 9, 0.75);
+  --bg-deep: #020305;
+  --bg-sidebar: rgba(4, 5, 8, 0.45);
   --bg-sidebar-hover: rgba(245, 158, 11, 0.08);
-  --bg-topbar: rgba(5, 6, 9, 0.75);
+  --bg-topbar: rgba(4, 5, 8, 0.45);
   --bg-main: transparent;
-  --bg-card: rgba(8, 10, 15, 0.62);
-  --bg-card-solid: rgba(10, 12, 18, 0.72);
-  --bg-elevated: rgba(15, 18, 26, 0.55);
-  --bg-input: rgba(9, 11, 17, 0.65);
-  --bg-hover: rgba(245, 158, 11, 0.08);
+  --bg-card: rgba(8, 10, 16, 0.32);
+  --bg-card-solid: rgba(10, 13, 20, 0.42);
+  --bg-elevated: rgba(14, 17, 26, 0.28);
+  --bg-input: rgba(7, 9, 15, 0.35);
+  --bg-hover: rgba(245, 158, 11, 0.1);
 
   /* Specular Highlight Borders */
-  --border-subtle: rgba(245, 158, 11, 0.1);
-  --border-card: rgba(245, 158, 11, 0.15);
-  --border-top-highlight: rgba(245, 158, 11, 0.35);
+  --border-subtle: rgba(245, 158, 11, 0.12);
+  --border-card: rgba(245, 158, 11, 0.18);
+  --border-top-highlight: rgba(245, 158, 11, 0.4);
   --border-active: #312818;
 
   /* Rich Champagne Gold & Cyber Amber */

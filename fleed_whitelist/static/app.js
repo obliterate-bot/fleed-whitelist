@@ -47,6 +47,23 @@ function copyText(text, label = "Copied to clipboard!") {
   });
 }
 
+// Modal Helpers
+function openModal(modalId) {
+  const m = document.getElementById(modalId);
+  if (m) {
+    m.classList.add("active");
+    m.style.display = "flex";
+  }
+}
+
+function closeModal(modalId) {
+  const m = document.getElementById(modalId);
+  if (m) {
+    m.classList.remove("active");
+    m.style.display = "none";
+  }
+}
+
 // Escape HTML helper
 function escapeHtml(str) {
   if (!str) return "";
@@ -204,58 +221,55 @@ let selectedAvatarUrl = null;
 function updateAvatarUI(avatarUrl, username) {
   const initial = (username || "U").charAt(0).toUpperCase();
 
-  // 1. Navbar Avatar
-  const navImg = document.getElementById("navAvatarImg");
-  const navInit = document.getElementById("userInitial");
-  if (navImg && navInit) {
-    if (avatarUrl) {
-      navImg.src = avatarUrl;
-      navImg.style.display = "block";
-      navInit.style.display = "none";
-    } else {
-      navImg.style.display = "none";
-      navInit.style.display = "flex";
-      navInit.innerText = initial;
-    }
-  }
+  // 1. Sidebar Avatar & Topbar Profile
+  const avatarImgs = [
+    document.getElementById("sidebarAvatarImg"),
+    document.getElementById("topProfileAvatarImg"),
+    document.getElementById("dropdownAvatarImg"),
+    document.getElementById("settingsAvatarImg")
+  ];
+  const initialEls = [
+    document.getElementById("sidebarUserInitial"),
+    document.getElementById("topProfileInitial"),
+    document.getElementById("dropdownInitial"),
+    document.getElementById("settingsInitial")
+  ];
 
-  // 2. Dropdown Avatar
-  const dropImg = document.getElementById("dropdownAvatarImg");
-  const dropInit = document.getElementById("dropdownInitial");
-  if (dropImg && dropInit) {
-    if (avatarUrl) {
-      dropImg.src = avatarUrl;
-      dropImg.style.display = "block";
-      dropInit.style.display = "none";
-    } else {
-      dropImg.style.display = "none";
-      dropInit.style.display = "flex";
-      dropInit.innerText = initial;
+  avatarImgs.forEach(img => {
+    if (img) {
+      if (avatarUrl) {
+        img.src = avatarUrl;
+        img.style.display = "block";
+      } else {
+        img.style.display = "none";
+      }
     }
-  }
+  });
 
-  // 3. Settings Page Avatar
-  const setImg = document.getElementById("settingsAvatarImg");
-  const setInit = document.getElementById("settingsInitial");
-  if (setImg && setInit) {
-    if (avatarUrl) {
-      setImg.src = avatarUrl;
-      setImg.style.display = "block";
-      setInit.style.display = "none";
-    } else {
-      setImg.style.display = "none";
-      setInit.style.display = "flex";
-      setInit.innerText = initial;
+  initialEls.forEach(init => {
+    if (init) {
+      if (avatarUrl) {
+        init.style.display = "none";
+      } else {
+        init.style.display = "flex";
+        init.innerText = initial;
+      }
     }
-  }
+  });
 }
 
 async function loadProfileStats() {
   if (!currentUser) return;
   const user = currentUser;
 
-  const profUser = document.getElementById("profileUsername");
-  if (profUser) profUser.innerText = user.username || "Developer";
+  const sidebarUser = document.getElementById("sidebarUsername");
+  if (sidebarUser) sidebarUser.innerText = user.username || "Developer";
+
+  const sidebarRole = document.getElementById("sidebarUserRole");
+  if (sidebarRole) sidebarRole.innerText = (user.role || "developer").toUpperCase();
+
+  const topName = document.getElementById("topProfileName");
+  if (topName) topName.innerText = user.username || "Developer";
 
   const dropUser = document.getElementById("dropdownUserFull");
   if (dropUser) dropUser.innerText = user.username || "Developer";
@@ -486,15 +500,65 @@ async function saveUserAvatar() {
   } catch (err) {}
 }
 
-// ----------------- Dashboard Navigation -----------------
+// ----------------- Dashboard Navigation & Sidebar -----------------
+const TAB_TITLES = {
+  overview: "Command Overview & Telemetry",
+  sessions: "Live In-Game Players Radar",
+  scripts: "Script Hubs & Armor Pipelines",
+  licenses: "License Keys & Whitelist Matrix",
+  bypasses: "Threat Radar & Forensic Attribution",
+  logs: "Live Security Audit Stream",
+  telemetry: "Executor Analytics & Fingerprinting",
+  "remote-exec": "Remote Luau Code Execution",
+  versions: "Version Control & Rollback",
+  flags: "Feature Flags & Remote Switches",
+  api: "Developer REST API Studio",
+  chat: "Live Developer Room",
+  announcements: "Broadcasts & In-Game Alerts",
+  webhooks: "Discord Security Webhooks",
+  staff: "Staff & Reseller Accounts",
+  system: "System Health & Database Engine",
+  settings: "Security & 2FA Profile"
+};
+
+function toggleSidebar() {
+  const sidebar = document.getElementById("mainSidebar");
+  if (!sidebar) return;
+  const isCollapsed = sidebar.classList.toggle("collapsed");
+  localStorage.setItem("fleed_sidebar_collapsed", isCollapsed ? "1" : "0");
+  const btn = document.getElementById("sidebarCollapseBtn");
+  if (btn) {
+    btn.innerHTML = isCollapsed ? '<i class="fa-solid fa-angles-right"></i>' : '<i class="fa-solid fa-angles-left"></i>';
+    btn.title = isCollapsed ? "Expand Sidebar (Ctrl+[)" : "Collapse Sidebar (Ctrl+[)";
+  }
+}
+
+function toggleMobileSidebar() {
+  const sidebar = document.getElementById("mainSidebar");
+  if (!sidebar) return;
+  sidebar.classList.toggle("mobile-open");
+}
+
 function switchTab(tabName) {
   document.querySelectorAll(".tab-btn").forEach(btn => btn.classList.remove("active"));
   document.querySelectorAll(".tab-view").forEach(view => view.style.display = "none");
 
-  const activeBtn = document.querySelector(`[data-tab="${tabName}"]`);
+  const activeBtns = document.querySelectorAll(`[data-tab="${tabName}"]`);
   const activeView = document.getElementById(`view-${tabName}`);
-  if (activeBtn) activeBtn.classList.add("active");
+  activeBtns.forEach(btn => btn.classList.add("active"));
   if (activeView) activeView.style.display = "block";
+
+  // Update Breadcrumb
+  const breadcrumbEl = document.getElementById("currentViewBreadcrumb");
+  if (breadcrumbEl) {
+    breadcrumbEl.innerText = TAB_TITLES[tabName] || tabName.toUpperCase();
+  }
+
+  // Close mobile sidebar on mobile
+  const sidebar = document.getElementById("mainSidebar");
+  if (sidebar && sidebar.classList.contains("mobile-open")) {
+    sidebar.classList.remove("mobile-open");
+  }
 
   if (tabName === "overview") loadOverviewStats();
   if (tabName === "scripts") loadScripts();
@@ -1810,59 +1874,55 @@ async function loadThreatRadarBypasses() {
   if (!tbody) return;
 
   try {
-    const kicks = await apiCall("/api/kicks?limit=30");
+    const kicks = await apiCall("/api/kicks?limit=50");
     if (!kicks || kicks.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-circle-check" style="color:var(--success-color); margin-right:6px;"></i> Zero blocked attacks or intercepted threat events recorded.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:6px;"></i> No security interceptions, tampering traps, or remote kicks logged.</td></tr>`;
       return;
     }
 
     tbody.innerHTML = kicks.map(k => {
-      const avatarSrc = k.avatar_url || (k.roblox_user_id > 0 ? `/api/roblox/avatar/${k.roblox_user_id}` : `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=1&size=150x150&format=Png&isCircular=true`);
-      const placeLink = k.place_id > 0 ? `https://www.roblox.com/games/${k.place_id}` : '#';
+      const avatarSrc = (k.roblox_user_id && k.roblox_user_id > 0)
+        ? `/api/roblox/avatar/${k.roblox_user_id}`
+        : `/api/roblox/avatar/1`;
+      const profileUrl = (k.roblox_user_id && k.roblox_user_id > 0) ? `https://www.roblox.com/users/${k.roblox_user_id}/profile` : '#';
       const timeStr = formatTimeAgo(k.timestamp);
+      const placeName = escapeHtml(k.game_name || (k.place_id > 0 ? `Place #${k.place_id}` : 'Roblox Experience'));
+
+      const placeHtml = k.place_id > 0
+        ? `<a href="https://www.roblox.com/games/${k.place_id}" target="_blank" style="color:var(--gold-light); font-size:12px; font-weight:550; text-decoration:none; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-gamepad" style="font-size:10px; opacity:0.8;"></i> ${placeName} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i></a>`
+        : `<span style="color:var(--text-zinc-400); font-size:12px; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-gamepad" style="font-size:10px; opacity:0.6;"></i> ${placeName}</span>`;
 
       return `
-        <tr style="background: rgba(239, 68, 68, 0.03);">
+        <tr>
           <td>
             <div style="display:flex; align-items:center; gap:8px;">
               <img src="${avatarSrc}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle); flex-shrink:0;">
               <div>
-                <strong style="color:var(--text-white); font-size:12px;">${escapeHtml(k.roblox_username || 'Unknown')}</strong>
+                <a href="${profileUrl}" target="_blank" style="color:var(--text-white); font-weight:650; font-size:12px; text-decoration:none; display:flex; align-items:center; gap:3px;">
+                  ${escapeHtml(k.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:8px; opacity:0.6;"></i>
+                </a>
                 <div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">${k.roblox_user_id > 0 ? `ID: ${k.roblox_user_id}` : 'ID: —'}</div>
               </div>
             </div>
           </td>
           <td>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <span class="badge ${k.badge_class || 'badge-danger'}" style="font-weight:700; font-size:11px; white-space:normal; text-align:left; line-height:1.3;">
-                <i class="fa-solid ${k.icon || 'fa-triangle-exclamation'}"></i> ${escapeHtml(k.kick_reason || 'Security Interception')}
-              </span>
-            </div>
-            ${k.ip_address ? `<div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono); margin-top:2px;">IP: ${escapeHtml(k.ip_address)}</div>` : ''}
+            <span class="badge ${k.badge_class || 'badge-danger'}" style="font-weight:650; font-size:11px; white-space:normal; text-align:left; line-height:1.3; max-width:320px; display:inline-block;">
+              <i class="fa-solid ${k.icon || 'fa-bolt'}"></i> ${escapeHtml(k.kick_reason || 'Session Terminated')}
+            </span>
           </td>
-          <td>
-            <span class="badge badge-zinc" style="font-size:10px;">${escapeHtml(k.script_name || k.script_slug || 'Hub')}</span>
-          </td>
-          <td>
-            <a href="${placeLink}" target="_blank" style="color:var(--text-zinc-300); font-size:12px; text-decoration:none; display:flex; align-items:center; gap:4px;">
-              <i class="fa-solid fa-gamepad" style="color:var(--gold-primary); font-size:10px;"></i>
-              ${escapeHtml(k.game_name || 'Roblox Experience')}
-              ${k.place_id > 0 ? `<i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>` : ''}
-            </a>
-          </td>
-          <td>
-            <span style="font-size:11px; color:var(--text-zinc-400); white-space:nowrap;">${timeStr}</span>
-          </td>
+          <td><span class="badge badge-gold" style="font-size:11px;">${escapeHtml(k.script_name || k.script_slug || 'Hub')}</span></td>
+          <td>${placeHtml}</td>
+          <td><span style="font-size:11px; color:var(--text-zinc-400); white-space:nowrap;">${timeStr}</span></td>
           <td>
             <div style="display:flex; gap:6px;">
               ${k.license_key && k.license_key !== 'N/A' ? `
-                <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:10px;" onclick="copyText('${escapeHtml(k.license_key)}')">
+                <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:10px;" onclick="copyText('${escapeHtml(k.license_key)}', 'License key copied!')" title="Copy License Key">
                   <i class="fa-solid fa-copy"></i>
                 </button>
               ` : ''}
               ${k.hwid ? `
-                <button class="btn btn-danger btn-sm" style="padding:4px 8px; font-size:10px;" onclick="openBlacklistModal({ target: '${escapeHtml(k.hwid)}', type: 'HWID', reason: 'Threat Interception: ${escapeHtml(k.kick_reason || 'Unauthorized Execution')}' })">
-                  <i class="fa-solid fa-ban"></i> Blacklist
+                <button class="btn btn-danger btn-sm" style="padding:4px 8px; font-size:10px;" onclick="openBlacklistModal({ target: '${escapeHtml(k.hwid)}', type: 'HWID', reason: 'Security Interception / Kicked session' })" title="Blacklist HWID">
+                  <i class="fa-solid fa-ban"></i>
                 </button>
               ` : ''}
             </div>
@@ -1870,8 +1930,8 @@ async function loadThreatRadarBypasses() {
         </tr>
       `;
     }).join("");
-  } catch (e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--danger-color);">Failed to load threat interceptions.</td></tr>`;
+  } catch (err) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--danger-light);">Error loading threat feed: ${err.message}</td></tr>`;
   }
 }
 
@@ -1977,34 +2037,49 @@ async function loadAnomalies() {
 
     tableBody.innerHTML = anomalies.map(row => {
       const isBanned = row.is_banned === 1;
-      const statusBadge = isBanned
-        ? `<span class="badge badge-danger"><i class="fa-solid fa-ban"></i> BANNED</span>`
-        : `<span class="badge badge-danger" style="background:rgba(234,179,8,0.15); color:var(--gold-primary);"><i class="fa-solid fa-triangle-exclamation"></i> ${row.distinct_users} ACCOUNTS</span>`;
+      let statusBadge = "";
+      if (isBanned) {
+        statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-ban"></i> BANNED</span>`;
+      } else if (row.distinct_users >= 3) {
+        statusBadge = `<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> ${row.distinct_users} ACCOUNTS</span>`;
+      } else if (row.distinct_users >= 2) {
+        statusBadge = `<span class="badge badge-gold"><i class="fa-solid fa-users"></i> ${row.distinct_users} ACCOUNTS</span>`;
+      } else {
+        statusBadge = `<span class="badge badge-zinc"><i class="fa-solid fa-network-wired"></i> ${row.distinct_ips} IPs</span>`;
+      }
+
+      let userChips = '—';
+      if (row.user_list) {
+        const users = row.user_list.split(',').map(u => u.trim()).filter(Boolean);
+        userChips = users.map(u => `<span class="badge badge-zinc" style="font-size:10px; margin:2px 2px 2px 0;"><i class="fa-solid fa-user" style="font-size:8px; opacity:0.6;"></i> ${escapeHtml(u)}</span>`).join('');
+      }
+
+      const lastSeenStr = row.last_seen ? formatTimeAgo(row.last_seen) : '—';
 
       return `
-        <tr style="background: rgba(239, 68, 68, 0.04);">
+        <tr>
           <td>
-            <span class="key-badge" style="font-size:11px;" onclick="copyText('${row.license_key}')">${row.license_key} <i class="fa-solid fa-copy"></i></span>
+            <span class="key-badge" style="font-size:11px;" onclick="copyText('${row.license_key}', 'License Key copied!')" title="Click to copy key">
+              ${escapeHtml(row.license_key)} <i class="fa-solid fa-copy"></i>
+            </span>
             ${row.note ? `<div style="font-size:10px; color:var(--text-zinc-500); margin-top:2px;">${escapeHtml(row.note)}</div>` : ''}
           </td>
-          <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(row.script_name)}</strong></td>
+          <td><strong style="color:var(--text-white); font-size:12px;">${escapeHtml(row.script_name || 'Hub')}</strong></td>
           <td>
-            <div style="font-size:12px; color:var(--gold-light); font-weight:600;">${row.distinct_users} distinct player(s)</div>
-            <div style="font-size:11px; color:var(--text-zinc-400); max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(row.user_list || '')}">
-              ${escapeHtml(row.user_list || '—')}
-            </div>
+            <div style="font-size:12px; color:var(--gold-light); font-weight:600; margin-bottom:3px;">${row.distinct_users} distinct player(s)</div>
+            <div style="display:flex; flex-wrap:wrap; max-width:280px;">${userChips}</div>
           </td>
           <td>
             <span class="badge badge-zinc" style="font-size:11px;"><i class="fa-solid fa-network-wired"></i> ${row.distinct_ips} IPs</span>
           </td>
-          <td style="font-size:12px; color:var(--text-zinc-400); white-space:nowrap;">
-            ${row.last_seen ? new Date(row.last_seen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+          <td style="font-size:11px; color:var(--text-zinc-400); white-space:nowrap;">
+            ${lastSeenStr}
           </td>
           <td>${statusBadge}</td>
           <td>
             ${!isBanned ? `
-              <button class="btn btn-danger btn-sm" onclick="quickBanLeaker(${row.id}, '${row.license_key}')"><i class="fa-solid fa-ban"></i> Ban</button>
-            ` : `<span style="color:var(--text-zinc-500); font-size:11px;">Enforced</span>`}
+              <button class="btn btn-danger btn-sm" onclick="quickBanLeaker(${row.id}, '${escapeHtml(row.license_key)}')"><i class="fa-solid fa-ban"></i> Ban</button>
+            ` : `<span style="color:var(--text-zinc-500); font-size:11px; font-weight:600;">Enforced</span>`}
           </td>
         </tr>
       `;
@@ -2019,8 +2094,9 @@ async function quickBanLeaker(licenseId, key) {
     showToast(`License ${key} has been banned!`, "success");
     loadAnomalies();
     if (typeof loadLicensesView === "function") loadLicensesView();
-    loadBypassLogs();
+    loadThreatRadarBypasses();
     loadOverviewStats();
+    loadRecentKicks();
     const resultBox = document.getElementById("watermarkResultBox");
     if (resultBox && resultBox.style.display !== "none") {
       handleWatermarkTrace();
@@ -2538,9 +2614,16 @@ async function loadRecentKicks() {
     }
 
     tbody.innerHTML = kicks.map(k => {
-      const avatarSrc = k.avatar_url || (k.roblox_user_id > 0 ? `/api/roblox/avatar/${k.roblox_user_id}` : `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=1&size=150x150&format=Png&isCircular=true`);
-      const placeLink = k.place_id > 0 ? `https://www.roblox.com/games/${k.place_id}` : '#';
+      const avatarSrc = (k.roblox_user_id && k.roblox_user_id > 0)
+        ? `/api/roblox/avatar/${k.roblox_user_id}`
+        : `/api/roblox/avatar/1`;
+      const profileUrl = (k.roblox_user_id && k.roblox_user_id > 0) ? `https://www.roblox.com/users/${k.roblox_user_id}/profile` : '#';
       const timeStr = formatTimeAgo(k.timestamp);
+      const placeName = escapeHtml(k.game_name || (k.place_id > 0 ? `Place #${k.place_id}` : 'Roblox Experience'));
+
+      const placeHtml = k.place_id > 0
+        ? `<a href="https://www.roblox.com/games/${k.place_id}" target="_blank" style="color:var(--gold-light); font-size:12px; font-weight:550; text-decoration:none; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-gamepad" style="font-size:10px; opacity:0.8;"></i> ${placeName} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i></a>`
+        : `<span style="color:var(--text-zinc-400); font-size:12px; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-gamepad" style="font-size:10px; opacity:0.6;"></i> ${placeName}</span>`;
 
       return `
         <tr>
@@ -2548,14 +2631,16 @@ async function loadRecentKicks() {
             <div style="display:flex; align-items:center; gap:8px;">
               <img src="${avatarSrc}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle); flex-shrink:0;">
               <div>
-                <strong style="color:var(--text-white); font-size:12px;">${escapeHtml(k.roblox_username || 'Unknown')}</strong>
+                <a href="${profileUrl}" target="_blank" style="color:var(--text-white); font-weight:650; font-size:12px; text-decoration:none; display:flex; align-items:center; gap:3px;">
+                  ${escapeHtml(k.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:8px; opacity:0.6;"></i>
+                </a>
                 <div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">${k.roblox_user_id > 0 ? `ID: ${k.roblox_user_id}` : 'ID: —'}</div>
               </div>
             </div>
           </td>
           <td>
             <div style="display:flex; align-items:center; gap:6px;">
-              <span class="badge ${k.badge_class || 'badge-danger'}" style="font-weight:700; font-size:11px; white-space:normal; text-align:left; line-height:1.3;">
+              <span class="badge ${k.badge_class || 'badge-danger'}" style="font-weight:650; font-size:11px; white-space:normal; text-align:left; line-height:1.3; max-width:280px;">
                 <i class="fa-solid ${k.icon || 'fa-bolt'}"></i> ${escapeHtml(k.kick_reason || 'Session Terminated')}
               </span>
             </div>
@@ -2565,28 +2650,22 @@ async function loadRecentKicks() {
               ${escapeHtml(k.source || 'FleedGuard Engine')}
             </span>
           </td>
-          <td>
-            <a href="${placeLink}" target="_blank" style="color:var(--text-zinc-300); font-size:12px; text-decoration:none; display:flex; align-items:center; gap:4px;">
-              <i class="fa-solid fa-gamepad" style="color:var(--gold-primary); font-size:10px;"></i>
-              ${escapeHtml(k.game_name || 'Roblox Experience')}
-              ${k.place_id > 0 ? `<i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i>` : ''}
-            </a>
-          </td>
+          <td>${placeHtml}</td>
           <td>
             <span class="badge badge-zinc" style="font-size:10px;">${escapeHtml(k.script_name || k.script_slug || 'Hub')}</span>
           </td>
           <td>
-            <span style="font-size:11px; color:var(--text-zinc-400);">${timeStr}</span>
+            <span style="font-size:11px; color:var(--text-zinc-400); white-space:nowrap;">${timeStr}</span>
           </td>
           <td>
             <div style="display:flex; gap:6px;">
               ${k.license_key && k.license_key !== 'N/A' ? `
-                <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:10px;" onclick="copyText('${escapeHtml(k.license_key)}')">
+                <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:10px;" onclick="copyText('${escapeHtml(k.license_key)}', 'License key copied!')" title="Copy License Key">
                   <i class="fa-solid fa-copy"></i>
                 </button>
               ` : ''}
               ${k.hwid ? `
-                <button class="btn btn-danger btn-sm" style="padding:4px 8px; font-size:10px;" onclick="openBlacklistModal({ target: '${escapeHtml(k.hwid)}', type: 'HWID', reason: 'Repeated unauthorized activity / kicked session' })">
+                <button class="btn btn-danger btn-sm" style="padding:4px 8px; font-size:10px;" onclick="openBlacklistModal({ target: '${escapeHtml(k.hwid)}', type: 'HWID', reason: 'Security Interception / Kicked session' })" title="Blacklist HWID">
                   <i class="fa-solid fa-ban"></i>
                 </button>
               ` : ''}
@@ -2597,6 +2676,72 @@ async function loadRecentKicks() {
     }).join("");
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--danger-light);">Error loading kicks: ${err.message}</td></tr>`;
+  }
+}
+
+async function loadThreatRadarBypasses() {
+  const tbody = document.getElementById("threatRadarBypassesTableBody");
+  if (!tbody) return;
+
+  try {
+    const kicks = await apiCall("/api/kicks?limit=50");
+    if (!kicks || kicks.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:24px; color:var(--text-zinc-500);"><i class="fa-solid fa-shield-halved" style="color:var(--gold-primary); margin-right:6px;"></i> No security interceptions, tampering traps, or remote kicks logged.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = kicks.map(k => {
+      const avatarSrc = (k.roblox_user_id && k.roblox_user_id > 0)
+        ? `/api/roblox/avatar/${k.roblox_user_id}`
+        : `/api/roblox/avatar/1`;
+      const profileUrl = (k.roblox_user_id && k.roblox_user_id > 0) ? `https://www.roblox.com/users/${k.roblox_user_id}/profile` : '#';
+      const timeStr = formatTimeAgo(k.timestamp);
+      const placeName = escapeHtml(k.game_name || (k.place_id > 0 ? `Place #${k.place_id}` : 'Roblox Experience'));
+
+      const placeHtml = k.place_id > 0
+        ? `<a href="https://www.roblox.com/games/${k.place_id}" target="_blank" style="color:var(--gold-light); font-size:12px; font-weight:550; text-decoration:none; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-gamepad" style="font-size:10px; opacity:0.8;"></i> ${placeName} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:9px; opacity:0.6;"></i></a>`
+        : `<span style="color:var(--text-zinc-400); font-size:12px; display:inline-flex; align-items:center; gap:4px;"><i class="fa-solid fa-gamepad" style="font-size:10px; opacity:0.6;"></i> ${placeName}</span>`;
+
+      return `
+        <tr>
+          <td>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <img src="${avatarSrc}" style="width:28px; height:28px; border-radius:50%; object-fit:cover; border:1px solid var(--border-subtle); flex-shrink:0;">
+              <div>
+                <a href="${profileUrl}" target="_blank" style="color:var(--text-white); font-weight:650; font-size:12px; text-decoration:none; display:flex; align-items:center; gap:3px;">
+                  ${escapeHtml(k.roblox_username || 'Unknown')} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:8px; opacity:0.6;"></i>
+                </a>
+                <div style="font-size:10px; color:var(--text-zinc-500); font-family:var(--font-mono);">${k.roblox_user_id > 0 ? `ID: ${k.roblox_user_id}` : 'ID: —'}</div>
+              </div>
+            </div>
+          </td>
+          <td>
+            <span class="badge ${k.badge_class || 'badge-danger'}" style="font-weight:650; font-size:11px; white-space:normal; text-align:left; line-height:1.3; max-width:320px; display:inline-block;">
+              <i class="fa-solid ${k.icon || 'fa-bolt'}"></i> ${escapeHtml(k.kick_reason || 'Session Terminated')}
+            </span>
+          </td>
+          <td><span class="badge badge-gold" style="font-size:11px;">${escapeHtml(k.script_name || k.script_slug || 'Hub')}</span></td>
+          <td>${placeHtml}</td>
+          <td><span style="font-size:11px; color:var(--text-zinc-400); white-space:nowrap;">${timeStr}</span></td>
+          <td>
+            <div style="display:flex; gap:6px;">
+              ${k.license_key && k.license_key !== 'N/A' ? `
+                <button class="btn btn-secondary btn-sm" style="padding:4px 8px; font-size:10px;" onclick="copyText('${escapeHtml(k.license_key)}', 'License key copied!')" title="Copy License Key">
+                  <i class="fa-solid fa-copy"></i>
+                </button>
+              ` : ''}
+              ${k.hwid ? `
+                <button class="btn btn-danger btn-sm" style="padding:4px 8px; font-size:10px;" onclick="openBlacklistModal({ target: '${escapeHtml(k.hwid)}', type: 'HWID', reason: 'Security Interception / Kicked session' })" title="Blacklist HWID">
+                  <i class="fa-solid fa-ban"></i>
+                </button>
+              ` : ''}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:var(--danger-light);">Error loading threat feed: ${err.message}</td></tr>`;
   }
 }
 
@@ -2644,20 +2789,39 @@ async function handleExecuteKick(e) {
   } catch (err) {}
 }
 
-// Global Keyboard Shortcut (Ctrl+K or Cmd+K)
+// Global Keyboard Shortcuts (Ctrl+K for palette, Ctrl+[ for sidebar, Esc for modals)
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
     openSearchPalette();
   }
+  if ((e.ctrlKey || e.metaKey) && (e.key === "[" || e.key === "b")) {
+    e.preventDefault();
+    toggleSidebar();
+  }
   if (e.key === "Escape") {
-    document.querySelectorAll(".modal-overlay.active").forEach(m => m.classList.remove("active"));
+    document.querySelectorAll(".modal-overlay.active").forEach(m => {
+      m.classList.remove("active");
+      m.style.display = "none";
+    });
   }
 });
 
 // Global initialization
 document.addEventListener("DOMContentLoaded", async () => {
   const isDashboard = window.location.pathname.startsWith("/dashboard");
+
+  // Restore sidebar collapsed preference
+  if (localStorage.getItem("fleed_sidebar_collapsed") === "1") {
+    const sidebar = document.getElementById("mainSidebar");
+    if (sidebar) sidebar.classList.add("collapsed");
+    const btn = document.getElementById("sidebarCollapseBtn");
+    if (btn) {
+      btn.innerHTML = '<i class="fa-solid fa-angles-right"></i>';
+      btn.title = "Expand Sidebar (Ctrl+[)";
+    }
+  }
+
   const user = await checkAuth();
 
   if (isDashboard && user) {
@@ -2672,13 +2836,31 @@ document.addEventListener("DOMContentLoaded", async () => {
         if (!isAutoRefreshOn) return;
         const activeTab = document.querySelector(".tab-btn.active")?.getAttribute("data-tab");
         if (activeTab === "logs") loadLiveLogs();
-        if (activeTab === "bypasses") { loadBypassLogs(); loadAnomalies(); }
-        if (activeTab === "overview") loadOverviewStats();
+        if (activeTab === "bypasses") { loadThreatRadarBypasses(); loadAnomalies(); }
+        if (activeTab === "overview") { loadOverviewStats(); loadRecentKicks(); }
         if (activeTab === "sessions") loadLiveSessions();
       }, 5000);
     }
   }
 });
+
+
+// =========================================================================
+// REALTIME LIVE SESSION & SECURITY EVENT DISPATCHER
+// =========================================================================
+function handleRealtimeSessionEvent(data) {
+  if (!data) return;
+  const activeTab = document.querySelector(".tab-btn.active")?.getAttribute("data-tab");
+
+  if (data.event === "kicked") {
+    // If a player was kicked remotely or by security guard, update threat radar and kicks immediately
+    if (activeTab === "overview") loadRecentKicks();
+    if (activeTab === "bypasses") loadThreatRadarBypasses();
+    if (activeTab === "sessions") loadLiveSessions();
+  } else if (data.event === "join" || data.event === "heartbeat") {
+    if (activeTab === "sessions") loadLiveSessions();
+  }
+}
 
 
 // =========================================================================

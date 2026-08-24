@@ -2492,24 +2492,43 @@ async def get_active_anomalies(user: Dict = Depends(get_current_user)):
     Returns keys showing elevated multi-account sharing (>1 Roblox user)
     or multi-IP sprawl in the past 48 hours for developer investigation.
     """
+    is_admin = user.get("role") == "admin"
     async with db.get_db() as conn:
-        cursor = await conn.execute("""
-            SELECT l.id, l.license_key, l.note, l.is_banned, l.ban_reason, l.created_at,
-                   s.name as script_name, s.slug as script_slug,
-                   COUNT(DISTINCT e.roblox_user_id) as distinct_users,
-                   GROUP_CONCAT(DISTINCT e.roblox_username) as user_list,
-                   COUNT(DISTINCT e.ip_address) as distinct_ips,
-                   MAX(e.timestamp) as last_seen
-            FROM execution_logs e
-            JOIN licenses l ON e.license_id = l.id
-            JOIN scripts s ON l.script_id = s.id
-            WHERE s.user_id = ?
-              AND e.timestamp >= datetime('now', '-48 hours')
-            GROUP BY l.id
-            HAVING distinct_users > 1 OR distinct_ips > 2
-            ORDER BY distinct_users DESC, distinct_ips DESC
-            LIMIT 50
-        """, (user["id"],))
+        if is_admin:
+            cursor = await conn.execute("""
+                SELECT l.id, l.license_key, l.note, l.is_banned, l.ban_reason, l.created_at,
+                       COALESCE(s.name, 'All Scripts') as script_name, s.slug as script_slug,
+                       COUNT(DISTINCT CASE WHEN e.roblox_user_id > 0 THEN e.roblox_user_id WHEN e.roblox_username IS NOT NULL AND e.roblox_username != '' AND e.roblox_username != 'Unknown' THEN e.roblox_username ELSE NULL END) as distinct_users,
+                       GROUP_CONCAT(DISTINCT NULLIF(NULLIF(e.roblox_username, ''), 'Unknown')) as user_list,
+                       COUNT(DISTINCT NULLIF(e.ip_address, '')) as distinct_ips,
+                       MAX(e.timestamp) as last_seen
+                FROM execution_logs e
+                JOIN licenses l ON e.license_id = l.id
+                LEFT JOIN scripts s ON l.script_id = s.id
+                WHERE e.timestamp >= datetime('now', '-48 hours')
+                GROUP BY l.id
+                HAVING distinct_users > 1 OR distinct_ips > 2
+                ORDER BY distinct_users DESC, distinct_ips DESC
+                LIMIT 50
+            """)
+        else:
+            cursor = await conn.execute("""
+                SELECT l.id, l.license_key, l.note, l.is_banned, l.ban_reason, l.created_at,
+                       COALESCE(s.name, 'Script') as script_name, s.slug as script_slug,
+                       COUNT(DISTINCT CASE WHEN e.roblox_user_id > 0 THEN e.roblox_user_id WHEN e.roblox_username IS NOT NULL AND e.roblox_username != '' AND e.roblox_username != 'Unknown' THEN e.roblox_username ELSE NULL END) as distinct_users,
+                       GROUP_CONCAT(DISTINCT NULLIF(NULLIF(e.roblox_username, ''), 'Unknown')) as user_list,
+                       COUNT(DISTINCT NULLIF(e.ip_address, '')) as distinct_ips,
+                       MAX(e.timestamp) as last_seen
+                FROM execution_logs e
+                JOIN licenses l ON e.license_id = l.id
+                JOIN scripts s ON l.script_id = s.id
+                WHERE s.user_id = ?
+                  AND e.timestamp >= datetime('now', '-48 hours')
+                GROUP BY l.id
+                HAVING distinct_users > 1 OR distinct_ips > 2
+                ORDER BY distinct_users DESC, distinct_ips DESC
+                LIMIT 50
+            """, (user["id"],))
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
@@ -2891,23 +2910,45 @@ async def get_kicked_sessions(limit: int = 50, user: Dict = Depends(get_current_
     """
     Returns all detected in-game kick events, disconnect reasons, and enforcement actions.
     """
+    is_admin = user.get("role") == "admin"
     async with db.get_db() as conn:
-        cursor = await conn.execute("""
-            SELECT l.id, l.script_id, l.license_id, l.license_key, l.hwid, l.ip_address,
-                   l.executor_name, l.roblox_username, l.roblox_user_id, l.place_id, l.job_id,
-                   l.game_name, l.status, l.details, l.timestamp,
-                   s.name as script_name, s.slug as script_slug
-            FROM execution_logs l
-            LEFT JOIN scripts s ON l.script_id = s.id
-            WHERE (l.status IN ('SESSION_KICKED', 'BANNED', 'BLACKLISTED', 'KILLSWITCH', 'BYPASS_ATTEMPT') 
-                   OR l.details LIKE '%Kick%' 
-                   OR l.details LIKE '%banned%' 
-                   OR l.details LIKE '%revoked%'
-                   OR l.details LIKE '%validation failed%')
-              AND (s.user_id = ? OR s.user_id IS NULL)
-            ORDER BY l.id DESC
-            LIMIT ?
-        """, (user["id"], limit))
+        if is_admin:
+            cursor = await conn.execute("""
+                SELECT l.id, l.script_id, l.license_id, l.license_key, l.hwid, l.ip_address,
+                       l.executor_name, l.roblox_username, l.roblox_user_id, l.place_id, l.job_id,
+                       l.game_name, l.status, l.details, l.timestamp,
+                       COALESCE(s.name, 'All Scripts') as script_name, s.slug as script_slug
+                FROM execution_logs l
+                LEFT JOIN scripts s ON l.script_id = s.id
+                WHERE (l.status IN ('SESSION_KICKED', 'BANNED', 'BLACKLISTED', 'KILLSWITCH', 'BYPASS_ATTEMPT', 'SECURITY_TRAP') 
+                       OR l.details LIKE '%Kick%' 
+                       OR l.details LIKE '%banned%' 
+                       OR l.details LIKE '%revoked%'
+                       OR l.details LIKE '%validation failed%'
+                       OR l.details LIKE '%hook detected%'
+                       OR l.details LIKE '%suspicious%')
+                ORDER BY l.id DESC
+                LIMIT ?
+            """, (limit,))
+        else:
+            cursor = await conn.execute("""
+                SELECT l.id, l.script_id, l.license_id, l.license_key, l.hwid, l.ip_address,
+                       l.executor_name, l.roblox_username, l.roblox_user_id, l.place_id, l.job_id,
+                       l.game_name, l.status, l.details, l.timestamp,
+                       COALESCE(s.name, 'Script') as script_name, s.slug as script_slug
+                FROM execution_logs l
+                LEFT JOIN scripts s ON l.script_id = s.id
+                WHERE (l.status IN ('SESSION_KICKED', 'BANNED', 'BLACKLISTED', 'KILLSWITCH', 'BYPASS_ATTEMPT', 'SECURITY_TRAP') 
+                       OR l.details LIKE '%Kick%' 
+                       OR l.details LIKE '%banned%' 
+                       OR l.details LIKE '%revoked%'
+                       OR l.details LIKE '%validation failed%'
+                       OR l.details LIKE '%hook detected%'
+                       OR l.details LIKE '%suspicious%')
+                  AND (s.user_id = ? OR s.user_id IS NULL)
+                ORDER BY l.id DESC
+                LIMIT ?
+            """, (user["id"], limit))
         rows = await cursor.fetchall()
 
     results = []

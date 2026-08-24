@@ -403,8 +403,6 @@ local dump_checks = {{
     {{getprotos, "getprotos"}},
     {{getconstants, "getconstants"}},
     {{getupvalues, "getupvalues"}},
-    {{decompile, "decompile"}},
-    {{saveinstance, "saveinstance"}},
     {{getscriptclosure, "getscriptclosure"}},
 }}
 for _, check in _rawget(dump_checks, 1) and pairs(dump_checks) or next, dump_checks do

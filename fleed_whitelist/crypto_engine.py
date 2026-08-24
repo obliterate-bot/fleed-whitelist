@@ -563,24 +563,15 @@ _PR_RAW = nil
 local _FG_INTEGRITY = "{source_integrity_hash or ''}"
 local _FG_SOURCE_HASH = "{source_integrity_hash or ''}"
 local function _fg_chk_integrity()
-    -- Detect common dump vectors
+    -- Only check for malicious active dumper injectors, NOT standard executor UNC APIs (like saveinstance or decompile)
     local g = getgenv and getgenv() or _G
-    local suspicious = {{
-        "dump", "saveinstance", "decompile", "bytecode", "disassemble",
-        "getscriptbytecode", "getscriptclosure", "dumpstring", "dumpluau",
-        "scriptdumper", "luadumper", "bytedump", "savedebug"
+    local malicious_flags = {{
+        "__DUMPING_ACTIVE__", "__UNLUAU_HOOK__", "__DEX_DUMP__", "DexDumper",
+        "HydroxideDumper", "ScriptDumperV2", "__FLEED_DUMP__", "__SAVEDEBUG_ACTIVE__"
     }}
-    for _, v in pairs(suspicious) do
-        if g[v] or (_G[v] and type(_G[v]) == "function") then
-            return false, "Extractor function detected: " .. v
-        end
-    end
-    -- Check for memory scanning tools
-    local mem_suspicious = {{"readmemory", "writememory", "scanscript", "getgc", "getreg", "getupvalues", "getconstants", "getprotos"}}
-    for _, v in pairs(mem_suspicious) do
-        if g[v] and type(g[v]) == "function" then
-            -- These CAN be legitimate but often used for dumping
-            -- We flag if they're called in suspicious contexts
+    for _, v in pairs(malicious_flags) do
+        if g[v] ~= nil then
+            return false, "Active malicious extractor injected: " .. v
         end
     end
     return true, ""

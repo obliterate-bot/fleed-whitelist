@@ -325,7 +325,16 @@ async def create_ticket_channel(bot, interaction: discord.Interaction, category_
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
         user: discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, embed_links=True, read_message_history=True),
-        guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True, manage_messages=True, attach_files=True, embed_links=True)
+        guild.me: discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            manage_channels=True,
+            manage_messages=True,
+            attach_files=True,
+            embed_links=True,
+            read_message_history=True,
+            mention_everyone=True
+        )
     }
 
     # Support Roles overwrite if configured
@@ -337,7 +346,14 @@ async def create_ticket_channel(bot, interaction: discord.Interaction, category_
                 role_obj = guild.get_role(int(r_id))
                 if role_obj:
                     support_roles.append(role_obj)
-                    overwrites[role_obj] = discord.PermissionOverwrite(view_channel=True, send_messages=True, attach_files=True, embed_links=True, read_message_history=True)
+                    overwrites[role_obj] = discord.PermissionOverwrite(
+                        view_channel=True,
+                        send_messages=True,
+                        attach_files=True,
+                        embed_links=True,
+                        read_message_history=True,
+                        mention_everyone=True
+                    )
 
     channel_name = f"ticket-{counter:04d}"
     topic_str = f"Ticket #{counter:04d} | Opener: {user} ({user.id}) | Category: {category_name}"
@@ -355,13 +371,16 @@ async def create_ticket_channel(bot, interaction: discord.Interaction, category_
 
     # Save to database
     now_ts = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
-    await bot.db.execute(
-        """
-        INSERT INTO tickets (guild_id, channel_id, opener_id, ticket_num, category, topic, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
-        """,
-        (guild.id, ticket_channel.id, user.id, counter, category_name, subject, now_ts)
-    )
+    try:
+        await bot.db.execute(
+            """
+            INSERT INTO tickets (guild_id, channel_id, opener_id, ticket_num, category, topic, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
+            """,
+            (guild.id, ticket_channel.id, user.id, counter, category_name, subject, now_ts)
+        )
+    except Exception as db_err:
+        print(f"[Tickets] Database log error: {db_err}")
 
     # Welcome Card in new ticket
     embed = fleed_embed(
@@ -378,7 +397,23 @@ async def create_ticket_channel(bot, interaction: discord.Interaction, category_
     embed.set_footer(text=f"ticket id: {counter:04d} | {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     ping_content = f"{user.mention}" + (" " + " ".join(r.mention for r in support_roles) if support_roles else "")
-    await ticket_channel.send(content=ping_content, embed=embed, view=TicketControlView(bot))
+    try:
+        await ticket_channel.send(
+            content=ping_content,
+            embed=embed,
+            view=TicketControlView(bot),
+            allowed_mentions=discord.AllowedMentions(users=True, roles=True, everyone=False)
+        )
+    except Exception as send_err:
+        print(f"[Tickets] Error sending welcome embed/view in {ticket_channel.name}: {send_err}")
+        try:
+            await ticket_channel.send(
+                content=f"{ping_content}\n\n**Welcome {user.mention}**\n**Subject:** {subject}\n**Details:** {description}\n*Use `/tickets` to manage this channel.*",
+                allowed_mentions=discord.AllowedMentions(users=True, roles=True)
+            )
+        except Exception:
+            pass
+
     await send_response(success_embed(f"ticket opened in {ticket_channel.mention}", user))
 
 

@@ -4839,20 +4839,22 @@ function initAmberParticles() {
     height = canvas.height = window.innerHeight;
   }, { passive: true });
 
-  const particleCount = 36;
+  const particleCount = 55;
   const particles = [];
 
   for (let i = 0; i < particleCount; i++) {
     particles.push({
       x: Math.random() * width,
       y: Math.random() * height,
-      r: 1.0 + Math.random() * 1.8,
-      vx: (Math.random() - 0.5) * 0.22,
-      vy: -(0.22 + Math.random() * 0.42),
-      alpha: 0.15 + Math.random() * 0.6,
-      alphaSpeed: 0.004 + Math.random() * 0.008,
+      r: 1.2 + Math.random() * 2.0,
+      angle: Math.random() * Math.PI * 2,
+      angleSpeed: 0.01 + Math.random() * 0.02,
+      vx: (Math.random() - 0.5) * 0.25,
+      vy: -(0.25 + Math.random() * 0.5),
+      alpha: 0.25 + Math.random() * 0.65,
+      alphaSpeed: 0.005 + Math.random() * 0.01,
       alphaDir: Math.random() > 0.5 ? 1 : -1,
-      color: Math.random() > 0.35 ? "245, 158, 11" : "251, 191, 36" // amber gold
+      color: Math.random() > 0.4 ? "245, 158, 11" : (Math.random() > 0.5 ? "251, 191, 36" : "217, 119, 6")
     });
   }
 
@@ -4867,25 +4869,26 @@ function initAmberParticles() {
     for (let i = 0; i < particleCount; i++) {
       const p = particles[i];
 
-      p.x += p.vx;
+      p.angle += p.angleSpeed;
+      p.x += p.vx + Math.sin(p.angle) * 0.22;
       p.y += p.vy;
 
       p.alpha += p.alphaSpeed * p.alphaDir;
-      if (p.alpha > 0.75) { p.alpha = 0.75; p.alphaDir = -1; }
-      else if (p.alpha < 0.12) { p.alpha = 0.12; p.alphaDir = 1; }
+      if (p.alpha > 0.9) { p.alpha = 0.9; p.alphaDir = -1; }
+      else if (p.alpha < 0.2) { p.alpha = 0.2; p.alphaDir = 1; }
 
-      if (p.y < -10) {
-        p.y = height + 10;
+      if (p.y < -12) {
+        p.y = height + 12;
         p.x = Math.random() * width;
       }
-      if (p.x < -10) p.x = width + 10;
-      else if (p.x > width + 10) p.x = -10;
+      if (p.x < -12) p.x = width + 12;
+      else if (p.x > width + 12) p.x = -12;
 
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
       ctx.fillStyle = `rgba(${p.color}, ${p.alpha})`;
-      ctx.shadowBlur = 6;
-      ctx.shadowColor = `rgba(${p.color}, ${p.alpha * 0.7})`;
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = `rgba(${p.color}, ${p.alpha * 0.85})`;
       ctx.fill();
     }
 

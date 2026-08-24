@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+import asyncio
 import io
 import datetime
 import html
@@ -561,29 +562,42 @@ async def close_ticket_process(bot, channel: discord.TextChannel, closed_by: dis
     guild = channel.guild
     now_ts = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
 
-    # Fetch info
-    ticket_row = await bot.db.fetchrow("SELECT * FROM tickets WHERE channel_id = ?", (channel.id,))
-    cfg = await bot.db.fetchrow("SELECT * FROM ticket_config WHERE guild_id = ?", (guild.id,))
+    # Fetch info safely
+    raw_ticket = await bot.db.fetchrow("SELECT * FROM tickets WHERE channel_id = ?", (channel.id,))
+    ticket_row = dict(raw_ticket) if raw_ticket else {}
 
-    # Update DB
-    await bot.db.execute("UPDATE tickets SET status = 'closed', closed_at = ?, closed_by = ? WHERE channel_id = ?", (now_ts, closed_by.id, channel.id))
+    raw_cfg = await bot.db.fetchrow("SELECT * FROM ticket_config WHERE guild_id = ?", (guild.id,))
+    cfg = dict(raw_cfg) if raw_cfg else {}
+
+    # Update DB if record exists
+    if ticket_row:
+        try:
+            await bot.db.execute("UPDATE tickets SET status = 'closed', closed_at = ?, closed_by = ? WHERE channel_id = ?", (now_ts, closed_by.id, channel.id))
+        except Exception:
+            pass
 
     # Fetch messages for transcript
     messages = [m async for m in channel.history(limit=1000, oldest_first=True)]
-    opener = guild.get_member(ticket_row["opener_id"]) if ticket_row else None
+    opener_id = ticket_row.get("opener_id")
+    opener = guild.get_member(opener_id) if opener_id else None
+    
     ticket_info = {
-        "opener_name": str(opener) if opener else (f"User ID {ticket_row['opener_id']}" if ticket_row else "Unknown"),
-        "category": ticket_row["category"] if ticket_row else "General"
+        "opener_name": str(opener) if opener else (f"User ID {opener_id}" if opener_id else "Unknown"),
+        "category": ticket_row.get("category") or "General"
     }
 
-    html_file = generate_html_transcript(guild, channel, messages, ticket_info)
-    file_bytes = html_file.getvalue()
+    try:
+        html_file = generate_html_transcript(guild, channel, messages, ticket_info)
+        file_bytes = html_file.getvalue()
+    except Exception as transcript_err:
+        print(f"[Tickets] Transcript generation error: {transcript_err}")
+        file_bytes = None
 
     # Post to transcript log channel if configured
-    if cfg and cfg["transcript_channel_id"]:
-        log_ch = guild.get_channel(cfg["transcript_channel_id"])
+    if file_bytes and cfg.get("transcript_channel_id"):
+        log_ch = guild.get_channel(cfg.get("transcript_channel_id"))
         if log_ch:
-            opener_str = opener.mention if opener else (f"`{ticket_row['opener_id']}`" if ticket_row else "`unknown`")
+            opener_str = opener.mention if opener else (f"`{opener_id}`" if opener_id else "`unknown`")
             log_embed = fleed_embed(
                 title=f"ticket closed — #{channel.name}",
                 description=(
@@ -603,7 +617,7 @@ async def close_ticket_process(bot, channel: discord.TextChannel, closed_by: dis
                 pass
 
     # Send DM to opener
-    if opener:
+    if file_bytes and opener:
         try:
             dm_embed = fleed_embed(
                 title=f"ticket closed in {guild.name.lower()}",
@@ -617,7 +631,7 @@ async def close_ticket_process(bot, channel: discord.TextChannel, closed_by: dis
 
     # Countdown and delete
     await channel.send(embed=warn_embed("ticket will be deleted in 5 seconds...", closed_by))
-    await discord.utils.sleep_until(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=5))
+    await asyncio.sleep(5)
     try:
         await channel.delete(reason=f"ticket closed: {reason}")
     except Exception:

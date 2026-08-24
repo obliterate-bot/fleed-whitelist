@@ -2601,6 +2601,11 @@ function renderActiveSessionsTable() {
             </button>
           </div>
         </td>
+      </tr>
+    `;
+  }).join("");
+}
+
 function loadLiveSessions(force = false) {
   return loadActiveSessions(force);
 }

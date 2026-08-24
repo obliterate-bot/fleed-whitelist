@@ -1467,6 +1467,88 @@ async def get_dashboard_stats(user: Dict = Depends(get_current_user)):
             "top_games": top_games
         }
 
+@app.get("/api/analytics/executors")
+async def get_executor_analytics(user: Dict = Depends(get_current_user)):
+    is_admin = user.get("role") == "admin"
+    async with db.get_db() as conn:
+        # 1. Total executions count
+        if is_admin:
+            c_tot = await conn.execute("SELECT COUNT(*) as total FROM execution_logs")
+        else:
+            c_tot = await conn.execute("SELECT COUNT(*) as total FROM execution_logs WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)", (user["id"],))
+        tot_row = await c_tot.fetchone()
+        total_execs = tot_row["total"] if tot_row and tot_row["total"] else 0
+
+        # 2. Market Share Breakdown
+        if is_admin:
+            c_exec = await conn.execute("""
+                SELECT COALESCE(NULLIF(executor_name, ''), 'Universal / Undetected') as exec_name,
+                       COUNT(*) as count,
+                       COUNT(DISTINCT CASE WHEN roblox_user_id > 0 THEN roblox_user_id ELSE NULL END) as unique_users,
+                       MAX(timestamp) as last_seen
+                FROM execution_logs
+                GROUP BY exec_name
+                ORDER BY count DESC
+            """)
+        else:
+            c_exec = await conn.execute("""
+                SELECT COALESCE(NULLIF(executor_name, ''), 'Universal / Undetected') as exec_name,
+                       COUNT(*) as count,
+                       COUNT(DISTINCT CASE WHEN roblox_user_id > 0 THEN roblox_user_id ELSE NULL END) as unique_users,
+                       MAX(timestamp) as last_seen
+                FROM execution_logs
+                WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?)
+                GROUP BY exec_name
+                ORDER BY count DESC
+            """, (user["id"],))
+        exec_rows = await c_exec.fetchall()
+        market_share = []
+        for r in exec_rows:
+            pct = round((r["count"] / total_execs * 100), 1) if total_execs > 0 else 0
+            market_share.append({
+                "name": r["exec_name"],
+                "count": r["count"],
+                "percentage": pct,
+                "unique_users": r["unique_users"] or 0,
+                "last_seen": r["last_seen"]
+            })
+
+        # 3. Security Interception Breakdown
+        if is_admin:
+            c_sec = await conn.execute("""
+                SELECT status, COUNT(*) as count
+                FROM execution_logs
+                WHERE status != 'SUCCESS'
+                GROUP BY status
+                ORDER BY count DESC
+            """)
+        else:
+            c_sec = await conn.execute("""
+                SELECT status, COUNT(*) as count
+                FROM execution_logs
+                WHERE script_id IN (SELECT id FROM scripts WHERE user_id = ?) AND status != 'SUCCESS'
+                GROUP BY status
+                ORDER BY count DESC
+            """, (user["id"],))
+        sec_rows = await c_sec.fetchall()
+        total_threats = sum(r["count"] for r in sec_rows)
+        threat_breakdown = []
+        for r in sec_rows:
+            pct = round((r["count"] / total_threats * 100), 1) if total_threats > 0 else 0
+            threat_breakdown.append({
+                "status": r["status"],
+                "count": r["count"],
+                "percentage": pct
+            })
+
+        return {
+            "success": True,
+            "total_executions": total_execs,
+            "total_threats": total_threats,
+            "market_share": market_share,
+            "threat_breakdown": threat_breakdown
+        }
+
 @app.get("/api/logs")
 async def get_logs(limit: int = 100, status_filter: Optional[str] = None, user: Dict = Depends(get_current_user)):
     is_admin = user.get("role") == "admin"

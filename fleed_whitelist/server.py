@@ -1833,14 +1833,16 @@ async def handshake_init(req: HandshakeInitRequest, request: Request):
         # Bypass Check 2: Detect spoofed or bot telemetry
         raw_hwid_lower = str(req.hwid or "").lower()
         raw_user_lower = str(req.roblox_username or "").lower()
+        raw_exec_lower = str(req.executor or "").lower()
         if any(term in raw_hwid_lower for term in ["fetcher", "dump", "intercept", "spoof", "test_hwid"]) or \
-           any(term in raw_user_lower for term in ["fetcher", "dumper", "interceptor", "cracker"]):
+           any(term in raw_user_lower for term in ["fetcher", "dumper", "interceptor", "cracker"]) or \
+           any(term in raw_exec_lower for term in ["fetcher", "dumper", "interceptor", "cracker"]):
             await conn.execute("""
                 INSERT INTO execution_logs (script_id, license_key, hwid, ip_address, executor_name, roblox_username, roblox_user_id, place_id, job_id, game_name, status, details, timestamp)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BYPASS_ATTEMPT', 'Malicious extractor or dumper telemetry signature detected', ?)
             """, (script["id"], clean_key, norm_hwid, client_ip, req.executor, req.roblox_username or "Unknown", req.roblox_user_id or 0, req.place_id or 0, req.job_id or "", req.game_name or "Unknown", now_iso))
             await conn.commit()
-            return JSONResponse(status_code=403, content={"success": False, "message": "Security Violation: Extraction attempt detected and logged."})
+            return JSONResponse(status_code=403, content={"success": False, "message": "Security Error: Extraction attempt detected and logged."})
 
         # Check Global Blacklist (HWID or IP)
         cursor_bl = await conn.execute("SELECT reason FROM blacklists WHERE target_value IN (?, ?)", (norm_hwid, client_ip))

@@ -1044,11 +1044,13 @@ function openCreateScriptModal() {
   const nameEl = document.getElementById("createScriptName");
   const slugEl = document.getElementById("createScriptSlug");
   const codeEl = document.getElementById("createScriptCode");
+  const modeEl = document.getElementById("createScriptMode");
   const webEl = document.getElementById("createScriptWebhook");
 
   if (nameEl) nameEl.value = "";
   if (slugEl) slugEl.value = "";
   if (codeEl) codeEl.value = '-- Paste your Lua / Luau script here\nprint("Hello from FleedGuard Protected Script!")\n';
+  if (modeEl) modeEl.value = "1";
   if (webEl) webEl.value = "";
 
   openModal("createScriptModal");
@@ -1059,6 +1061,7 @@ async function handleCreateScript(e) {
   const name = document.getElementById("createScriptName")?.value.trim();
   const slug = document.getElementById("createScriptSlug")?.value.trim();
   const raw_source = document.getElementById("createScriptCode")?.value;
+  const is_obfuscated_mode = parseInt(document.getElementById("createScriptMode")?.value || "1", 10);
   const discord_webhook = document.getElementById("createScriptWebhook")?.value.trim() || null;
 
   if (!name || !slug || !raw_source) {
@@ -1071,7 +1074,7 @@ async function handleCreateScript(e) {
       slug,
       version: "1.0.0",
       raw_source,
-      is_obfuscated_mode: 1,
+      is_obfuscated_mode,
       discord_webhook
     });
     showToast(`Script Hub '${name}' created successfully!`, "success");
@@ -1094,11 +1097,13 @@ async function openEditScriptModal(id) {
 
   const idEl = document.getElementById("editScriptId");
   const nameEl = document.getElementById("editScriptName");
+  const modeEl = document.getElementById("editScriptMode");
   const codeEl = document.getElementById("editScriptCode");
   const webEl = document.getElementById("editScriptWebhook");
 
   if (idEl) idEl.value = script.id;
   if (nameEl) nameEl.value = script.name || "";
+  if (modeEl) modeEl.value = (script.is_obfuscated_mode !== undefined && script.is_obfuscated_mode !== null) ? String(script.is_obfuscated_mode) : "1";
   if (codeEl) codeEl.value = script.raw_source || "";
   if (webEl) webEl.value = script.discord_webhook || "";
 
@@ -1109,6 +1114,7 @@ async function handleSaveEditScript(e) {
   e.preventDefault();
   const id = document.getElementById("editScriptId")?.value;
   const name = document.getElementById("editScriptName")?.value.trim();
+  const is_obfuscated_mode = parseInt(document.getElementById("editScriptMode")?.value || "1", 10);
   const raw_source = document.getElementById("editScriptCode")?.value;
   const discord_webhook = document.getElementById("editScriptWebhook")?.value.trim() || null;
 
@@ -1119,6 +1125,7 @@ async function handleSaveEditScript(e) {
   try {
     await apiCall(`/api/scripts/${id}`, "PATCH", {
       name,
+      is_obfuscated_mode,
       raw_source,
       discord_webhook
     });

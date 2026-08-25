@@ -1372,6 +1372,14 @@ async function createLicense(slug, key, discordId, note) {
           <textarea id="createScriptCode" class="form-textarea mono-input" rows="8" placeholder="print('Hello from Protected Luau Script!')" required></textarea>
         </div>
         <div class="form-group">
+          <label class="form-label">Protection / Obfuscation Mode</label>
+          <select id="createScriptMode" class="form-select">
+            <option value="0">Unobfuscated (Deliver Raw Script + Whitelist Guard)</option>
+            <option value="1" selected>O_bfuscate V2 MaxPerf (Fast In-Memory Protection)</option>
+            <option value="2">O_bfuscate V2 Ultra (Ultra-Secure Flattening + Encrypted Strings)</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label class="form-label">Discord Webhook (Optional)</label>
           <input type="url" id="createScriptWebhook" class="form-input mono-input" placeholder="https://discord.com/api/webhooks/...">
         </div>
@@ -1395,6 +1403,14 @@ async function createLicense(slug, key, discordId, note) {
         <div class="form-group">
           <label class="form-label">Hub Name</label>
           <input type="text" id="editScriptName" class="form-input" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Protection / Obfuscation Mode</label>
+          <select id="editScriptMode" class="form-select">
+            <option value="0">Unobfuscated (Deliver Raw Script + Whitelist Guard)</option>
+            <option value="1">O_bfuscate V2 MaxPerf (Fast In-Memory Protection)</option>
+            <option value="2">O_bfuscate V2 Ultra (Ultra-Secure Flattening + Encrypted Strings)</option>
+          </select>
         </div>
         <div class="form-group">
           <label class="form-label">Luau Source Code</label>

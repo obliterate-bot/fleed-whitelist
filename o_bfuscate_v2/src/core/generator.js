@@ -112,6 +112,14 @@ class Generator {
       }
 
       case NodeType.FunctionDeclaration: {
+        if (node.identifier && node.identifier.type !== NodeType.Identifier && node.identifier.type !== NodeType.MemberExpression) {
+          const target = this.formatExpression(node.identifier);
+          const params = node.parameters.map(p => this.formatExpression(p));
+          if (node.isVararg) params.push('...');
+          const paramStr = params.join(this.options.minify ? ',' : ', ');
+          const bodyStr = this.formatBlock(node.body);
+          return `${target}=function(${paramStr})${this.options.minify ? ' ' : '\n'}${bodyStr}${this.options.minify ? ' ' : '\n'}end`;
+        }
         const name = this.formatExpression(node.identifier);
         const params = node.parameters.map(p => this.formatExpression(p));
         if (node.isVararg) params.push('...');
@@ -239,6 +247,22 @@ class Generator {
     return 100;
   }
 
+  needsParensForPrefix(node) {
+    if (!node) return false;
+    return (
+      node.type === NodeType.FunctionExpression ||
+      node.type === NodeType.TableConstructorExpression ||
+      node.type === NodeType.BinaryExpression ||
+      node.type === NodeType.LogicalExpression ||
+      node.type === NodeType.UnaryExpression ||
+      node.type === NodeType.IfExpression ||
+      node.type === NodeType.StringLiteral ||
+      node.type === NodeType.NumericLiteral ||
+      node.type === NodeType.BooleanLiteral ||
+      node.type === NodeType.NilLiteral
+    );
+  }
+
   formatExpression(node, parentPrec = 0) {
     if (!node) return '';
 
@@ -314,21 +338,30 @@ class Generator {
       }
 
       case NodeType.MemberExpression: {
-        const baseCode = this.formatExpression(node.base, 100);
+        let baseCode = this.formatExpression(node.base, 100);
+        if (this.needsParensForPrefix(node.base)) {
+          baseCode = `(${baseCode})`;
+        }
         const idCode = node.identifier.name;
         code = `${baseCode}${node.indexer}${idCode}`;
         break;
       }
 
       case NodeType.IndexExpression: {
-        const baseCode = this.formatExpression(node.base, 100);
+        let baseCode = this.formatExpression(node.base, 100);
+        if (this.needsParensForPrefix(node.base)) {
+          baseCode = `(${baseCode})`;
+        }
         const indexCode = this.formatExpression(node.index, 0);
         code = `${baseCode}[${indexCode}]`;
         break;
       }
 
       case NodeType.CallExpression: {
-        const baseCode = this.formatExpression(node.base, 100);
+        let baseCode = this.formatExpression(node.base, 100);
+        if (this.needsParensForPrefix(node.base)) {
+          baseCode = `(${baseCode})`;
+        }
         const argsCode = node.arguments.map(a => this.formatExpression(a, 0)).join(this.options.minify ? ',' : ', ');
         code = `${baseCode}(${argsCode})`;
         break;

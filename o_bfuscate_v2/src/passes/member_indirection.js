@@ -29,42 +29,24 @@ class MemberIndirectionPass {
   }
 
   apply(ast) {
-    // 1. Table Key Indirection: { Key = value } -> { ["Key"] = value }
-    if (this.options.indirectTableKeys) {
-      walk(ast, {
-        enter: (node) => {
-          if (node.type === NodeType.TableKeyString) {
-            const keyName = node.key.name;
-            node.type = NodeType.TableKey;
-            node.key = new ASTNode(NodeType.StringLiteral, { value: keyName, raw: `"${keyName}"` });
-          }
-        }
-      });
-    }
-
-    // 2. Member expression indirection: a.b -> a["b"]
-    if (this.options.indirectMembers) {
-      walk(ast, {
-        enter: (node) => {
-          if (node.type === NodeType.MemberExpression && node.indexer === '.') {
-            const propName = node.identifier.name;
-            node.type = NodeType.IndexExpression;
-            node.index = new ASTNode(NodeType.StringLiteral, { value: propName, raw: `"${propName}"` });
-            delete node.identifier;
-            delete node.indexer;
-          }
-        }
-      });
-    }
-
-    // 3. Function declaration indirection: function obj.prop(...) -> obj["prop"] = function(...)
-    //                                      function obj:method(...) -> obj["method"] = function(self, ...)
+    // 1. Function declaration indirection FIRST: function obj.prop(...) -> obj["prop"] = function(...)
+    //                                              function obj:method(...) -> obj["method"] = function(self, ...)
     walk(ast, {
       enter: (node) => {
-        if (node.type === NodeType.FunctionDeclaration && node.identifier && node.identifier.type === NodeType.MemberExpression) {
-          const methodName = node.identifier.identifier.name;
-          const targetBase = node.identifier.base;
-          const isMethod = node.isMethod || node.identifier.indexer === ':';
+        if (node.type === NodeType.FunctionDeclaration && node.identifier && node.identifier.type !== NodeType.Identifier) {
+          const isMethod = node.isMethod || (node.identifier.type === NodeType.MemberExpression && node.identifier.indexer === ':');
+          let targetVar = null;
+
+          if (node.identifier.type === NodeType.MemberExpression) {
+            const methodName = node.identifier.identifier.name;
+            const targetBase = node.identifier.base;
+            targetVar = new ASTNode(NodeType.IndexExpression, {
+              base: targetBase,
+              index: new ASTNode(NodeType.StringLiteral, { value: methodName, raw: `"${methodName}"` })
+            });
+          } else {
+            targetVar = node.identifier;
+          }
 
           const params = [...node.parameters];
           if (isMethod) {
@@ -72,12 +54,7 @@ class MemberIndirectionPass {
           }
 
           node.type = NodeType.AssignmentStatement;
-          node.variables = [
-            new ASTNode(NodeType.IndexExpression, {
-              base: targetBase,
-              index: new ASTNode(NodeType.StringLiteral, { value: methodName, raw: `"${methodName}"` })
-            })
-          ];
+          node.variables = [targetVar];
           node.init = [
             new ASTNode(NodeType.FunctionExpression, {
               parameters: params,
@@ -93,6 +70,34 @@ class MemberIndirectionPass {
         }
       }
     });
+
+    // 2. Table Key Indirection: { Key = value } -> { ["Key"] = value }
+    if (this.options.indirectTableKeys) {
+      walk(ast, {
+        enter: (node) => {
+          if (node.type === NodeType.TableKeyString) {
+            const keyName = node.key.name;
+            node.type = NodeType.TableKey;
+            node.key = new ASTNode(NodeType.StringLiteral, { value: keyName, raw: `"${keyName}"` });
+          }
+        }
+      });
+    }
+
+    // 3. Member expression indirection: a.b -> a["b"]
+    if (this.options.indirectMembers) {
+      walk(ast, {
+        enter: (node) => {
+          if (node.type === NodeType.MemberExpression && node.indexer === '.') {
+            const propName = node.identifier.name;
+            node.type = NodeType.IndexExpression;
+            node.index = new ASTNode(NodeType.StringLiteral, { value: propName, raw: `"${propName}"` });
+            delete node.identifier;
+            delete node.indexer;
+          }
+        }
+      });
+    }
 
     // 4. Method call indirection on all method calls: target:Method(args) -> target["Method"](target, args)
     if (this.options.indirectMethods) {
